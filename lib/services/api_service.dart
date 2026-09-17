@@ -130,6 +130,27 @@ class ApiService {
     }
   }
 
+  Future<dynamic> patch(String endpoint, {dynamic body}) async {
+    final uri = Uri.parse('$baseUrl$endpoint');
+    try {
+      final response = await _client
+          .patch(
+            uri,
+            headers: _headers(),
+            body: body != null ? jsonEncode(body) : null,
+          )
+          .timeout(const Duration(seconds: 12));
+      return _handleResponse(response);
+    } on SocketException catch (e) {
+      throw ApiException('Network connection failed: ${e.message}');
+    } on TimeoutException {
+      throw const ApiException('Request timed out. Please try again.');
+    } catch (e) {
+      if (e is ApiException) rethrow;
+      throw ApiException('Unexpected network error: $e');
+    }
+  }
+
   Future<dynamic> delete(String endpoint) async {
     final uri = Uri.parse('$baseUrl$endpoint');
     try {

@@ -204,7 +204,7 @@ class AppStateProvider extends ChangeNotifier {
 
     _tasks.insert(0, newTask);
     if (!_isDemoMode) {
-      taskService.createTask(newTask).then((_) {}).catchError((_) => newTask);
+      taskService.createTask(newTask).catchError((_) => newTask);
     }
 
     _recalculateReadiness();

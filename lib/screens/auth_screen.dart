@@ -184,28 +184,33 @@ class _AuthScreenState extends State<AuthScreen> {
                         ),
 
                         // Center Logo Emblem
-                        Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const FlowLogo(size: 76),
-                            const SizedBox(height: 16),
-                            Text(
-                              'FLOWSTATE',
-                              style: FlowTypography.titleMedium().copyWith(
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 2.0,
-                              ),
+                        Positioned.fill(
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const FlowLogo(size: 76),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'FLOWSTATE',
+                                  style: FlowTypography.titleMedium().copyWith(
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 2.0,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Container(
+                                  width: 32,
+                                  height: 3,
+                                  decoration: BoxDecoration(
+                                    color: FlowColors.cyan,
+                                    borderRadius: FlowRadii.pillRadius,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 4),
-                            Container(
-                              width: 32,
-                              height: 3,
-                              decoration: BoxDecoration(
-                                color: FlowColors.cyan,
-                                borderRadius: FlowRadii.pillRadius,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                       ],
                     ),

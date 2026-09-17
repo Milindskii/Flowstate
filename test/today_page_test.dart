@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:flowstate/screens/today_dashboard_tab.dart';
 import 'package:flowstate/providers/app_state_provider.dart';
-import 'package:flowstate/models/task_item.dart';
 
 void main() {
   Widget createTestWidget(AppStateProvider provider) {

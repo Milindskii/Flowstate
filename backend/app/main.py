@@ -6,9 +6,17 @@ from .core.config import settings
 from .core.logging import setup_logging, logger
 from .db.session import get_db, Base, engine
 
+# Ensure all models are registered with Base metadata
+from .models.user import User
+from .models.user_preferences import UserPreferences
+from .models.task import Task
+from .models.task_performance import TaskPerformance
+
+from .api.routes import auth, tasks
+
 setup_logging()
 
-# Initialize DB tables if needed
+# Initialize DB tables
 try:
     Base.metadata.create_all(bind=engine)
 except Exception as e:
@@ -28,6 +36,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include API v1 Routers
+app.include_router(auth.router, prefix=settings.API_V1_STR)
+app.include_router(tasks.router, prefix=settings.API_V1_STR)
 
 @app.get("/health", tags=["Health"])
 def health_check():
