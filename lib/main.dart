@@ -1,13 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'providers/app_state_provider.dart';
 import 'providers/theme_provider.dart';
 import 'screens/splash_screen.dart';
 import 'theme/flow_theme.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Supabase Auth & Client
+  try {
+    await Supabase.initialize(
+      url: 'https://drfjprhnynktjkiplbzy.supabase.co',
+      publishableKey: 'sb_publishable_LDiD72aRDOVKMwD5AMoU5Q_oNntJRrv',
+    );
+  } catch (e) {
+    // Offline or hot-reload safety fallback
+    debugPrint('Supabase init notice: $e');
+  }
 
   // Set immersive dark status bar navigation styling
   SystemChrome.setSystemUIOverlayStyle(

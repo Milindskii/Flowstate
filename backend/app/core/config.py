@@ -11,8 +11,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./flowstate.db"
 
     # Supabase / Auth credentials
-    SUPABASE_URL: str = ""
-    SUPABASE_KEY: str = ""
+    SUPABASE_URL: str = "https://drfjprhnynktjkiplbzy.supabase.co"
+    SUPABASE_KEY: str = "sb_publishable_LDiD72aRDOVKMwD5AMoU5Q_oNntJRrv"
+    SUPABASE_JWKS_URL: str = "https://drfjprhnynktjkiplbzy.supabase.co/auth/v1/.well-known/jwks.json"
     SUPABASE_JWT_SECRET: str = "flowstate-local-dev-secret-replace-in-production"
 
     # Dev auth bypass: STRICTLY forbidden in production

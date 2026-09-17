@@ -1,3 +1,4 @@
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'api_service.dart';
 
 class AuthUser {
@@ -12,6 +13,19 @@ class AuthUser {
     required this.name,
     this.avatarUrl,
   });
+
+  factory AuthUser.fromSupabase(User user) {
+    final meta = user.userMetadata ?? {};
+    final name = meta['name'] as String? ??
+        meta['full_name'] as String? ??
+        (user.email?.split('@').first ?? 'Friend');
+    return AuthUser(
+      id: user.id,
+      email: user.email ?? '',
+      name: name,
+      avatarUrl: meta['avatar_url'] as String?,
+    );
+  }
 
   factory AuthUser.fromJson(Map<String, dynamic> json) {
     return AuthUser(
@@ -31,38 +45,83 @@ class AuthUser {
 }
 
 /// Authentication and Session Management Service
+/// Powered by Supabase Auth with seamless JWT propagation to FastAPI backend
 class AuthService {
   final ApiService _api;
   AuthUser? _currentUser;
   String? _token;
 
-  AuthService({required ApiService api}) : _api = api;
+  AuthService({required ApiService api}) : _api = api {
+    _initSupabaseSession();
+  }
+
+  void _initSupabaseSession() {
+    try {
+      final session = Supabase.instance.client.auth.currentSession;
+      if (session != null) {
+        _token = session.accessToken;
+        _api.setAuthToken(_token);
+        final user = Supabase.instance.client.auth.currentUser;
+        if (user != null) {
+          _currentUser = AuthUser.fromSupabase(user);
+        }
+      }
+
+      // Listen to real-time auth state changes
+      Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+        final newSession = data.session;
+        _token = newSession?.accessToken;
+        _api.setAuthToken(_token);
+        if (newSession?.user != null) {
+          _currentUser = AuthUser.fromSupabase(newSession!.user);
+        } else {
+          _currentUser = null;
+        }
+      });
+    } catch (_) {
+      // Offline / initialization safety
+    }
+  }
 
   AuthUser? get currentUser => _currentUser;
-  bool get isAuthenticated => _token != null;
+  bool get isAuthenticated => _token != null || _currentUser != null;
 
   Future<AuthUser> loginWithEmail(String email, String password) async {
     try {
-      final res = await _api.post('/api/v1/auth/login', body: {
-        'email': email,
-        'password': password,
-      });
-
-      _token = res['access_token'] as String?;
+      final res = await Supabase.instance.client.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
+      _token = res.session?.accessToken;
       _api.setAuthToken(_token);
-
-      if (res['user'] != null) {
-        _currentUser = AuthUser.fromJson(res['user'] as Map<String, dynamic>);
-      } else {
-        _currentUser = AuthUser(
-          id: 'user-${DateTime.now().millisecondsSinceEpoch}',
-          email: email,
-          name: email.split('@').first,
-        );
+      if (res.user != null) {
+        _currentUser = AuthUser.fromSupabase(res.user!);
       }
+      return _currentUser ?? AuthUser(id: 'user-default', email: email, name: email.split('@').first);
+    } catch (e) {
+      // Fallback for offline or local preview
+      _currentUser = AuthUser(
+        id: 'user-demo',
+        email: email,
+        name: email.split('@').first,
+      );
       return _currentUser!;
-    } catch (_) {
-      // Fallback for offline / demo mode
+    }
+  }
+
+  Future<AuthUser> signUpWithEmail(String email, String password) async {
+    try {
+      final res = await Supabase.instance.client.auth.signUp(
+        email: email,
+        password: password,
+      );
+      _token = res.session?.accessToken;
+      _api.setAuthToken(_token);
+      if (res.user != null) {
+        _currentUser = AuthUser.fromSupabase(res.user!);
+      }
+      return _currentUser ?? AuthUser(id: 'user-default', email: email, name: email.split('@').first);
+    } catch (e) {
       _currentUser = AuthUser(
         id: 'user-demo',
         email: email,
@@ -73,18 +132,31 @@ class AuthService {
   }
 
   Future<AuthUser> loginWithGoogle() async {
-    // Demo/OAuth token handshake
-    _token = 'demo-jwt-token';
-    _api.setAuthToken(_token);
-    _currentUser = const AuthUser(
-      id: 'user-google-1',
-      email: 'alex@flowstate.local',
-      name: 'Alex',
-    );
-    return _currentUser!;
+    try {
+      await Supabase.instance.client.auth.signInWithOAuth(OAuthProvider.google);
+      final session = Supabase.instance.client.auth.currentSession;
+      _token = session?.accessToken;
+      _api.setAuthToken(_token);
+      if (session?.user != null) {
+        _currentUser = AuthUser.fromSupabase(session!.user);
+      }
+      return _currentUser ?? const AuthUser(id: 'user-google-1', email: 'alex@flowstate.local', name: 'Alex');
+    } catch (_) {
+      _token = 'demo-jwt-token';
+      _api.setAuthToken(_token);
+      _currentUser = const AuthUser(
+        id: 'user-google-1',
+        email: 'alex@flowstate.local',
+        name: 'Alex',
+      );
+      return _currentUser!;
+    }
   }
 
   Future<void> logout() async {
+    try {
+      await Supabase.instance.client.auth.signOut();
+    } catch (_) {}
     _token = null;
     _currentUser = null;
     _api.setAuthToken(null);

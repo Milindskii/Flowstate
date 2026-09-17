@@ -9,8 +9,29 @@ from ..db.session import get_db
 from ..models.user import User
 from ..models.user_preferences import UserPreferences
 
+import httpx
+from jose import jwt, jwk, JWTError
+
 ALGORITHM = "HS256"
 security_scheme = HTTPBearer(auto_error=False)
+
+_JWKS_KEYS_CACHE = {}
+
+def fetch_supabase_jwks() -> dict:
+    global _JWKS_KEYS_CACHE
+    if not settings.SUPABASE_JWKS_URL:
+        return {}
+    try:
+        res = httpx.get(settings.SUPABASE_JWKS_URL, timeout=5.0)
+        if res.status_code == 200:
+            data = res.json()
+            for key in data.get("keys", []):
+                kid = key.get("kid")
+                if kid:
+                    _JWKS_KEYS_CACHE[kid] = key
+    except Exception:
+        pass
+    return _JWKS_KEYS_CACHE
 
 def verify_security_environment():
     """
@@ -26,9 +47,31 @@ def verify_security_environment():
 
 def decode_access_token(token: str) -> Optional[dict]:
     """
-    Decodes and verifies a JWT token issued by Supabase Auth (or test suite).
+    Decodes and verifies a JWT token issued by Supabase Auth (via live JWKS)
+    or the test suite (via symmetric secret).
     """
     try:
+        # First check unverified header to see if it's a Supabase JWKS-signed token
+        header = jwt.get_unverified_header(token)
+        kid = header.get("kid")
+        alg = header.get("alg", ALGORITHM)
+
+        if kid:
+            if kid not in _JWKS_KEYS_CACHE:
+                fetch_supabase_jwks()
+
+            key_dict = _JWKS_KEYS_CACHE.get(kid)
+            if key_dict:
+                public_key = jwk.construct(key_dict)
+                payload = jwt.decode(
+                    token,
+                    public_key,
+                    algorithms=[alg],
+                    options={"verify_aud": False}
+                )
+                return payload
+
+        # Fallback to symmetric secret (for tests or legacy HS256 tokens)
         payload = jwt.decode(
             token,
             settings.SUPABASE_JWT_SECRET,
