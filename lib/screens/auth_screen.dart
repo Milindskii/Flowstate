@@ -132,153 +132,162 @@ class _AuthScreenState extends State<AuthScreen> {
       backgroundColor: FlowColors.darkBackground,
       body: SafeArea(
         top: false,
-        child: Column(
-          children: [
-            // Top Section (35% height): Abstract flowing energy waves
-            Container(
-              height: screenHeight * 0.38,
-              width: double.infinity,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Color(0xFF0D1726),
-                    Color(0xFF090D14),
-                  ],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                ),
-              ),
-              child: Stack(
-                alignment: Alignment.center,
+        child: SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight: screenHeight,
+            ),
+            child: IntrinsicHeight(
+              child: Column(
                 children: [
-                  // Smooth layered ambient energy circles (Cyan and Mint, no purple)
-                  Positioned(
-                    top: 40,
-                    left: -30,
-                    child: Container(
-                      width: 240,
-                      height: 240,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: FlowColors.cyan.withOpacity(0.12),
+                  // Top Section: Abstract flowing energy waves
+                  Container(
+                    height: screenHeight * 0.36,
+                    width: double.infinity,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Color(0xFFE0F2FE),
+                          Color(0xFFFFFFFF),
+                        ],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
                       ),
                     ),
-                  ),
-                  Positioned(
-                    bottom: 20,
-                    right: -20,
-                    child: Container(
-                      width: 200,
-                      height: 200,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: FlowColors.mint.withOpacity(0.08),
-                      ),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        // Smooth layered ambient energy circles (Cyan and Mint, no purple)
+                        Positioned(
+                          top: 40,
+                          left: -30,
+                          child: Container(
+                            width: 240,
+                            height: 240,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: FlowColors.cyan.withOpacity(0.12),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          bottom: 20,
+                          right: -20,
+                          child: Container(
+                            width: 200,
+                            height: 200,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: FlowColors.mint.withOpacity(0.08),
+                            ),
+                          ),
+                        ),
+
+                        // Center Logo Emblem
+                        Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const FlowLogo(size: 76),
+                            const SizedBox(height: 16),
+                            Text(
+                              'FLOWSTATE',
+                              style: FlowTypography.titleMedium().copyWith(
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 2.0,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Container(
+                              width: 32,
+                              height: 3,
+                              decoration: BoxDecoration(
+                                color: FlowColors.cyan,
+                                borderRadius: FlowRadii.pillRadius,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
 
-                  // Center Logo Emblem
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const FlowLogo(size: 76),
-                      const SizedBox(height: 16),
-                      Text(
-                        'FLOWSTATE',
-                        style: FlowTypography.titleMedium().copyWith(
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 2.0,
-                        ),
+                  // Bottom Section: Messaging & Authentication
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 28.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const SizedBox(height: 24),
+
+                          // Headline
+                          Text(
+                            'Plan around your energy.',
+                            style: FlowTypography.displayMedium().copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+
+                          // Supporting description
+                          Text(
+                            'Flowstate learns how you work best and helps you put the right task at the right time.',
+                            style: FlowTypography.bodyLarge(color: FlowColors.textSecondary),
+                          ),
+
+                          const SizedBox(height: 32),
+
+                          // Primary Button: Continue with Google
+                          PrimaryButton(
+                            label: 'Continue with Google',
+                            icon: const Icon(Icons.g_mobiledata_rounded, size: 28, color: FlowColors.textInverse),
+                            onPressed: _navigateToOnboarding,
+                          ),
+                          const SizedBox(height: 14),
+
+                          // Secondary Button: Continue with Email
+                          SecondaryButton(
+                            label: 'Continue with Email',
+                            icon: const Icon(Icons.mail_outline_rounded, size: 20, color: FlowColors.textPrimary),
+                            onPressed: _showEmailSheet,
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          // Login / Sign Up Toggle
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                _isLoginMode ? "New to Flowstate?" : "Already have an account?",
+                                style: FlowTypography.bodyMedium(color: FlowColors.textSecondary),
+                              ),
+                              const SizedBox(width: 6),
+                              GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    _isLoginMode = !_isLoginMode;
+                                  });
+                                },
+                                child: Text(
+                                  _isLoginMode ? 'Create account' : 'Log in',
+                                  style: FlowTypography.labelMedium(color: FlowColors.cyanLight).copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+
+                          const SizedBox(height: 32),
+                        ],
                       ),
-                      const SizedBox(height: 4),
-                      Container(
-                        width: 32,
-                        height: 3,
-                        decoration: BoxDecoration(
-                          color: FlowColors.cyan,
-                          borderRadius: FlowRadii.pillRadius,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ],
               ),
             ),
-
-            // Bottom Section: Messaging & Authentication
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 28.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Spacer(),
-
-                    // Headline
-                    Text(
-                      'Plan around your energy.',
-                      style: FlowTypography.displayMedium().copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // Supporting description
-                    Text(
-                      'Flowstate learns how you work best and helps you put the right task at the right time.',
-                      style: FlowTypography.bodyLarge(color: FlowColors.textSecondary),
-                    ),
-
-                    const Spacer(flex: 2),
-
-                    // Primary Button: Continue with Google
-                    PrimaryButton(
-                      label: 'Continue with Google',
-                      icon: const Icon(Icons.g_mobiledata_rounded, size: 28, color: FlowColors.textInverse),
-                      onPressed: _navigateToOnboarding,
-                    ),
-                    const SizedBox(height: 14),
-
-                    // Secondary Button: Continue with Email
-                    SecondaryButton(
-                      label: 'Continue with Email',
-                      icon: const Icon(Icons.mail_outline_rounded, size: 20, color: FlowColors.textPrimary),
-                      onPressed: _showEmailSheet,
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    // Login / Sign Up Toggle
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          _isLoginMode ? "New to Flowstate?" : "Already have an account?",
-                          style: FlowTypography.bodyMedium(color: FlowColors.textSecondary),
-                        ),
-                        const SizedBox(width: 6),
-                        GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              _isLoginMode = !_isLoginMode;
-                            });
-                          },
-                          child: Text(
-                            _isLoginMode ? 'Create account' : 'Log in',
-                            style: FlowTypography.labelMedium(color: FlowColors.cyanLight).copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const Spacer(),
-                  ],
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

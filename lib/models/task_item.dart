@@ -81,4 +81,40 @@ class TaskItem {
       isPriority: isPriority ?? this.isPriority,
     );
   }
+
+  factory TaskItem.fromJson(Map<String, dynamic> json) {
+    TaskDifficulty diff = TaskDifficulty.medium;
+    final diffStr = (json['difficulty'] as String?)?.toLowerCase();
+    if (diffStr == 'high' || diffStr == 'deep work') {
+      diff = TaskDifficulty.high;
+    } else if (diffStr == 'light' || diffStr == 'admin') {
+      diff = TaskDifficulty.light;
+    } else if (diffStr == 'physical' || diffStr == 'health') {
+      diff = TaskDifficulty.physical;
+    }
+
+    return TaskItem(
+      id: json['id'] as String? ?? 'task-${DateTime.now().millisecondsSinceEpoch}',
+      title: json['title'] as String? ?? 'Untitled Task',
+      durationMinutes: (json['duration_minutes'] as num?)?.toInt() ?? 45,
+      difficulty: diff,
+      deadline: json['deadline'] as String? ?? 'Today',
+      category: json['category'] as String? ?? 'General',
+      isCompleted: json['is_completed'] as bool? ?? false,
+      scheduledTime: json['scheduled_time'] as String?,
+      isPriority: json['is_priority'] as bool? ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'duration_minutes': durationMinutes,
+        'difficulty': difficulty.name,
+        'deadline': deadline,
+        'category': category,
+        'is_completed': isCompleted,
+        'scheduled_time': scheduledTime,
+        'is_priority': isPriority,
+      };
 }

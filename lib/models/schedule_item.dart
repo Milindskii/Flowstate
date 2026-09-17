@@ -53,4 +53,53 @@ class ScheduleItem {
       durationMinutes: durationMinutes ?? this.durationMinutes,
     );
   }
+
+  factory ScheduleItem.fromJson(Map<String, dynamic> json) {
+    final typeStr = json['type'] as String? ?? 'Focus';
+    Color bg = FlowColors.tagDeepWorkBg;
+    Color fg = FlowColors.tagDeepWorkText;
+    String tag = json['tag_text'] as String? ?? 'DEEP WORK';
+
+    if (typeStr.toLowerCase().contains('study') || typeStr.toLowerCase().contains('medium')) {
+      bg = FlowColors.tagMediumBg;
+      fg = FlowColors.tagMediumText;
+      tag = 'MEDIUM';
+    } else if (typeStr.toLowerCase().contains('rest') || typeStr.toLowerCase().contains('break')) {
+      bg = FlowColors.tagRestBg;
+      fg = FlowColors.tagRestText;
+      tag = 'REST';
+    } else if (typeStr.toLowerCase().contains('admin') || typeStr.toLowerCase().contains('light')) {
+      bg = FlowColors.tagLightBg;
+      fg = FlowColors.tagLightText;
+      tag = 'LIGHT';
+    } else if (typeStr.toLowerCase().contains('physical') || typeStr.toLowerCase().contains('fitness')) {
+      bg = FlowColors.tagPhysicalBg;
+      fg = FlowColors.tagPhysicalText;
+      tag = 'PHYSICAL';
+    }
+
+    return ScheduleItem(
+      id: json['id'] as String? ?? 'sched-${DateTime.now().millisecondsSinceEpoch}',
+      time: json['time'] as String? ?? '9:00',
+      period: json['period'] as String? ?? 'AM',
+      title: json['title'] as String? ?? 'Focus Block',
+      type: typeStr,
+      tagText: tag,
+      tagBg: bg,
+      tagColor: fg,
+      isActive: json['is_active'] as bool? ?? false,
+      durationMinutes: (json['duration_minutes'] as num?)?.toInt() ?? 60,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'time': time,
+        'period': period,
+        'title': title,
+        'type': type,
+        'tag_text': tagText,
+        'is_active': isActive,
+        'duration_minutes': durationMinutes,
+      };
 }
