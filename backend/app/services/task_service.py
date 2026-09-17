@@ -21,7 +21,7 @@ class TaskService:
         try:
             tz = ZoneInfo(user_timezone_str)
         except Exception:
-            tz = ZoneInfo("UTC")
+            tz = timezone.utc
 
         now_in_user_tz = datetime.now(tz)
         start_of_day_local = datetime.combine(now_in_user_tz.date(), time.min, tzinfo=tz)
@@ -83,7 +83,33 @@ class TaskService:
         return self.task_repo.update(db, task, update_data)
 
     def start_task(self, db: Session, task_id: str, user_id: str) -> Task:
+        """
+        Enforces legal state transitions for starting work.
+        - todo / postponed -> in_progress (allowed)
+        - in_progress -> in_progress (idempotent)
+        - completed / cancelled / archived -> 400 Bad Request
+        """
         task = self.get_task_or_404(db, task_id, user_id)
+
+        if task.status == TaskStatus.in_progress:
+            return task
+
+        if task.status == TaskStatus.completed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot start a task that has already been completed",
+            )
+        if task.status == TaskStatus.cancelled:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot start a cancelled task",
+            )
+        if task.status == TaskStatus.archived:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot start an archived task",
+            )
+
         update_data = {
             "status": TaskStatus.in_progress,
             "started_at": datetime.now(timezone.utc),
@@ -91,7 +117,28 @@ class TaskService:
         return self.task_repo.update(db, task, update_data)
 
     def complete_task(self, db: Session, task_id: str, user_id: str, complete_in: TaskComplete) -> Task:
+        """
+        Enforces legal state transitions for task completion.
+        - in_progress / todo / postponed -> completed (allowed)
+        - completed -> completed (idempotent)
+        - cancelled / archived -> 400 Bad Request
+        """
         task = self.get_task_or_404(db, task_id, user_id)
+
+        if task.status == TaskStatus.completed:
+            return task
+
+        if task.status == TaskStatus.cancelled:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot complete a cancelled task",
+            )
+        if task.status == TaskStatus.archived:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot complete an archived task",
+            )
+
         completion_time = complete_in.completed_at or datetime.now(timezone.utc)
         update_data = {
             "status": TaskStatus.completed,
@@ -99,6 +146,13 @@ class TaskService:
         }
         return self.task_repo.update(db, task, update_data)
 
-    def delete_task(self, db: Session, task_id: str, user_id: str) -> None:
+    def delete_task(self, db: Session, task_id: str, user_id: str, permanent: bool = False) -> Task:
+        """
+        By default, performs a soft-delete (archives task) to safeguard TaskPerformance history.
+        Permanent deletion only occurs if permanent=True is explicitly passed.
+        """
         task = self.get_task_or_404(db, task_id, user_id)
-        self.task_repo.delete(db, task)
+        if permanent:
+            self.task_repo.hard_delete(db, task)
+            return task
+        return self.task_repo.soft_delete(db, task)

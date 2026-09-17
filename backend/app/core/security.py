@@ -12,6 +12,18 @@ from ..models.user_preferences import UserPreferences
 ALGORITHM = "HS256"
 security_scheme = HTTPBearer(auto_error=False)
 
+def verify_security_environment():
+    """
+    Fail-closed security check.
+    Refuses application boot or request if DEV_BYPASS_AUTH is active in production.
+    """
+    env_clean = settings.ENVIRONMENT.strip().lower()
+    if env_clean == "production" and settings.DEV_BYPASS_AUTH:
+        raise RuntimeError(
+            "CRITICAL SECURITY VIOLATION: DEV_BYPASS_AUTH is enabled while ENVIRONMENT='production'! "
+            "Execution refused to protect user data."
+        )
+
 def decode_access_token(token: str) -> Optional[dict]:
     """
     Decodes and verifies a JWT token issued by Supabase Auth (or test suite).
@@ -42,6 +54,26 @@ def get_current_user(
     FastAPI dependency that extracts and validates the Supabase Auth JWT.
     Lazily provisions the local User record upon first verified request.
     """
+    verify_security_environment()
+
+    # Local development bypass: ONLY allowed when DEV_BYPASS_AUTH is explicitly set in non-production
+    if settings.DEV_BYPASS_AUTH and (not credentials or not credentials.credentials):
+        user_id = "dev-user-local"
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            user = User(
+                id=user_id,
+                email="dev@flowstate.local",
+                name="Local Developer",
+            )
+            db.add(user)
+            db.flush()
+            prefs = UserPreferences(user_id=user_id)
+            db.add(prefs)
+            db.commit()
+            db.refresh(user)
+        return user
+
     if not credentials or not credentials.credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

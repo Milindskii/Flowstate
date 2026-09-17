@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Flowstate"
     API_V1_STR: str = "/api/v1"
     VERSION: str = "1.0.0"
+    ENVIRONMENT: str = "development" # "development", "staging", "production"
 
     # Database: SQLite default fallback for local zero-config testing; PostgreSQL via Supabase in production
     DATABASE_URL: str = "sqlite:///./flowstate.db"
@@ -13,6 +14,9 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_KEY: str = ""
     SUPABASE_JWT_SECRET: str = "flowstate-local-dev-secret-replace-in-production"
+
+    # Dev auth bypass: STRICTLY forbidden in production
+    DEV_BYPASS_AUTH: bool = False
 
     # CORS configuration
     BACKEND_CORS_ORIGINS: List[str] = [

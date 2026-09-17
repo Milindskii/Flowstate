@@ -1,7 +1,7 @@
 from typing import Optional, List, Tuple
 from datetime import datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, and_
 from ..models.task import Task, TaskStatus, TaskType
 
 class TaskRepository:
@@ -25,6 +25,10 @@ class TaskRepository:
 
         if status:
             query = query.filter(Task.status == status)
+        else:
+            # By default, do not surface archived tasks in general list
+            query = query.filter(Task.status != TaskStatus.archived)
+
         if category and category.lower() != "all":
             query = query.filter(Task.category.ilike(category))
         if task_type:
@@ -43,18 +47,28 @@ class TaskRepository:
     ) -> List[Task]:
         """
         Retrieves tasks relevant to the user's current day:
-        1. Scheduled for today (scheduled_start within day bounds)
-        2. Due today (deadline_at within day bounds)
-        3. Active tasks currently in_progress or pending high-priority
+        1. Explicitly scheduled for today (scheduled_start within day bounds)
+        2. Currently active (status == in_progress)
+        3. Due today (deadline_at within day bounds) AND not scheduled for a future day
+        
+        Does NOT bleed future-dated tasks (e.g. Due Friday) into today.
         """
         return db.query(Task).filter(
             Task.user_id == user_id,
             Task.status.in_([TaskStatus.todo, TaskStatus.in_progress]),
             or_(
+                # 1. Explicitly scheduled for today
                 Task.scheduled_start.between(start_of_day, end_of_day),
-                Task.deadline_at.between(start_of_day, end_of_day),
+                # 2. Currently being worked on right now
                 Task.status == TaskStatus.in_progress,
-                Task.scheduled_start.is_(None) # Unscheduled backlog tasks for scheduling
+                # 3. Due today AND not scheduled for a different date
+                and_(
+                    Task.deadline_at.between(start_of_day, end_of_day),
+                    or_(
+                        Task.scheduled_start.is_(None),
+                        Task.scheduled_start.between(start_of_day, end_of_day)
+                    )
+                )
             )
         ).order_by(Task.priority.desc(), Task.created_at.asc()).all()
 
@@ -75,6 +89,15 @@ class TaskRepository:
         return task
 
     @staticmethod
-    def delete(db: Session, task: Task) -> None:
+    def soft_delete(db: Session, task: Task) -> Task:
+        """Soft-deletes task by setting status to archived, preserving TaskPerformance records."""
+        task.status = TaskStatus.archived
+        db.commit()
+        db.refresh(task)
+        return task
+
+    @staticmethod
+    def hard_delete(db: Session, task: Task) -> None:
+        """Permanently erases task and associated data from database."""
         db.delete(task)
         db.commit()

@@ -33,6 +33,19 @@ class TaskComplete(BaseModel):
     completed_at: Optional[datetime] = None
     actual_minutes: Optional[int] = Field(default=None, ge=1, le=1440)
 
+class TaskParseRequest(BaseModel):
+    text: Optional[str] = Field(default=None, max_length=1500, description="Natural language task description")
+    raw_text: Optional[str] = Field(default=None, max_length=1500)
+    timezone: Optional[str] = Field(default="UTC", max_length=50)
+
+    def get_clean_text(self) -> str:
+        content = (self.text or self.raw_text or "").strip()
+        if len(content) < 2:
+            raise ValueError("Task description text must be at least 2 characters")
+        if len(content) > 1500:
+            raise ValueError("Task description text exceeds maximum limit of 1500 characters")
+        return content
+
 class TaskResponse(BaseModel):
     id: str
     user_id: str

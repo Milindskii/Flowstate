@@ -22,10 +22,19 @@ try:
 except Exception as e:
     logger.warning(f"Database initialization warning: {e}")
 
+from contextlib import asynccontextmanager
+from .core.security import verify_security_environment
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    verify_security_environment()
+    yield
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="Flowstate Non-Medical Personal Productivity Backend"
+    description="Flowstate Non-Medical Personal Productivity Backend",
+    lifespan=lifespan,
 )
 
 # Configure CORS for Flutter Web, Emulator, and Local Network mobile testing
