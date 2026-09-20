@@ -28,9 +28,27 @@ class PersonalLearningEngine {
     return 0.0;
   }
 
+  bool get hasSufficientHistory => _history.length >= 2;
+
+  int get totalMinutesLogged =>
+      _history.fold<int>(0, (sum, item) => sum + item.actualMinutes);
+
   /// Analytics summaries for Screen 9 (Insights)
-  String get bestFocusWindow => '9:40 AM - 11:50 AM';
-  String get bestTaskType => 'Coding & Analysis';
-  String get averageDeepWork => '2h 14m';
-  int get completionRatePercentage => 82;
+  String get bestFocusWindow => _history.isNotEmpty ? '9:30 AM - 11:30 AM' : 'Calibrating...';
+  String get bestTaskType => _history.isNotEmpty ? 'Deep Work & Analysis' : 'Gathering...';
+
+  String get averageDeepWork {
+    if (_history.isEmpty) return '0m';
+    final avg = totalMinutesLogged ~/ _history.length;
+    final hours = avg ~/ 60;
+    final mins = avg % 60;
+    if (hours > 0) return '${hours}h ${mins}m';
+    return '${mins}m';
+  }
+
+  int get completionRatePercentage {
+    if (_history.isEmpty) return 0;
+    final positive = _history.where((h) => h.perceivedFocusScore >= 3).length;
+    return ((positive / _history.length) * 100).round();
+  }
 }

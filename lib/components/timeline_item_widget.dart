@@ -1,122 +1,96 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../models/schedule_item.dart';
+import '../providers/theme_provider.dart';
 import '../theme/flow_colors.dart';
-import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
 
-/// Screen 4: Timeline Item Card for Today's Schedule
+/// Ultralight timeline item: TIME  •  TITLE (Duration)
+/// No heavy boxed cards. Subtle vertical line and quiet typography.
 class TimelineItemWidget extends StatelessWidget {
   final ScheduleItem item;
   final bool isLast;
+  final bool isPast;
 
   const TimelineItemWidget({
     super.key,
     required this.item,
     this.isLast = false,
+    this.isPast = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    Color accent = FlowColors.accentCyan;
+    try {
+      accent = Provider.of<ThemeProvider>(context).accentColor;
+    } catch (_) {}
+
+    final active = item.isActive;
+
     return IntrinsicHeight(
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Time Column (e.g. 9:30 AM)
+          // 1. Time Column (e.g. 11:30 AM)
           SizedBox(
             width: 58,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  item.time,
-                  style: FlowTypography.titleMedium().copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                Text(
-                  item.period,
-                  style: FlowTypography.labelSmall(color: FlowColors.textMuted),
-                ),
-                const SizedBox(height: 8),
-                if (!isLast)
-                  Expanded(
-                    child: Container(
-                      width: 2,
-                      margin: const EdgeInsets.only(right: 6),
-                      color: FlowColors.darkBorder,
-                    ),
-                  ),
-              ],
+            child: Text(
+              '${item.time} ${item.period}',
+              style: FlowTypography.labelSmall(
+                color: isPast ? FlowColors.textMuted : FlowColors.textSecondary,
+              ).copyWith(
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
+              textAlign: TextAlign.end,
             ),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 12),
 
-          // Schedule Card
-          Expanded(
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 16),
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-              decoration: BoxDecoration(
-                color: FlowColors.darkCard,
-                borderRadius: FlowRadii.cardRadius,
-                border: Border.all(
-                  color: item.isActive
-                      ? FlowColors.cyan.withOpacity(0.5)
-                      : FlowColors.darkBorder,
-                  width: item.isActive ? 1.5 : 1.0,
+          // 2. Subtle Vertical Line + Dot
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 5,
+                height: 5,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: active
+                      ? accent
+                      : (isPast ? FlowColors.textMuted : FlowColors.darkBorder),
                 ),
-                boxShadow: item.isActive
-                    ? [
-                        BoxShadow(
-                          color: FlowColors.cyan.withOpacity(0.15),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                      ]
-                    : null,
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            ],
+          ),
+          const SizedBox(width: 12),
+
+          // 3. Title and Duration (Clean, minimal, no boxed card)
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10.0),
+              child: Row(
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          item.title,
-                          style: FlowTypography.titleMedium().copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
+                  Expanded(
+                    child: Text(
+                      item.title,
+                      style: FlowTypography.bodyMedium(
+                        color: isPast ? FlowColors.textMuted : FlowColors.textPrimary,
+                      ).copyWith(
+                        fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                        decoration: isPast ? TextDecoration.lineThrough : null,
                       ),
-                      const Icon(
-                        Icons.more_horiz_rounded,
-                        color: FlowColors.textMuted,
-                        size: 20,
-                      ),
-                    ],
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      // Tag Badge
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: item.tagBg,
-                          borderRadius: FlowRadii.pillRadius,
-                        ),
-                        child: Text(
-                          item.tagText,
-                          style: FlowTypography.badgeText(color: item.tagColor),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        item.type,
-                        style: FlowTypography.bodyMedium(color: FlowColors.textSecondary),
-                      ),
-                    ],
+                  const SizedBox(width: 8),
+                  Text(
+                    '${item.durationMinutes} min',
+                    style: FlowTypography.labelSmall(
+                      color: isPast ? FlowColors.textMuted : FlowColors.textSecondary,
+                    ),
                   ),
                 ],
               ),

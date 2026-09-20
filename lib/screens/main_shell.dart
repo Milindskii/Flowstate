@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../components/flow_bottom_nav.dart';
 import '../providers/app_state_provider.dart';
 import '../theme/flow_colors.dart';
+import '../theme/flow_motion.dart';
 import 'today_dashboard_tab.dart';
 import 'task_inbox_tab.dart';
 import 'calendar_tab.dart';
@@ -27,7 +28,7 @@ class MainShell extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: FlowColors.darkBackground,
-      body: IndexedStack(
+      body: FlowFadeIndexedStack(
         index: state.currentNavIndex,
         children: _tabs,
       ),

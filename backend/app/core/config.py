@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     # Model settings
     READINESS_MODEL_VERSION: str = "v1.0.0-deterministic"
     SCHEDULING_MODEL_VERSION: str = "v1.0.0-deterministic"
+    CALIBRATION_MIN_SESSIONS: int = 30
+    LEARNING_MIN_SESSIONS: int = 1
 
     model_config = SettingsConfigDict(
         env_file=".env",

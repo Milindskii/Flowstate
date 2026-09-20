@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 import '../components/primary_button.dart';
 import '../providers/app_state_provider.dart';
 import '../theme/flow_colors.dart';
+import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
+import '../theme/flow_spacing.dart';
 import '../theme/flow_typography.dart';
 
 /// Screen 8: Calendar Tab with Focus Windows & "Optimize My Day" Engine Action
@@ -22,24 +24,27 @@ class _CalendarTabState extends State<CalendarTab> {
   @override
   Widget build(BuildContext context) {
     final state = Provider.of<AppStateProvider>(context);
+    final pageMargin = FlowSpacing.pageMargin(context);
+
+    final accent = Theme.of(context).colorScheme.primary;
 
     return Scaffold(
-      backgroundColor: FlowColors.darkBackground,
+      backgroundColor: FlowColors.background(context),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+          padding: EdgeInsets.symmetric(horizontal: pageMargin, vertical: 16.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Header
               Text(
                 'Calendar',
-                style: FlowTypography.headlineMedium().copyWith(fontWeight: FontWeight.w800),
+                style: FlowTypography.headlineMedium(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 4),
               Text(
                 'Energy-aligned schedule & focus blocks',
-                style: FlowTypography.bodyMedium(color: FlowColors.textSecondary),
+                style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
               ),
               const SizedBox(height: 20),
 
@@ -49,28 +54,36 @@ class _CalendarTabState extends State<CalendarTab> {
                 child: Row(
                   children: List.generate(_days.length, (index) {
                     final isSelected = _selectedDayIndex == index;
-                    return GestureDetector(
-                      onTap: () => setState(() => _selectedDayIndex = index),
-                      child: Container(
-                        width: 54,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        margin: const EdgeInsets.only(right: 10),
-                        decoration: BoxDecoration(
-                          color: isSelected ? FlowColors.cyan : FlowColors.darkCard,
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                            color: isSelected ? FlowColors.cyan : FlowColors.darkBorder,
-                            width: 1.0,
+                    return Semantics(
+                      button: true,
+                      selected: isSelected,
+                      label: 'Day ${_days[index].replaceAll('\n', ' ')}',
+                      child: GestureDetector(
+                        onTap: () {
+                          FlowHaptics.selection();
+                          setState(() => _selectedDayIndex = index);
+                        },
+                        child: Container(
+                          width: 54,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          margin: const EdgeInsets.only(right: 10),
+                          decoration: BoxDecoration(
+                            color: isSelected ? accent : FlowColors.surface(context),
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                              color: isSelected ? accent : FlowColors.border(context),
+                              width: 1.0,
+                            ),
                           ),
-                        ),
-                        child: Text(
-                          _days[index],
-                          textAlign: TextAlign.center,
-                          style: FlowTypography.labelMedium(
-                            color: isSelected ? FlowColors.textInverse : FlowColors.textPrimary,
-                          ).copyWith(
-                            fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
-                            height: 1.3,
+                          child: Text(
+                            _days[index],
+                            textAlign: TextAlign.center,
+                            style: FlowTypography.labelMedium(
+                              color: isSelected ? FlowColors.textInverse : FlowColors.textPrimaryOf(context),
+                            ).copyWith(
+                              fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
+                              height: 1.3,
+                            ),
                           ),
                         ),
                       ),
@@ -87,6 +100,7 @@ class _CalendarTabState extends State<CalendarTab> {
                 isLoading: state.isOptimizing,
                 onPressed: () async {
                   await state.optimizeSchedule();
+                  FlowHaptics.success();
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
@@ -103,14 +117,14 @@ class _CalendarTabState extends State<CalendarTab> {
               Container(
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
-                  color: FlowColors.darkCard,
+                  color: FlowColors.surface(context),
                   borderRadius: FlowRadii.cardRadius,
-                  border: Border.all(color: FlowColors.cyanLight.withOpacity(0.5), width: 1.2),
+                  border: Border.all(color: accent.withValues(alpha: 0.5), width: 1.2),
                   boxShadow: [
                     BoxShadow(
-                      color: FlowColors.cyan.withOpacity(0.1),
-                      blurRadius: 16,
-                      offset: const Offset(0, 4),
+                      color: FlowColors.softShadow(context),
+                      blurRadius: 12,
+                      offset: const Offset(0, 3),
                     ),
                   ],
                 ),
@@ -119,10 +133,10 @@ class _CalendarTabState extends State<CalendarTab> {
                     Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: FlowColors.tagDeepWorkBg,
+                        color: accent.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(14),
                       ),
-                      child: const Icon(Icons.bolt_rounded, color: FlowColors.cyanLight, size: 22),
+                      child: Icon(Icons.bolt_rounded, color: accent, size: 22),
                     ),
                     const SizedBox(width: 14),
                     Expanded(
@@ -131,14 +145,14 @@ class _CalendarTabState extends State<CalendarTab> {
                         children: [
                           Text(
                             'Optimal Focus Window',
-                            style: FlowTypography.titleMedium(color: FlowColors.cyanLight).copyWith(
+                            style: FlowTypography.titleMedium(color: accent).copyWith(
                               fontWeight: FontWeight.w700,
                             ),
                           ),
                           const SizedBox(height: 4),
                           Text(
                             state.readiness.focusWindowRange,
-                            style: FlowTypography.bodyMedium(color: FlowColors.textPrimary),
+                            style: FlowTypography.bodyMedium(color: FlowColors.textPrimaryOf(context)),
                           ),
                         ],
                       ),
@@ -151,74 +165,124 @@ class _CalendarTabState extends State<CalendarTab> {
               // Calendar Scheduled Blocks
               Text(
                 'Scheduled Timeline',
-                style: FlowTypography.titleMedium().copyWith(fontWeight: FontWeight.w700),
+                style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 14),
 
-              ...state.schedule.map((item) {
-                final isDeepWork = item.tagText == 'DEEP WORK';
-
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(16),
+              if (state.schedule.isEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
                   decoration: BoxDecoration(
-                    color: FlowColors.darkCard,
+                    color: FlowColors.surface(context),
                     borderRadius: FlowRadii.cardRadius,
-                    border: Border.all(
-                      color: isDeepWork ? FlowColors.cyan.withOpacity(0.4) : FlowColors.darkBorder,
-                      width: 1.0,
-                    ),
+                    border: Border.all(color: FlowColors.border(context), width: 1.0),
                   ),
-                  child: Row(
+                  child: Column(
                     children: [
-                      // Time badge
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: FlowColors.darkSurface,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          '${item.time} ${item.period}',
-                          style: FlowTypography.labelMedium().copyWith(fontWeight: FontWeight.w700),
-                        ),
+                      Icon(Icons.event_note_outlined, size: 36, color: FlowColors.textMutedOf(context)),
+                      const SizedBox(height: 12),
+                      Text(
+                        'No scheduled events yet',
+                        style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w700),
+                        textAlign: TextAlign.center,
                       ),
-                      const SizedBox(width: 14),
-
-                      // Event details
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              item.title,
-                              style: FlowTypography.bodyLarge().copyWith(fontWeight: FontWeight.w600),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${item.type} • ${item.durationMinutes} min',
-                              style: FlowTypography.bodyMedium(color: FlowColors.textMuted),
-                            ),
-                          ],
-                        ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Connect your calendar or calibrate your day to populate your energy-aligned timeline.',
+                        style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
+                        textAlign: TextAlign.center,
                       ),
-
-                      // Tag
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: item.tagBg,
-                          borderRadius: FlowRadii.pillRadius,
+                      const SizedBox(height: 18),
+                      OutlinedButton(
+                        onPressed: () async {
+                          FlowHaptics.lightTap();
+                          await state.optimizeSchedule();
+                          FlowHaptics.success();
+                        },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: accent,
+                          side: BorderSide(color: accent, width: 1.0),
+                          shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
                         ),
-                        child: Text(
-                          item.tagText,
-                          style: FlowTypography.badgeText(color: item.tagColor),
-                        ),
+                        child: const Text('Calibrate focus blocks'),
                       ),
                     ],
                   ),
-                );
-              }),
+                )
+              else
+                ...state.schedule.map((item) {
+                  final isDeepWork = item.tagText == 'DEEP WORK';
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: FlowColors.surface(context),
+                      borderRadius: FlowRadii.cardRadius,
+                      border: Border.all(
+                        color: isDeepWork ? accent.withValues(alpha: 0.4) : FlowColors.border(context),
+                        width: 1.0,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: FlowColors.softShadow(context),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        // Time badge
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: FlowColors.surfaceElevated(context),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: FlowColors.border(context), width: 1.0),
+                          ),
+                          child: Text(
+                            '${item.time} ${item.period}',
+                            style: FlowTypography.labelMedium(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+
+                        // Event details
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.title,
+                                style: FlowTypography.bodyLarge(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${item.type} • ${item.durationMinutes} min',
+                                style: FlowTypography.bodyMedium(color: FlowColors.textMutedOf(context)),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // Tag
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: item.tagBg,
+                            borderRadius: FlowRadii.pillRadius,
+                          ),
+                          child: Text(
+                            item.tagText,
+                            style: FlowTypography.badgeText(color: item.tagColor),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
 
               const SizedBox(height: 80),
             ],

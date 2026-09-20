@@ -32,8 +32,8 @@ class SecondaryButton extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: FlowRadii.buttonRadius,
-          splashColor: FlowColors.cyan.withOpacity(0.12),
-          highlightColor: FlowColors.cyan.withOpacity(0.06),
+          splashColor: FlowColors.accentCyan.withValues(alpha: 0.12),
+          highlightColor: FlowColors.accentCyan.withValues(alpha: 0.06),
           onTap: onPressed,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),

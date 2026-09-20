@@ -274,7 +274,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         boxShadow: isSelected
             ? [
                 BoxShadow(
-                  color: FlowColors.cyan.withOpacity(0.12),
+                  color: FlowColors.cyan.withValues(alpha: 0.12),
                   blurRadius: 12,
                   offset: const Offset(0, 2),
                 ),

@@ -4,108 +4,190 @@ import 'flow_colors.dart';
 import 'flow_radii.dart';
 
 /// Flowstate Theme Configuration
+/// Enforces the 60-30-10 principle with a serene White primary identity and an optional Charcoal/Obsidian dark mode.
 class FlowTheme {
   FlowTheme._();
 
-  static ThemeData get darkTheme {
+  /// Primary Light Theme (Default Flowstate Experience)
+  static ThemeData lightTheme([Color accentColor = FlowColors.accentCyan]) {
     return ThemeData(
       useMaterial3: true,
-      brightness: Brightness.dark,
-      scaffoldBackgroundColor: FlowColors.darkBackground,
-      colorScheme: const ColorScheme.dark(
-        primary: FlowColors.cyan,
-        secondary: FlowColors.mint,
-        surface: FlowColors.darkSurface,
-        background: FlowColors.darkBackground,
+      brightness: Brightness.light,
+      scaffoldBackgroundColor: FlowColors.bgLight,
+      colorScheme: ColorScheme.light(
+        primary: accentColor,
+        secondary: FlowColors.accentMint,
+        surface: FlowColors.surfaceLight,
+        surfaceContainerHighest: FlowColors.surfaceElevatedLight,
+        outline: FlowColors.borderLight,
         onPrimary: FlowColors.textInverse,
         onSecondary: FlowColors.textInverse,
-        onSurface: FlowColors.textPrimary,
-        onBackground: FlowColors.textPrimary,
-        outline: FlowColors.darkBorder,
+        onSurface: FlowColors.textPrimaryLight,
       ),
-      textTheme: GoogleFonts.manropeTextTheme(
-        ThemeData.dark().textTheme,
+      textTheme: GoogleFonts.plusJakartaSansTextTheme(
+        ThemeData.light().textTheme,
+      ).apply(
+        bodyColor: FlowColors.textPrimaryLight,
+        displayColor: FlowColors.textPrimaryLight,
       ),
-      cardTheme: CardThemeData(
-        color: FlowColors.darkCard,
+      cardTheme: const CardThemeData(
+        color: FlowColors.surfaceLight,
         shape: RoundedRectangleBorder(
           borderRadius: FlowRadii.cardRadius,
-          side: const BorderSide(color: FlowColors.darkBorder, width: 1.0),
+          side: BorderSide(color: FlowColors.borderLight, width: 1.0),
         ),
         elevation: 0,
         margin: EdgeInsets.zero,
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: FlowColors.cyan,
+          backgroundColor: accentColor,
           foregroundColor: FlowColors.textInverse,
-          minimumSize: const Size(double.infinity, 52), // Mobile thumb target min 48px
-          shape: RoundedRectangleBorder(
+          minimumSize: const Size(double.infinity, 52), // Touch target >= 48px
+          shape: const RoundedRectangleBorder(
             borderRadius: FlowRadii.buttonRadius,
           ),
           elevation: 0,
-          textStyle: GoogleFonts.manrope(
-            fontSize: 16.0,
+          textStyle: GoogleFonts.plusJakartaSans(
+            fontSize: 16.5,
             fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: FlowColors.textPrimaryLight,
+          side: const BorderSide(color: FlowColors.borderLight, width: 1.0),
+          minimumSize: const Size(double.infinity, 52),
+          shape: const RoundedRectangleBorder(
+            borderRadius: FlowRadii.buttonRadius,
+          ),
+          elevation: 0,
+          textStyle: GoogleFonts.plusJakartaSans(
+            fontSize: 16.5,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: FlowColors.darkSurface,
-        hintStyle: GoogleFonts.manrope(
-          color: FlowColors.textMuted,
+        fillColor: FlowColors.surfaceLight,
+        hintStyle: GoogleFonts.plusJakartaSans(
+          color: FlowColors.textMutedLight,
           fontSize: 16.0,
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-        border: OutlineInputBorder(
+        border: const OutlineInputBorder(
           borderRadius: FlowRadii.inputRadius,
-          borderSide: const BorderSide(color: FlowColors.darkBorder, width: 1.0),
+          borderSide: BorderSide(color: FlowColors.borderLight, width: 1.0),
         ),
-        enabledBorder: OutlineInputBorder(
+        enabledBorder: const OutlineInputBorder(
           borderRadius: FlowRadii.inputRadius,
-          borderSide: const BorderSide(color: FlowColors.darkBorder, width: 1.0),
+          borderSide: BorderSide(color: FlowColors.borderLight, width: 1.0),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: FlowRadii.inputRadius,
-          borderSide: const BorderSide(color: FlowColors.cyan, width: 1.5),
+          borderSide: BorderSide(color: accentColor, width: 1.5),
         ),
       ),
-      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-        backgroundColor: FlowColors.darkSurface,
-        selectedItemColor: FlowColors.cyan,
-        unselectedItemColor: FlowColors.textSecondary,
+      bottomNavigationBarTheme: BottomNavigationBarThemeData(
+        backgroundColor: FlowColors.surfaceLight,
+        selectedItemColor: accentColor,
+        unselectedItemColor: FlowColors.textMutedLight,
         type: BottomNavigationBarType.fixed,
         elevation: 0,
       ),
     );
   }
 
-  static ThemeData get lightTheme {
+  /// Secondary Dark Theme (Optional Obsidian / Charcoal Experience)
+  static ThemeData darkTheme([Color accentColor = FlowColors.accentCyanDark]) {
     return ThemeData(
       useMaterial3: true,
-      brightness: Brightness.light,
-      scaffoldBackgroundColor: FlowColors.lightBackground,
-      colorScheme: const ColorScheme.light(
-        primary: FlowColors.deepTeal,
-        secondary: FlowColors.mint,
-        surface: FlowColors.lightSurface,
-        onPrimary: Colors.white,
-        onSecondary: Colors.white,
-        onSurface: FlowColors.lightTextPrimary,
-        outline: FlowColors.lightBorder,
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: FlowColors.bgDark,
+      colorScheme: ColorScheme.dark(
+        primary: accentColor,
+        secondary: FlowColors.accentMintDark,
+        surface: FlowColors.surfaceDark,
+        surfaceContainerHighest: FlowColors.surfaceElevatedDark,
+        outline: FlowColors.borderDark,
+        onPrimary: FlowColors.bgDark,
+        onSecondary: FlowColors.bgDark,
+        onSurface: FlowColors.textPrimaryDark,
       ),
-      textTheme: GoogleFonts.manropeTextTheme(
-        ThemeData.light().textTheme,
+      textTheme: GoogleFonts.plusJakartaSansTextTheme(
+        ThemeData.dark().textTheme,
+      ).apply(
+        bodyColor: FlowColors.textPrimaryDark,
+        displayColor: FlowColors.textPrimaryDark,
       ),
-      cardTheme: CardThemeData(
-        color: FlowColors.lightCard,
+      cardTheme: const CardThemeData(
+        color: FlowColors.surfaceDark,
         shape: RoundedRectangleBorder(
           borderRadius: FlowRadii.cardRadius,
-          side: const BorderSide(color: FlowColors.lightBorder, width: 1.0),
+          side: BorderSide(color: FlowColors.borderDark, width: 1.0),
         ),
         elevation: 0,
         margin: EdgeInsets.zero,
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: accentColor,
+          foregroundColor: FlowColors.bgDark,
+          minimumSize: const Size(double.infinity, 52),
+          shape: const RoundedRectangleBorder(
+            borderRadius: FlowRadii.buttonRadius,
+          ),
+          elevation: 0,
+          textStyle: GoogleFonts.plusJakartaSans(
+            fontSize: 16.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: FlowColors.textPrimaryDark,
+          side: const BorderSide(color: FlowColors.borderDark, width: 1.0),
+          minimumSize: const Size(double.infinity, 52),
+          shape: const RoundedRectangleBorder(
+            borderRadius: FlowRadii.buttonRadius,
+          ),
+          elevation: 0,
+          textStyle: GoogleFonts.plusJakartaSans(
+            fontSize: 16.5,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: FlowColors.surfaceDark,
+        hintStyle: GoogleFonts.plusJakartaSans(
+          color: FlowColors.textMutedDark,
+          fontSize: 16.0,
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        border: const OutlineInputBorder(
+          borderRadius: FlowRadii.inputRadius,
+          borderSide: BorderSide(color: FlowColors.borderDark, width: 1.0),
+        ),
+        enabledBorder: const OutlineInputBorder(
+          borderRadius: FlowRadii.inputRadius,
+          borderSide: BorderSide(color: FlowColors.borderDark, width: 1.0),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: FlowRadii.inputRadius,
+          borderSide: BorderSide(color: accentColor, width: 1.5),
+        ),
+      ),
+      bottomNavigationBarTheme: BottomNavigationBarThemeData(
+        backgroundColor: FlowColors.surfaceDark,
+        selectedItemColor: accentColor,
+        unselectedItemColor: FlowColors.textMutedDark,
+        type: BottomNavigationBarType.fixed,
+        elevation: 0,
       ),
     );
   }

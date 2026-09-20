@@ -28,13 +28,13 @@ class FlowLogo extends StatelessWidget {
         boxShadow: showGlow
             ? [
                 BoxShadow(
-                  color: FlowColors.cyan.withOpacity(0.35),
+                  color: FlowColors.cyan.withValues(alpha: 0.35),
                   blurRadius: size * 0.35,
                   spreadRadius: size * 0.05,
                   offset: const Offset(0, 4),
                 ),
                 BoxShadow(
-                  color: FlowColors.mint.withOpacity(0.2),
+                  color: FlowColors.mint.withValues(alpha: 0.2),
                   blurRadius: size * 0.45,
                   spreadRadius: size * 0.02,
                   offset: const Offset(0, 8),
@@ -75,7 +75,7 @@ class _FlowEmblemPainter extends CustomPainter {
 
     // Subtle inner calm rhythm accent
     final innerPaint = Paint()
-      ..color = FlowColors.darkBackground.withOpacity(0.2)
+      ..color = const Color(0xFF0F172A).withValues(alpha: 0.18)
       ..style = PaintingStyle.stroke
       ..strokeWidth = w * 0.08
       ..strokeCap = StrokeCap.round;

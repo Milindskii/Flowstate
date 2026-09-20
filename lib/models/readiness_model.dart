@@ -9,11 +9,11 @@ class EnergyPoint {
 /// Readiness Model
 /// Strictly non-medical. Evaluates user readiness for cognitive focus.
 class ReadinessModel {
-  final int score; // 76
+  final int? score; // 78 (null if uncalibrated - never fabricate)
   final int maxScore; // 100
-  final String statusMessage; // "Strong focus window coming up"
-  final String focusWindowRange; // "9:30 AM - 11:45 AM"
-  final String explanation; // "Based on your recent sleep, schedule and activity."
+  final String statusMessage; // "Strong focus window coming up" or "Learning your rhythm"
+  final String focusWindowRange; // "9:30 AM – 11:30 AM" or "We're still learning when you work best."
+  final String explanation; // "Your readiness is based on recent sleep, your usual rhythm, today's check-in, and what we've learned from your previous work sessions."
   final List<EnergyPoint> hourlyRhythm;
 
   final double confidence; // 0.0 to 1.0
@@ -22,8 +22,8 @@ class ReadinessModel {
   final List<String> factors;
 
   const ReadinessModel({
-    required this.score,
-    required this.maxScore,
+    this.score,
+    this.maxScore = 100,
     required this.statusMessage,
     required this.focusWindowRange,
     required this.explanation,
@@ -38,18 +38,23 @@ class ReadinessModel {
     ],
   });
 
-  /// Factory for new users with insufficient data
+  /// Factory for new users with insufficient data - strictly ZERO fabricated score
   factory ReadinessModel.uncalibrated() {
     return const ReadinessModel(
-      score: 0,
+      score: null,
       maxScore: 100,
-      statusMessage: 'Learning your rhythm...',
-      focusWindowRange: 'Calculating...',
-      explanation: 'Complete a few check-ins to personalize your recommendations.',
+      statusMessage: 'Learning your rhythm',
+      focusWindowRange: "We're still learning when you work best.",
+      explanation:
+          "Your readiness is based on recent sleep, your usual rhythm, today's check-in, and what we've learned from your previous work sessions.",
       hourlyRhythm: [],
       confidence: 0.0,
+      modelVersion: 'v1.0.0-deterministic',
       isCalibrated: false,
-      factors: ['Awaiting initial sleep & task logs'],
+      factors: [
+        'Awaiting initial task feedback',
+        'Learning your daily energy curve',
+      ],
     );
   }
 
@@ -70,16 +75,22 @@ class ReadinessModel {
           'Circadian focus window active',
         ];
 
+    final isCal = json['is_calibrated'] as bool? ?? (json['score'] != null);
+    final scoreVal = isCal ? (json['score'] as num?)?.toInt() : null;
+
     return ReadinessModel(
-      score: (json['score'] as num?)?.toInt() ?? 75,
+      score: scoreVal,
       maxScore: (json['max_score'] as num?)?.toInt() ?? 100,
-      statusMessage: json['status_message'] as String? ?? 'Strong focus window active',
-      focusWindowRange: json['focus_window_range'] as String? ?? '9:30 AM - 11:30 AM',
-      explanation: json['explanation'] as String? ?? 'Based on your recent rhythm.',
+      statusMessage: json['status_message'] as String? ??
+          (isCal ? 'Strong focus window active' : 'Learning your rhythm'),
+      focusWindowRange: json['focus_window_range'] as String? ??
+          (isCal ? '9:30 AM – 11:30 AM' : "We're still learning when you work best."),
+      explanation: json['explanation'] as String? ??
+          "Your readiness is based on recent sleep, your usual rhythm, today's check-in, and what we've learned from your previous work sessions.",
       hourlyRhythm: rhythmList,
-      confidence: (json['confidence'] as num?)?.toDouble() ?? 0.85,
+      confidence: (json['confidence'] as num?)?.toDouble() ?? (isCal ? 0.85 : 0.0),
       modelVersion: json['model_version'] as String? ?? 'v1.0.0-deterministic',
-      isCalibrated: json['is_calibrated'] as bool? ?? true,
+      isCalibrated: isCal,
       factors: factorsList,
     );
   }

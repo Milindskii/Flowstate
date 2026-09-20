@@ -21,13 +21,13 @@ Future<void> main() async {
     debugPrint('Supabase init notice: $e');
   }
 
-  // Set immersive dark status bar navigation styling
+  // Set clean system UI overlay (dark icons on light/white background)
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: Color(0xFF111722),
-      systemNavigationBarIconBrightness: Brightness.light,
+      statusBarIconBrightness: Brightness.dark,
+      systemNavigationBarColor: Colors.white,
+      systemNavigationBarIconBrightness: Brightness.dark,
     ),
   );
 
@@ -43,7 +43,8 @@ Future<void> main() async {
 }
 
 class FlowstateApp extends StatelessWidget {
-  const FlowstateApp({super.key});
+  final Widget? home;
+  const FlowstateApp({super.key, this.home});
 
   @override
   Widget build(BuildContext context) {
@@ -53,9 +54,11 @@ class FlowstateApp extends StatelessWidget {
       title: 'Flowstate',
       debugShowCheckedModeBanner: false,
       themeMode: themeProvider.themeMode,
-      theme: FlowTheme.lightTheme,
-      darkTheme: FlowTheme.darkTheme,
-      home: const SplashScreen(),
+      theme: FlowTheme.lightTheme(themeProvider.lightAccentColor),
+      darkTheme: FlowTheme.darkTheme(themeProvider.darkAccentColor),
+      themeAnimationDuration: const Duration(milliseconds: 240),
+      themeAnimationCurve: Curves.easeInOut,
+      home: home ?? const SplashScreen(),
     );
   }
 }

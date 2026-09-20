@@ -12,13 +12,20 @@ from .models.user_preferences import UserPreferences
 from .models.task import Task
 from .models.task_performance import TaskPerformance
 
-from .api.routes import auth, tasks
+from .api.routes import auth, tasks, today
 
 setup_logging()
 
 # Initialize DB tables
 try:
     Base.metadata.create_all(bind=engine)
+    with engine.connect() as conn:
+        for col, col_type in [("accent_color", "VARCHAR DEFAULT 'cyan'"), ("density_mode", "VARCHAR DEFAULT 'comfortable'")]:
+            try:
+                conn.execute(text(f"ALTER TABLE user_preferences ADD COLUMN {col} {col_type}"))
+                conn.commit()
+            except Exception:
+                pass
 except Exception as e:
     logger.warning(f"Database initialization warning: {e}")
 
@@ -49,6 +56,7 @@ app.add_middleware(
 # Include API v1 Routers
 app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(tasks.router, prefix=settings.API_V1_STR)
+app.include_router(today.router, prefix=settings.API_V1_STR)
 
 @app.get("/health", tags=["Health"])
 def health_check():

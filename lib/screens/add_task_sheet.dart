@@ -4,6 +4,7 @@ import '../models/task_item.dart';
 import '../providers/app_state_provider.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_radii.dart';
+import '../theme/flow_spacing.dart';
 import '../theme/flow_typography.dart';
 import '../components/primary_button.dart';
 import '../components/secondary_button.dart';
@@ -98,8 +99,8 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
         ),
       ),
       padding: EdgeInsets.only(
-        left: 24,
-        right: 24,
+        left: FlowSpacing.pageMargin(context),
+        right: FlowSpacing.pageMargin(context),
         top: 20,
         bottom: MediaQuery.of(context).viewInsets.bottom + 28,
       ),
@@ -214,7 +215,7 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
                 Text('High Priority Task', style: FlowTypography.bodyLarge()),
                 Switch.adaptive(
                   value: _isPriority,
-                  activeColor: FlowColors.cyanLight,
+                  activeThumbColor: FlowColors.cyanLight,
                   onChanged: (val) => setState(() => _isPriority = val),
                 ),
               ],

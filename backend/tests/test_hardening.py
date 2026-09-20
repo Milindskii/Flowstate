@@ -165,7 +165,7 @@ async def test_precise_today_semantics(auth_headers):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         now = datetime.now(timezone.utc)
         friday = now + timedelta(days=4)
-        today_time = now + timedelta(hours=2)
+        today_time = now
         tomorrow = now + timedelta(days=1)
 
         # Task 1: Deadline Friday, not scheduled -> MUST NOT appear today

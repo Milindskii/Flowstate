@@ -47,7 +47,7 @@ class TaskDifficultyBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: bg,
         borderRadius: FlowRadii.pillRadius,
-        border: Border.all(color: textColor.withOpacity(0.3), width: 0.8),
+        border: Border.all(color: textColor.withValues(alpha: 0.3), width: 0.8),
       ),
       child: Text(
         label,

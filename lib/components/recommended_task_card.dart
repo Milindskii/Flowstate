@@ -63,7 +63,7 @@ class RecommendedTaskCard extends StatelessWidget {
                           gradient: FlowColors.primaryGradient,
                           boxShadow: [
                             BoxShadow(
-                              color: FlowColors.cyan.withOpacity(0.35),
+                              color: FlowColors.cyan.withValues(alpha: 0.35),
                               blurRadius: 12,
                               offset: const Offset(0, 4),
                             ),
@@ -101,7 +101,7 @@ class RecommendedTaskCard extends StatelessWidget {
                 Container(
                   width: double.infinity,
                   height: 48, // Touch target
-                  decoration: BoxDecoration(
+                  decoration: const BoxDecoration(
                     borderRadius: FlowRadii.buttonRadius,
                     gradient: FlowColors.primaryGradient,
                   ),
@@ -109,7 +109,7 @@ class RecommendedTaskCard extends StatelessWidget {
                     color: Colors.transparent,
                     child: InkWell(
                       borderRadius: FlowRadii.buttonRadius,
-                      splashColor: Colors.white.withOpacity(0.2),
+                      splashColor: Colors.white.withValues(alpha: 0.2),
                       onTap: onStart,
                       child: Center(
                         child: Text(

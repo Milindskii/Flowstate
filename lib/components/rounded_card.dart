@@ -27,22 +27,29 @@ class RoundedCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final borderRadius = BorderRadius.circular(radius);
+    final cardBg = backgroundColor ?? FlowColors.surface(context);
+    final borderSide = border ?? BorderSide(color: FlowColors.border(context), width: 1.0);
 
     return Container(
       decoration: BoxDecoration(
-        color: gradient == null ? (backgroundColor ?? FlowColors.darkCard) : null,
+        color: gradient == null ? cardBg : null,
         gradient: gradient,
         borderRadius: borderRadius,
-        border: Border.fromBorderSide(
-          border ?? const BorderSide(color: FlowColors.darkBorder, width: 1.0),
-        ),
+        border: Border.fromBorderSide(borderSide),
+        boxShadow: [
+          BoxShadow(
+            color: FlowColors.softShadow(context),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           borderRadius: borderRadius,
-          splashColor: onTap != null ? FlowColors.cyan.withOpacity(0.08) : Colors.transparent,
-          highlightColor: onTap != null ? FlowColors.cyan.withOpacity(0.04) : Colors.transparent,
+          splashColor: onTap != null ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.08) : Colors.transparent,
+          highlightColor: onTap != null ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.04) : Colors.transparent,
           onTap: onTap,
           child: Padding(
             padding: padding,

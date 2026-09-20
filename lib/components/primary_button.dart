@@ -1,15 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/theme_provider.dart';
 import '../theme/flow_colors.dart';
+import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
 
-/// Thumb-friendly Primary Button (Min height 52px, 18px radius, touch feedback)
+/// Flat Primary Button using user-customized accent color (Min height 52px, 18px radius)
 class PrimaryButton extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
   final Widget? icon;
   final bool isLoading;
   final bool fullWidth;
+  final Color? customColor;
 
   const PrimaryButton({
     super.key,
@@ -18,31 +22,36 @@ class PrimaryButton extends StatelessWidget {
     this.icon,
     this.isLoading = false,
     this.fullWidth = true,
+    this.customColor,
   });
 
   @override
   Widget build(BuildContext context) {
+    Color accent = customColor ?? FlowColors.accentCyan;
+    try {
+      final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
+      accent = customColor ?? themeProvider.resolveAccent(context);
+    } catch (_) {}
+
     return Container(
       width: fullWidth ? double.infinity : null,
-      height: 52.0, // Mobile thumb-friendly target (> 44px)
+      height: 52.0, // Mobile thumb-friendly target (> 48px)
       decoration: BoxDecoration(
+        color: accent,
         borderRadius: FlowRadii.buttonRadius,
-        gradient: FlowColors.primaryGradient,
-        boxShadow: [
-          BoxShadow(
-            color: FlowColors.cyan.withOpacity(0.25),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-          ),
-        ],
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           borderRadius: FlowRadii.buttonRadius,
-          splashColor: Colors.white.withOpacity(0.2),
-          highlightColor: Colors.white.withOpacity(0.1),
-          onTap: isLoading ? null : onPressed,
+          splashColor: Colors.black.withValues(alpha: 0.15),
+          highlightColor: Colors.black.withValues(alpha: 0.08),
+          onTap: isLoading || onPressed == null
+              ? null
+              : () {
+                  FlowHaptics.lightTap();
+                  onPressed!();
+                },
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Row(

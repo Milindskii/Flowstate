@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/task_item.dart';
 import '../theme/flow_colors.dart';
+import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
 
@@ -19,15 +20,26 @@ class TaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final borderColor = task.isCompleted
+        ? FlowColors.successOf(context).withValues(alpha: 0.3)
+        : FlowColors.border(context);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
-        color: FlowColors.darkCard,
+        color: FlowColors.surface(context),
         borderRadius: FlowRadii.cardRadius,
         border: Border.all(
-          color: task.isCompleted ? FlowColors.mint.withOpacity(0.3) : FlowColors.darkBorder,
+          color: borderColor,
           width: 1.0,
         ),
+        boxShadow: [
+          BoxShadow(
+            color: FlowColors.softShadow(context),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Material(
         color: Colors.transparent,
@@ -122,7 +134,14 @@ class TaskCard extends StatelessWidget {
                         ),
                         // Complete Checkbox Button (48px tap target)
                         InkWell(
-                          onTap: onToggleComplete,
+                          onTap: () {
+                            if (!task.isCompleted) {
+                              FlowHaptics.success();
+                            } else {
+                              FlowHaptics.lightTap();
+                            }
+                            onToggleComplete();
+                          },
                           borderRadius: BorderRadius.circular(24),
                           child: Padding(
                             padding: const EdgeInsets.all(6.0),
@@ -130,7 +149,7 @@ class TaskCard extends StatelessWidget {
                               task.isCompleted
                                   ? Icons.check_circle_rounded
                                   : Icons.check_circle_outline_rounded,
-                              color: task.isCompleted ? FlowColors.mint : FlowColors.mintLight,
+                              color: task.isCompleted ? FlowColors.successOf(context) : FlowColors.textMutedOf(context),
                               size: 26,
                             ),
                           ),
@@ -159,7 +178,7 @@ class TaskCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: bgColor,
         borderRadius: FlowRadii.pillRadius,
-        border: Border.all(color: FlowColors.darkBorder.withOpacity(0.5), width: 0.8),
+        border: Border.all(color: FlowColors.darkBorder.withValues(alpha: 0.5), width: 0.8),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

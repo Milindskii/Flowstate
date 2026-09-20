@@ -26,7 +26,7 @@ class ReadinessHeroCard extends StatelessWidget {
         border: Border.all(color: FlowColors.darkBorder, width: 1.0),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 16,
             offset: const Offset(0, 4),
           ),
@@ -70,7 +70,7 @@ class ReadinessHeroCard extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: FlowColors.tagDeepWorkBg,
                         borderRadius: FlowRadii.pillRadius,
-                        border: Border.all(color: FlowColors.cyan.withOpacity(0.4), width: 1.0),
+                        border: Border.all(color: FlowColors.cyan.withValues(alpha: 0.4), width: 1.0),
                       ),
                       child: Text(
                         '${readiness.score}/${readiness.maxScore}',

@@ -60,8 +60,8 @@ class EnergyCurvePainter extends CustomPainter {
     final fillPaint = Paint()
       ..shader = LinearGradient(
         colors: [
-          FlowColors.cyan.withOpacity(0.32),
-          FlowColors.mint.withOpacity(0.18),
+          FlowColors.cyan.withValues(alpha: 0.32),
+          FlowColors.mint.withValues(alpha: 0.18),
           Colors.transparent,
         ],
         stops: const [0.0, 0.45, 1.0],
@@ -90,7 +90,7 @@ class EnergyCurvePainter extends CustomPainter {
       final peak = offsets[2];
 
       final glowPaint = Paint()
-        ..color = FlowColors.cyan.withOpacity(0.35)
+        ..color = FlowColors.cyan.withValues(alpha: 0.35)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
       canvas.drawCircle(peak, 8, glowPaint);
 
@@ -103,7 +103,7 @@ class EnergyCurvePainter extends CustomPainter {
 
     // Draw baseline
     final linePaint = Paint()
-      ..color = FlowColors.darkBorder.withOpacity(0.6)
+      ..color = FlowColors.darkBorder.withValues(alpha: 0.6)
       ..strokeWidth = 1.0;
     canvas.drawLine(Offset(0, graphHeight), Offset(width, graphHeight), linePaint);
 
