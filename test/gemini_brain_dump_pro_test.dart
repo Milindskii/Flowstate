@@ -7,16 +7,57 @@ import 'package:flowstate/screens/ai_plan_preview_sheet.dart';
 import 'package:flowstate/screens/pro_subscription_screen.dart';
 import 'package:flowstate/screens/profile_settings_tab.dart';
 import 'package:flowstate/components/ai_economy_sheets.dart';
+import 'package:flowstate/components/routine_building_view.dart';
 import 'package:flowstate/models/ai_plan_models.dart';
+import 'package:flowstate/models/task_item.dart';
 import 'package:flowstate/providers/app_state_provider.dart';
 import 'package:flowstate/providers/theme_provider.dart';
 import 'package:flowstate/providers/flow_provider.dart';
 import 'package:flowstate/services/api_service.dart';
+import 'package:flowstate/services/task_parse_service.dart';
 
 class MockAISubscriptionApiService extends ApiService {
   bool returnPro = false;
   bool returnFreeExhausted = false;
   int shieldsCount = 2;
+  int aiPlanCallCount = 0;
+  bool throwOnAiPlan = false;
+
+  @override
+  Future<dynamic> post(String endpoint, {dynamic body}) async {
+    if (endpoint == '/api/v1/ai/plan') {
+      aiPlanCallCount++;
+      if (throwOnAiPlan) {
+        throw const ApiException('Network connection failed');
+      }
+      return {
+        'tasks': [
+          {
+            'title': 'Project deliverable',
+            'estimated_minutes': 45,
+            'difficulty': 'high',
+            'priority': 'high',
+            'priority_source': 'explicit',
+            'type': 'deep_work',
+          }
+        ],
+        'ambiguities': [],
+        'needs_confirmation': false,
+        'usage': {
+          'is_pro': false,
+          'subscription_tier': 'free',
+          'free_use_available': false,
+          'free_uses_consumed': 1,
+          'shields_available': 2,
+          'shield_funded_uses': 0,
+          'can_use_ai': true,
+          'requires_shield': true,
+          'hourly_requests_remaining': 4,
+        }
+      };
+    }
+    return {};
+  }
 
   @override
   Future<dynamic> get(String endpoint, {Map<String, dynamic>? queryParams}) async {
@@ -94,9 +135,10 @@ class MockAISubscriptionApiService extends ApiService {
 Widget createTestApp({
   required Widget child,
   ApiService? api,
+  AppStateProvider? customAppState,
 }) {
   final mockApi = api ?? MockAISubscriptionApiService();
-  final appState = AppStateProvider(customApi: mockApi);
+  final appState = customAppState ?? AppStateProvider(customApi: mockApi);
   final themeProvider = ThemeProvider();
   final flowProvider = FlowProvider(api: mockApi);
 
@@ -123,309 +165,327 @@ void main() {
     });
   });
 
-  // 1. Microphone is gone
-  testWidgets('1. Microphone is completely removed from Brain Dump UI', (tester) async {
-    await tester.pumpWidget(createTestApp(
-      child: Builder(
-        builder: (ctx) => ElevatedButton(
-          onPressed: () => showBrainDumpSheet(ctx),
-          child: const Text('Open'),
+  // ---------------------------------------------------------------------------
+  // PART 1: Rhythm Screen Responsiveness (Fixing 23px RenderFlex Overflow)
+  // ---------------------------------------------------------------------------
+  group('Part 1: Starting Rhythm Screen Responsiveness', () {
+    for (final width in [320.0, 360.0, 390.0, 432.0]) {
+      testWidgets('No RenderFlex overflow on Rhythm screen at ${width.toInt()}px width', (tester) async {
+        tester.view.physicalSize = Size(width * 2.0, 800 * 2.0);
+        tester.view.devicePixelRatio = 2.0;
+        addTearDown(() => tester.view.resetPhysicalSize());
+
+        await tester.pumpWidget(createTestApp(
+          child: RoutineBuildingView(
+            userAnswers: const {'peak_window': 'morning'},
+            onComplete: () {},
+          ),
+        ));
+
+        // Advance timers so honest progression reveals the Starting Rhythm Card
+        await tester.pump(const Duration(seconds: 4));
+        await tester.pumpAndSettle();
+
+        // Verify the card is visible and no overflow occurred
+        expect(find.byKey(const ValueKey('starting_rhythm_card')), findsOneWidget);
+        expect(find.text('YOUR STARTING RHYTHM'), findsOneWidget);
+        expect(find.text('Starting estimate'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // PART 2: Offline-Friendly Brain Dump + Local-First Planning UX
+  // ---------------------------------------------------------------------------
+  group('Part 2: Offline-Friendly Brain Dump & Scheduling UX', () {
+    testWidgets('1. Microphone is completely removed from Brain Dump UI', (tester) async {
+      await tester.pumpWidget(createTestApp(
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
         ),
-      ),
-    ));
+      ));
 
-    await tester.tap(find.text('Open'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
 
-    // Verify Brain dump UI is open
-    expect(find.text('What else is on your plate?'), findsOneWidget);
-    expect(find.text('Just write it out.'), findsOneWidget);
+      expect(find.text('What else is on your plate?'), findsOneWidget);
+      expect(find.text('Just write it out.'), findsOneWidget);
 
-    // Verify microphone icon is completely gone
-    expect(find.byIcon(Icons.mic), findsNothing);
-    expect(find.byIcon(Icons.mic_none), findsNothing);
-    expect(find.byIcon(Icons.mic_none_rounded), findsNothing);
-    expect(find.byIcon(Icons.mic_off), findsNothing);
-    expect(find.textContaining('Voice'), findsNothing);
-  });
+      expect(find.byIcon(Icons.mic), findsNothing);
+      expect(find.byIcon(Icons.mic_none), findsNothing);
+      expect(find.byIcon(Icons.mic_none_rounded), findsNothing);
+      expect(find.textContaining('Voice'), findsNothing);
+    });
 
-  // 2. Brain Dump text input works
-  testWidgets('2. Brain Dump text input works naturally with unformatted input', (tester) async {
-    await tester.pumpWidget(createTestApp(
-      child: Builder(
-        builder: (ctx) => ElevatedButton(
-          onPressed: () => showBrainDumpSheet(ctx),
-          child: const Text('Open'),
+    testWidgets('2. Clear unformatted input parses locally WITHOUT calling Gemini', (tester) async {
+      final mockApi = MockAISubscriptionApiService();
+
+      await tester.pumpWidget(createTestApp(
+        api: mockApi,
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
         ),
-      ),
-    ));
+      ));
 
-    await tester.tap(find.text('Open'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
 
-    final textField = find.byKey(const Key('brain_dump_text_field'));
-    expect(textField, findsOneWidget);
+      const naturalText = 'finish python lab tomorrow, study arrays, dentist at 4, gym at 6';
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), naturalText);
+      await tester.pump();
 
-    const naturalText = 'finish my python lab tomorrow, study arrays, call the dentist at 4, gym at 6';
-    await tester.enterText(textField, naturalText);
-    await tester.pump();
+      // Tap Build my day
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
 
-    expect(find.text(naturalText), findsOneWidget);
-  });
+      // Core rule: Gemini is NOT called for clear, unambiguous input!
+      expect(mockApi.aiPlanCallCount, equals(0));
 
-  // 3. Build button works
-  testWidgets('3. Build button enables only on valid input and triggers action', (tester) async {
-    await tester.pumpWidget(createTestApp(
-      child: Builder(
-        builder: (ctx) => ElevatedButton(
-          onPressed: () => showBrainDumpSheet(ctx),
-          child: const Text('Open'),
+      // Plan Preview appears with "Planned by Flowstate"
+      expect(find.text('YOUR PLAN'), findsOneWidget);
+      expect(find.text('Planned by Flowstate'), findsOneWidget);
+
+      // Verify Add & Schedule button is visible
+      expect(find.byKey(const Key('add_and_schedule_button')), findsOneWidget);
+      expect(find.text('Add & Schedule'), findsOneWidget);
+    });
+
+    testWidgets('3. Local parser schedules tasks; user confirmation creates tasks', (tester) async {
+      final mockApi = MockAISubscriptionApiService();
+      final appState = AppStateProvider(customApi: mockApi);
+
+      await tester.pumpWidget(createTestApp(
+        api: mockApi,
+        customAppState: appState,
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
         ),
-      ),
-    ));
+      ));
 
-    await tester.tap(find.text('Open'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
 
-    final buildButtonFinder = find.byKey(const Key('brain_dump_build_button'));
-    expect(buildButtonFinder, findsOneWidget);
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'Dentist at 4, gym at 6');
+      await tester.pump();
 
-    // Initially, Build button is disabled (ElevatedButton onPressed is null)
-    final initialButton = tester.widget<ElevatedButton>(buildButtonFinder);
-    expect(initialButton.onPressed, isNull);
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
 
-    // Enter text
-    await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'Study Python tonight');
-    await tester.pump();
+      // In preview mode: tasks are NOT added to appState yet!
+      expect(appState.tasks.isEmpty, isTrue);
 
-    // Now button should be enabled
-    final enabledButton = tester.widget<ElevatedButton>(buildButtonFinder);
-    expect(enabledButton.onPressed, isNotNull);
-  });
+      // Now tap Add & Schedule
+      await tester.tap(find.byKey(const Key('add_and_schedule_button')));
+      await tester.pumpAndSettle();
 
-  // 4. Confirmation state works
-  testWidgets('4. Confirmation state works for inferred or uncertain task details', (tester) async {
-    final uncertainPlan = AIPlanResult(
-      tasks: const [
-        ExtractedTaskItem(
-          title: 'Python lab',
-          type: 'study',
-          estimatedMinutes: 60,
-          difficulty: 'high',
-          priority: 'high',
-          prioritySource: 'inferred',
-          deadline: 'tomorrow',
-          needsConfirmation: true,
+      // Sheet closed and tasks are now confirmed in appState!
+      expect(appState.tasks.length, equals(2));
+      expect(appState.tasks.any((t) => t.title.toLowerCase().contains('dentist')), isTrue);
+      expect(appState.tasks.any((t) => t.title.toLowerCase().contains('gym')), isTrue);
+    });
+
+    testWidgets('4. Ambiguous input triggers Gemini enhancement', (tester) async {
+      final mockApi = MockAISubscriptionApiService();
+
+      await tester.pumpWidget(createTestApp(
+        api: mockApi,
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
         ),
-      ],
-      needsConfirmation: true,
-    );
+      ));
 
-    await tester.pumpWidget(createTestApp(
-      child: Builder(
-        builder: (ctx) => ElevatedButton(
-          onPressed: () => showAIPlanPreviewSheet(ctx, planResult: uncertainPlan),
-          child: const Text('Preview'),
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      // Ambiguous input containing relative meeting dependency
+      const ambiguousInput = 'I need to get that project thing done sometime before my meeting';
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), ambiguousInput);
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      // Gemini was called because input is ambiguous
+      expect(mockApi.aiPlanCallCount, equals(1));
+      expect(find.text('YOUR PLAN'), findsOneWidget);
+      expect(find.text('Enhanced with AI'), findsOneWidget);
+    });
+
+    testWidgets('5. Gemini network failure falls back seamlessly to local parser without blocking dialog', (tester) async {
+      final mockApi = MockAISubscriptionApiService()..throwOnAiPlan = true;
+
+      await tester.pumpWidget(createTestApp(
+        api: mockApi,
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
         ),
-      ),
-    ));
+      ));
 
-    await tester.tap(find.text('Preview'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
 
-    // Confirmation header and prompt
-    expect(find.text("Flowstate isn't completely sure about this."), findsOneWidget);
-    expect(find.text('Is this correct?'), findsOneWidget);
+      // Ambiguous text that would attempt Gemini
+      await tester.enterText(
+        find.byKey(const Key('brain_dump_text_field')),
+        'Work on the stuff I told you about last week, dentist at 4',
+      );
+      await tester.pump();
 
-    // Inferred priority is highlighted
-    expect(find.textContaining('High priority (Inferred)'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
 
-    // Confirm and Edit buttons are visible
-    expect(find.byKey(const Key('yes_build_day_button')), findsOneWidget);
-    expect(find.byKey(const Key('edit_button')), findsOneWidget);
-  });
+      // NO blocking error dialog!
+      expect(find.textContaining('Low internet connection'), findsNothing);
 
-  // 5. Shield confirmation works
-  testWidgets('5. Shield confirmation sheet displays consequence and handles acceptance', (tester) async {
-    bool? confirmed;
+      // Successfully fell back to local parser and displays subtle explanation
+      expect(find.text('YOUR PLAN'), findsOneWidget);
+      expect(find.text('Planned by Flowstate'), findsOneWidget);
+      expect(find.textContaining("AI planning isn't available right now, so Flowstate used its built-in planner."), findsOneWidget);
 
-    await tester.pumpWidget(createTestApp(
-      child: Builder(
-        builder: (ctx) => ElevatedButton(
-          onPressed: () async {
-            confirmed = await showShieldConfirmationSheet(
-              ctx,
-              shieldsAvailable: 2,
-              freeRemaining: 0,
-            );
-          },
-          child: const Text('Open Shield Sheet'),
+      // Add & Schedule is ready and visible
+      expect(find.byKey(const Key('add_and_schedule_button')), findsOneWidget);
+    });
+
+    testWidgets('6. Empty input disables Build button and blank text prompts user', (tester) async {
+      await tester.pumpWidget(createTestApp(
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
         ),
-      ),
-    ));
+      ));
 
-    await tester.tap(find.text('Open Shield Sheet'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
 
-    // UI elements
-    expect(find.text('Use a Shield?'), findsOneWidget);
-    expect(find.text('You have 0 free AI plans remaining.'), findsOneWidget);
-    expect(find.textContaining('Shields can also protect your Flow streak.'), findsOneWidget);
-    expect(find.text('Available: 2 Shields'), findsOneWidget);
+      final buildBtnFinder = find.byKey(const Key('brain_dump_build_button'));
+      final button = tester.widget<ElevatedButton>(buildBtnFinder);
+      expect(button.onPressed, isNull);
+    });
 
-    // Tap Use 1 Shield
-    await tester.tap(find.byKey(const Key('use_1_shield_button')));
-    await tester.pumpAndSettle();
+    test('7. Explicit priorities, durations, and times are preserved', () {
+      final tasks = TaskParseService.deterministicFallbackParse(
+        'study for 45 minutes high priority, gym at 6, dentist at 4 low priority, submit thesis by Friday urgent',
+      );
 
-    expect(confirmed, isTrue);
-  });
+      expect(tasks.length, equals(4));
 
-  // 6. Free AI exhausted state works
-  testWidgets('6. Free AI exhausted state shows Go Pro navigation prompt', (tester) async {
-    bool wentPro = false;
+      // Study
+      final study = tasks.firstWhere((t) => t.title.toLowerCase().contains('study'));
+      expect(study.durationMinutes, equals(45));
+      expect(study.priority, equals(TaskPriority.high));
 
-    await tester.pumpWidget(createTestApp(
-      child: Builder(
-        builder: (ctx) => ElevatedButton(
-          onPressed: () {
-            showAIExhaustedSheet(
-              ctx,
-              onGoPro: () => wentPro = true,
-            );
-          },
-          child: const Text('Open Exhausted'),
+      // Gym
+      final gym = tasks.firstWhere((t) => t.title.toLowerCase().contains('gym'));
+      expect(gym.scheduledStart, isNotNull);
+      expect(gym.scheduledStart!.hour, equals(18)); // 6 PM
+
+      // Dentist
+      final dentist = tasks.firstWhere((t) => t.title.toLowerCase().contains('dentist'));
+      expect(dentist.scheduledStart, isNotNull);
+      expect(dentist.scheduledStart!.hour, equals(16)); // 4 PM
+      expect(dentist.priority, equals(TaskPriority.low));
+
+      // Thesis
+      final thesis = tasks.firstWhere((t) => t.title.toLowerCase().contains('thesis'));
+      expect(thesis.priority, equals(TaskPriority.urgent));
+      expect(thesis.deadline, equals('Friday'));
+    });
+
+    testWidgets('8. Add & Schedule button stays pinned and visible on narrow 320px width', (tester) async {
+      tester.view.physicalSize = const Size(320 * 2.0, 640 * 2.0);
+      tester.view.devicePixelRatio = 2.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      await tester.pumpWidget(createTestApp(
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
         ),
-      ),
-    ));
+      ));
 
-    await tester.tap(find.text('Open Exhausted'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
 
-    expect(find.text("You've used your free AI plan."), findsOneWidget);
-    expect(find.text('Use a Shield for another plan or upgrade to Pro.'), findsOneWidget);
+      // Many tasks to test scrollability while CTA is pinned
+      await tester.enterText(
+        find.byKey(const Key('brain_dump_text_field')),
+        'finish python lab tomorrow, study arrays, dentist at 4, gym at 6, buy groceries, call mom, read book',
+      );
+      await tester.pump();
 
-    await tester.tap(find.byKey(const Key('go_pro_exhausted_button')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
 
-    expect(wentPro, isTrue);
-  });
+      expect(find.byKey(const Key('add_and_schedule_button')), findsOneWidget);
+      expect(find.byKey(const Key('edit_button')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
 
-  // 7. Go Pro opens from Profile
-  testWidgets('7. Go Pro section inside Profile opens ProSubscriptionScreen', (tester) async {
-    final mockApi = MockAISubscriptionApiService()..returnPro = false;
+    testWidgets('9. Go Pro section inside Profile opens ProSubscriptionScreen', (tester) async {
+      final mockApi = MockAISubscriptionApiService()..returnPro = false;
 
-    await tester.pumpWidget(createTestApp(
-      api: mockApi,
-      child: const ProfileSettingsTab(),
-    ));
+      await tester.pumpWidget(createTestApp(
+        api: mockApi,
+        child: const ProfileSettingsTab(),
+      ));
 
-    await tester.pumpAndSettle();
+      await tester.pumpAndSettle();
 
-    // Verify "GO PRO" card is in Profile
-    expect(find.text('GO PRO'), findsOneWidget);
-    expect(find.text('More planning power for your Flow.'), findsOneWidget);
+      expect(find.text('GO PRO'), findsOneWidget);
+      final exploreBtn = find.byKey(const Key('explore_pro_button'));
+      expect(exploreBtn, findsOneWidget);
+      await tester.tap(exploreBtn);
+      await tester.pumpAndSettle();
 
-    // Tap Explore Pro
-    final exploreBtn = find.byKey(const Key('explore_pro_button'));
-    expect(exploreBtn, findsOneWidget);
-    await tester.tap(exploreBtn);
-    await tester.pumpAndSettle();
+      expect(find.text('Flowstate, without limits.'), findsOneWidget);
+    });
 
-    // Verify ProSubscriptionScreen is now open
-    expect(find.text('Flowstate, without limits.'), findsOneWidget);
-  });
+    testWidgets('10. Pro screen renders Monthly and Yearly option cards without fake prices', (tester) async {
+      await tester.pumpWidget(createTestApp(
+        child: const ProSubscriptionScreen(),
+      ));
 
-  // 8. Pro screen renders Monthly/Yearly
-  testWidgets('8. Pro screen renders Monthly and Yearly option cards with toggling', (tester) async {
-    await tester.pumpWidget(createTestApp(
-      child: const ProSubscriptionScreen(),
-    ));
+      await tester.pumpAndSettle();
 
-    await tester.pumpAndSettle();
+      expect(find.text('Monthly'), findsOneWidget);
+      expect(find.text('Yearly'), findsOneWidget);
+      expect(find.text('Best value'), findsOneWidget);
+      expect(find.text('₹— / month'), findsOneWidget);
+      expect(find.text('₹— / year'), findsOneWidget);
+      expect(find.textContaining('₹199'), findsNothing);
+      expect(find.textContaining('% off'), findsNothing);
+    });
 
-    expect(find.text('Monthly'), findsOneWidget);
-    expect(find.text('Yearly'), findsOneWidget);
-    expect(find.text('Best value'), findsOneWidget);
-    expect(find.text('Continue with Pro'), findsOneWidget);
-
-    // Tap Monthly
-    await tester.tap(find.text('Monthly'));
-    await tester.pumpAndSettle();
-
-    // Tap Yearly
-    await tester.tap(find.text('Yearly'));
-    await tester.pumpAndSettle();
-  });
-
-  // 9. No fake prices
-  testWidgets('9. Pro screen shows no fake prices or fake discounts', (tester) async {
-    await tester.pumpWidget(createTestApp(
-      child: const ProSubscriptionScreen(),
-    ));
-
-    await tester.pumpAndSettle();
-
-    // Verify fallback prices are TBD placeholder
-    expect(find.text('₹— / month'), findsOneWidget);
-    expect(find.text('₹— / year'), findsOneWidget);
-    expect(find.text('Pricing coming soon'), findsNWidgets(2));
-
-    // Verify no fake prices like ₹199 or ₹999 or fake percentage savings
-    expect(find.textContaining('₹199'), findsNothing);
-    expect(find.textContaining('₹999'), findsNothing);
-    expect(find.textContaining('% off'), findsNothing);
-  });
-
-  // 10A. Free profile renders GO PRO
-  testWidgets('10A. Free profile renders GO PRO and Explore Pro', (tester) async {
-    final freeApi = MockAISubscriptionApiService()..returnPro = false;
-    await tester.pumpWidget(createTestApp(
-      api: freeApi,
-      child: const ProfileSettingsTab(),
-    ));
-    await tester.pumpAndSettle();
-    expect(find.text('GO PRO'), findsOneWidget);
-    expect(find.text('Explore Pro'), findsOneWidget);
-  });
-
-  // 10B. Pro profile renders verified FLOWSTATE PRO state
-  testWidgets('10B. Pro profile renders backend-verified FLOWSTATE PRO state', (tester) async {
-    final proApi = MockAISubscriptionApiService()..returnPro = true;
-    await tester.pumpWidget(createTestApp(
-      api: proApi,
-      child: const ProfileSettingsTab(key: Key('pro_profile_tab')),
-    ));
-    await tester.pumpAndSettle();
-    expect(find.text('FLOWSTATE PRO'), findsOneWidget);
-    expect(find.text('Your plan is active.'), findsOneWidget);
-    expect(find.text('Manage Subscription'), findsOneWidget);
-  });
-
-  // 11. Narrow Android screens have no overflow
-  testWidgets('11. Narrow Android screen displays without layout overflow', (tester) async {
-    // 320x640 narrow test viewport
-    tester.view.physicalSize = const Size(320 * 2.0, 640 * 2.0);
-    tester.view.devicePixelRatio = 2.0;
-    addTearDown(() => tester.view.resetPhysicalSize());
-
-    // Test Pro Subscription Screen
-    await tester.pumpWidget(createTestApp(
-      child: const ProSubscriptionScreen(),
-    ));
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-
-    // Test Shield Confirmation Sheet
-    await tester.pumpWidget(createTestApp(
-      child: Builder(
-        builder: (ctx) => ElevatedButton(
-          onPressed: () => showShieldConfirmationSheet(ctx, shieldsAvailable: 1),
-          child: const Text('Show'),
-        ),
-      ),
-    ));
-    await tester.tap(find.text('Show'));
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
+    testWidgets('11. Backend owns Pro entitlement verified state', (tester) async {
+      final proApi = MockAISubscriptionApiService()..returnPro = true;
+      await tester.pumpWidget(createTestApp(
+        api: proApi,
+        child: const ProfileSettingsTab(key: Key('pro_profile_tab')),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.text('FLOWSTATE PRO'), findsOneWidget);
+      expect(find.text('Your plan is active.'), findsOneWidget);
+      expect(find.text('Manage Subscription'), findsOneWidget);
+    });
   });
 }

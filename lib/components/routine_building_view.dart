@@ -83,6 +83,7 @@ class _RoutineBuildingViewState extends State<RoutineBuildingView>
         });
       } else {
         timer.cancel();
+        _circleAnimController.stop();
         FlowHaptics.success();
         setState(() {
           _isBuilt = true;
@@ -105,10 +106,13 @@ class _RoutineBuildingViewState extends State<RoutineBuildingView>
   // Step A: Calm Circular Loading & Step Progression
   // ---------------------------------------------------------------------------
   Widget _buildBuildingStep() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final horizontalPad = screenWidth < 360 ? 16.0 : (screenWidth < 400 ? 24.0 : 32.0);
+
     return Center(
       key: const ValueKey('building_step'),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32.0),
+        padding: EdgeInsets.symmetric(horizontal: horizontalPad),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -163,58 +167,62 @@ class _RoutineBuildingViewState extends State<RoutineBuildingView>
             const SizedBox(height: 28),
 
             // Honest Steps List
-            Column(
-              children: List.generate(_steps.length, (index) {
-                final isCurrent = index == _activeStep;
-                final isDone = index < _activeStep;
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 340),
+              child: Column(
+                children: List.generate(_steps.length, (index) {
+                  final isCurrent = index == _activeStep;
+                  final isDone = index < _activeStep;
 
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6.0),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        width: 18,
-                        height: 18,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: isDone
-                              ? FlowColors.cyan
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6.0),
+                    child: Row(
+                      children: [
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          width: 18,
+                          height: 18,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isDone
+                                ? FlowColors.cyan
+                                : (isCurrent
+                                    ? FlowColors.cyan.withValues(alpha: 0.2)
+                                    : const Color(0xFFE2E8F0)),
+                          ),
+                          child: isDone
+                              ? const Icon(Icons.check, size: 12, color: Colors.white)
                               : (isCurrent
-                                  ? FlowColors.cyan.withValues(alpha: 0.2)
-                                  : const Color(0xFFE2E8F0)),
-                        ),
-                        child: isDone
-                            ? const Icon(Icons.check, size: 12, color: Colors.white)
-                            : (isCurrent
-                                ? Center(
-                                    child: Container(
-                                      width: 6,
-                                      height: 6,
-                                      decoration: const BoxDecoration(
-                                        color: FlowColors.cyanDark,
-                                        shape: BoxShape.circle,
+                                  ? Center(
+                                      child: Container(
+                                        width: 6,
+                                        height: 6,
+                                        decoration: const BoxDecoration(
+                                          color: FlowColors.cyanDark,
+                                          shape: BoxShape.circle,
+                                        ),
                                       ),
-                                    ),
-                                  )
-                                : null),
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        _steps[index],
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w400,
-                          color: isDone || isCurrent
-                              ? const Color(0xFF0F172A)
-                              : const Color(0xFF94A3B8),
+                                    )
+                                  : null),
                         ),
-                      ),
-                    ],
-                  ),
-                );
-              }),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            _steps[index],
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w400,
+                              color: isDone || isCurrent
+                                  ? const Color(0xFF0F172A)
+                                  : const Color(0xFF94A3B8),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ),
             ),
           ],
         ),
@@ -251,9 +259,13 @@ class _RoutineBuildingViewState extends State<RoutineBuildingView>
       eveningWeight = 0.90;
     }
 
+    final screenWidth = MediaQuery.of(context).size.width;
+    final horizontalPad = screenWidth < 360 ? 16.0 : (screenWidth < 400 ? 20.0 : 28.0);
+    final cardPad = screenWidth < 360 ? 14.0 : 20.0;
+
     return Padding(
       key: const ValueKey('starting_rhythm_card'),
-      padding: const EdgeInsets.symmetric(horizontal: 28),
+      padding: EdgeInsets.symmetric(horizontal: horizontalPad),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -288,7 +300,7 @@ class _RoutineBuildingViewState extends State<RoutineBuildingView>
 
           // Starting Rhythm Hypothesis Container
           Container(
-            padding: const EdgeInsets.all(20),
+            padding: EdgeInsets.all(cardPad),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(20),
@@ -307,13 +319,16 @@ class _RoutineBuildingViewState extends State<RoutineBuildingView>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'YOUR STARTING RHYTHM',
-                      style: FlowTypography.labelSmall(color: const Color(0xFF64748B)).copyWith(
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.0,
+                    Flexible(
+                      child: Text(
+                        'YOUR STARTING RHYTHM',
+                        style: FlowTypography.labelSmall(color: const Color(0xFF64748B)).copyWith(
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.8,
+                        ),
                       ),
                     ),
+                    const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
@@ -425,12 +440,16 @@ class _RoutineBuildingViewState extends State<RoutineBuildingView>
                 color: const Color(0xFF1E293B),
               ),
             ),
-            Text(
-              tag,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: isStrongest ? FlowColors.cyanDark : const Color(0xFF64748B),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                tag,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: isStrongest ? FlowColors.cyanDark : const Color(0xFF64748B),
+                ),
               ),
             ),
           ],
