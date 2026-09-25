@@ -15,6 +15,8 @@ import 'package:flowstate/providers/theme_provider.dart';
 import 'package:flowstate/providers/flow_provider.dart';
 import 'package:flowstate/services/api_service.dart';
 import 'package:flowstate/services/task_parse_service.dart';
+import 'package:flowstate/engines/scheduling_engine.dart';
+import 'package:flowstate/models/readiness_model.dart';
 
 class MockAISubscriptionApiService extends ApiService {
   bool returnPro = false;
@@ -22,6 +24,7 @@ class MockAISubscriptionApiService extends ApiService {
   int shieldsCount = 2;
   int aiPlanCallCount = 0;
   bool throwOnAiPlan = false;
+  bool malformedAiPlan = false;
 
   @override
   Future<dynamic> post(String endpoint, {dynamic body}) async {
@@ -29,6 +32,9 @@ class MockAISubscriptionApiService extends ApiService {
       aiPlanCallCount++;
       if (throwOnAiPlan) {
         throw const ApiException('Network connection failed');
+      }
+      if (malformedAiPlan) {
+        return {'tasks': 'invalid-not-a-list', 'usage': {}};
       }
       return {
         'tasks': [
@@ -486,6 +492,148 @@ void main() {
       expect(find.text('FLOWSTATE PRO'), findsOneWidget);
       expect(find.text('Your plan is active.'), findsOneWidget);
       expect(find.text('Manage Subscription'), findsOneWidget);
+    });
+
+    testWidgets('12. Gemini failure does not consume AI credit or shield', (tester) async {
+      final mockApi = MockAISubscriptionApiService()..throwOnAiPlan = true;
+      final initialShields = mockApi.shieldsCount;
+
+      await tester.pumpWidget(createTestApp(
+        api: mockApi,
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const Key('brain_dump_text_field')),
+        'I need to get that project thing done sometime before my meeting',
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      // Shield count must remain untouched on failure / local fallback
+      expect(mockApi.shieldsCount, equals(initialShields));
+    });
+
+    testWidgets('13. Gemini malformed JSON response falls back safely without crash', (tester) async {
+      final mockApi = MockAISubscriptionApiService()..malformedAiPlan = true;
+
+      await tester.pumpWidget(createTestApp(
+        api: mockApi,
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const Key('brain_dump_text_field')),
+        'I need to get that project thing done sometime before my meeting, dentist at 4',
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      // Successfully fell back to local parser without crashing
+      expect(find.text('YOUR PLAN'), findsOneWidget);
+      expect(find.byKey(const Key('add_and_schedule_button')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('14. No layout overflow when virtual keyboard is open at 320px', (tester) async {
+      tester.view.physicalSize = const Size(320 * 2.0, 640 * 2.0);
+      tester.view.devicePixelRatio = 2.0;
+      // Simulate 280px keyboard inset
+      tester.view.viewInsets = const FakeViewPadding(bottom: 280 * 2.0);
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetViewInsets();
+      });
+
+      await tester.pumpWidget(createTestApp(
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('brain_dump_text_field')), findsOneWidget);
+      expect(find.byKey(const Key('brain_dump_build_button')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('15. Canonical scheduler is used to schedule parsed tasks', (tester) async {
+      final tasks = TaskParseService.deterministicFallbackParse(
+        'study for 45 minutes, gym at 6, dentist at 4',
+      );
+
+      final schedule = const SchedulingEngine().generateOptimizedSchedule(
+        tasks: tasks,
+        readiness: ReadinessModel.uncalibrated(),
+      );
+
+      expect(schedule.isNotEmpty, isTrue);
+      // Fixed items (dentist at 4 -> 4:00 PM, gym at 6 -> 6:00 PM)
+      expect(schedule.any((s) => s.time.contains('4:00')), isTrue);
+      expect(schedule.any((s) => s.time.contains('6:00')), isTrue);
+    });
+
+    testWidgets('16. Editing and re-building does not produce duplicate tasks', (tester) async {
+      await tester.pumpWidget(createTestApp(
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const Key('brain_dump_text_field')),
+        'study math, gym at 6',
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('YOUR PLAN'), findsOneWidget);
+
+      // Tap Edit to go back to text field
+      await tester.tap(find.byKey(const Key('edit_button')));
+      await tester.pumpAndSettle();
+
+      // Re-build
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      // Verify no duplicates (still exactly 2 task items)
+      expect(find.text('YOUR PLAN'), findsOneWidget);
+      expect(find.text('Study math'), findsOneWidget);
+      expect(find.text('Gym'), findsOneWidget);
     });
   });
 }

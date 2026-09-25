@@ -217,8 +217,9 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
 
   void _editPlan() {
     FlowHaptics.selection();
-    Navigator.of(context).pop();
-    showParsedPlanConfirmSheet(context, candidates: _planCandidates);
+    setState(() {
+      _showPreview = false;
+    });
   }
 
   @override
