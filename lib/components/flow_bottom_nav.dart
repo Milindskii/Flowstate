@@ -6,8 +6,8 @@ import '../theme/flow_haptics.dart';
 import '../theme/flow_typography.dart';
 
 /// Sticky Bottom Navigation Bar for Flowstate
-/// 5 destinations with thumb-friendly tap targets (> 48px).
-/// Features cohesive active (filled) vs inactive (outlined) icon states and subtle selection haptics.
+/// 5 destinations with thumb-friendly tap targets (> 48px),
+/// with a prominent Flow Companion center button.
 class FlowBottomNav extends StatelessWidget {
   final int currentIndex;
   final ValueChanged<int> onTap;

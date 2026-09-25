@@ -31,6 +31,65 @@ class UserResponse(BaseModel):
     avatar_url: Optional[str] = None
     is_active: bool
     created_at: datetime
+    onboarding_completed: bool = False
+    terms_accepted: bool = False
+    privacy_accepted: bool = False
+    age_confirmed: bool = False
+    marketing_emails_enabled: bool = False
+    consent_at: Optional[datetime] = None
     preferences: Optional[UserPreferencesSchema] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+class ConsentUpdateRequest(BaseModel):
+    terms_accepted: bool = True
+    privacy_accepted: bool = True
+    age_confirmed: bool = True
+    marketing_emails_enabled: Optional[bool] = False
+
+class EmailPreferencesUpdateRequest(BaseModel):
+    marketing_emails_enabled: bool
+
+class DeleteAccountResponse(BaseModel):
+    success: bool
+    message: str
+    deleted_user_id: str
+
+class UserExportDataResponse(BaseModel):
+    user_id: str
+    email: str
+    name: str
+    exported_at: datetime
+    preferences: Optional[dict] = None
+    tasks_count: int = 0
+    tasks: list = []
+    flow_profile: Optional[dict] = None
+    companion: Optional[dict] = None
+    completed_sessions_count: int = 0
+
+class AccountDeactivateResponse(BaseModel):
+    success: bool
+    status: str
+    message: str
+    user_id: str
+
+class AccountReactivateResponse(BaseModel):
+    success: bool
+    status: str
+    message: str
+    user_id: str
+
+class GrievanceCreateRequest(BaseModel):
+    request_type: str = "general_grievance"
+    message: str
+    email: Optional[EmailStr] = None
+
+class GrievanceResponse(BaseModel):
+    ticket_id: str
+    status: str
+    message: str
+    request_type: str
+    email: str
+    contact_email: str
+    created_at: datetime
+

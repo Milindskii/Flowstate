@@ -8,6 +8,11 @@ import '../theme/flow_radii.dart';
 import '../theme/flow_spacing.dart';
 import '../theme/flow_typography.dart';
 
+import 'package:intl/intl.dart';
+import '../models/task_item.dart';
+import '../models/schedule_item.dart';
+import '../services/flow_clock.dart';
+
 /// Screen 8: Calendar Tab with Focus Windows & "Optimize My Day" Engine Action
 class CalendarTab extends StatefulWidget {
   const CalendarTab({super.key});
@@ -17,9 +22,23 @@ class CalendarTab extends StatefulWidget {
 }
 
 class _CalendarTabState extends State<CalendarTab> {
-  int _selectedDayIndex = 2; // Wednesday / Oct 24
+  int _selectedDayIndex = 0; // Today by default
 
-  final List<String> _days = ['Mon\n22', 'Tue\n23', 'Wed\n24', 'Thu\n25', 'Fri\n26', 'Sat\n27', 'Sun\n28'];
+  List<String> get _days {
+    final now = FlowClock().now;
+    return List.generate(7, (index) {
+      final day = now.add(Duration(days: index));
+      final dayName = DateFormat('E').format(day);
+      final dayNum = DateFormat('d').format(day);
+      return '$dayName\n$dayNum';
+    });
+  }
+
+  DateTime get _selectedDate {
+    final now = FlowClock().now;
+    return now.add(Duration(days: _selectedDayIndex));
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -29,7 +48,7 @@ class _CalendarTabState extends State<CalendarTab> {
     final accent = Theme.of(context).colorScheme.primary;
 
     return Scaffold(
-      backgroundColor: FlowColors.background(context),
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: SingleChildScrollView(
           padding: EdgeInsets.symmetric(horizontal: pageMargin, vertical: 16.0),
@@ -169,120 +188,144 @@ class _CalendarTabState extends State<CalendarTab> {
               ),
               const SizedBox(height: 14),
 
-              if (state.schedule.isEmpty)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
-                  decoration: BoxDecoration(
-                    color: FlowColors.surface(context),
-                    borderRadius: FlowRadii.cardRadius,
-                    border: Border.all(color: FlowColors.border(context), width: 1.0),
-                  ),
-                  child: Column(
-                    children: [
-                      Icon(Icons.event_note_outlined, size: 36, color: FlowColors.textMutedOf(context)),
-                      const SizedBox(height: 12),
-                      Text(
-                        'No scheduled events yet',
-                        style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w700),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Connect your calendar or calibrate your day to populate your energy-aligned timeline.',
-                        style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 18),
-                      OutlinedButton(
-                        onPressed: () async {
-                          FlowHaptics.lightTap();
-                          await state.optimizeSchedule();
-                          FlowHaptics.success();
-                        },
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: accent,
-                          side: BorderSide(color: accent, width: 1.0),
-                          shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
-                        ),
-                        child: const Text('Calibrate focus blocks'),
-                      ),
-                    ],
-                  ),
-                )
-              else
-                ...state.schedule.map((item) {
-                  final isDeepWork = item.tagText == 'DEEP WORK';
+              Builder(
+                builder: (context) {
+                  final dayTasks = _selectedDayIndex == 0
+                      ? state.schedule
+                      : state.tasks.where((t) {
+                          final sStart = t.scheduledStart;
+                          final dLine = t.deadlineAt;
+                          final matchStart = sStart != null && sStart.year == _selectedDate.year && sStart.month == _selectedDate.month && sStart.day == _selectedDate.day;
+                          final matchDline = dLine != null && dLine.year == _selectedDate.year && dLine.month == _selectedDate.month && dLine.day == _selectedDate.day;
+                          return matchStart || matchDline;
+                        }).map((t) {
+                          final sStart = t.scheduledStart ?? t.deadlineAt ?? _selectedDate;
+                          return ScheduleItem(
+                            id: 'sched-${t.id}',
+                            time: DateFormat('h:mm').format(sStart),
+                            period: DateFormat('a').format(sStart),
+                            title: t.title,
+                            type: t.taskType == TaskType.deepWork ? 'High Focus' : 'Task',
+                            tagText: t.taskType == TaskType.deepWork ? 'DEEP WORK' : 'TASK',
+                            tagBg: FlowColors.tagMediumBg,
+                            tagColor: FlowColors.tagMediumText,
+                            durationMinutes: t.durationMinutes,
+                          );
+                        }).toList();
 
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: FlowColors.surface(context),
-                      borderRadius: FlowRadii.cardRadius,
-                      border: Border.all(
-                        color: isDeepWork ? accent.withValues(alpha: 0.4) : FlowColors.border(context),
-                        width: 1.0,
+                  if (dayTasks.isEmpty) {
+                    return Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
+                      decoration: BoxDecoration(
+                        color: FlowColors.surface(context),
+                        borderRadius: FlowRadii.cardRadius,
+                        border: Border.all(color: FlowColors.border(context), width: 1.0),
                       ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: FlowColors.softShadow(context),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      children: [
-                        // Time badge
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: FlowColors.surfaceElevated(context),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: FlowColors.border(context), width: 1.0),
+                      child: Column(
+                        children: [
+                          Icon(Icons.event_note_outlined, size: 36, color: FlowColors.textMutedOf(context)),
+                          const SizedBox(height: 12),
+                          Text(
+                            'No scheduled events yet',
+                            style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w700),
+                            textAlign: TextAlign.center,
                           ),
-                          child: Text(
-                            '${item.time} ${item.period}',
-                            style: FlowTypography.labelMedium(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w700),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Connect your calendar or calibrate your day to visualize focus blocks.',
+                            style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
+                            textAlign: TextAlign.center,
                           ),
-                        ),
-                        const SizedBox(width: 14),
+                          const SizedBox(height: 16),
+                          OutlinedButton(
+                            onPressed: () => state.optimizeSchedule(),
+                            child: const Text('Calibrate focus blocks'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
 
-                        // Event details
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                item.title,
-                                style: FlowTypography.bodyLarge(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w600),
+                  return Column(
+                    children: dayTasks.map((item) {
+                      final isDeepWork = item.tagText == 'DEEP WORK';
+
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: FlowColors.surface(context),
+                          borderRadius: FlowRadii.cardRadius,
+                          border: Border.all(
+                            color: isDeepWork ? accent.withValues(alpha: 0.4) : FlowColors.border(context),
+                            width: 1.0,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: FlowColors.softShadow(context),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.time,
+                                  style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                Text(
+                                  item.period,
+                                  style: FlowTypography.labelSmall(color: FlowColors.textSecondaryOf(context)),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.title,
+                                    style: FlowTypography.bodyLarge(color: FlowColors.textPrimaryOf(context)).copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '${item.durationMinutes} min · ${item.type}',
+                                    style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                '${item.type} • ${item.durationMinutes} min',
-                                style: FlowTypography.bodyMedium(color: FlowColors.textMutedOf(context)),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: isDeepWork ? accent.withValues(alpha: 0.15) : FlowColors.surfaceElevated(context),
+                                borderRadius: BorderRadius.circular(FlowRadii.pill),
                               ),
-                            ],
-                          ),
+                              child: Text(
+                                item.tagText,
+                                style: FlowTypography.labelSmall(color: isDeepWork ? accent : FlowColors.textSecondaryOf(context)).copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-
-                        // Tag
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: item.tagBg,
-                            borderRadius: FlowRadii.pillRadius,
-                          ),
-                          child: Text(
-                            item.tagText,
-                            style: FlowTypography.badgeText(color: item.tagColor),
-                          ),
-                        ),
-                      ],
-                    ),
+                      );
+                    }).toList(),
                   );
-                }),
+                },
+              ),
 
               const SizedBox(height: 80),
             ],

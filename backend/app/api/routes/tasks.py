@@ -13,6 +13,7 @@ from ...models.task import TaskStatus, TaskType
 from ...models.task_performance import TaskPerformance
 from ...schemas.task import (
     TaskCreate,
+    TaskCandidateResponse,
     TaskUpdate,
     TaskComplete,
     TaskParseRequest,
@@ -22,12 +23,18 @@ from ...schemas.task import (
 from ...schemas.task_performance import FeedbackCreate, FeedbackResponse
 from ...services.task_service import TaskService
 from ...services.ai_service import AIService
+from ...services.observation_service import ObservationService
+from ...services.evaluation_service import EvaluationService
+from ...schemas.readiness import ObservationCreate
+from ...models.readiness_observation import ObservationSource
 from ...repositories.task_performance_repository import TaskPerformanceRepository
 
 router = APIRouter(prefix="/tasks", tags=["Tasks & Performance"])
 task_service = TaskService()
 ai_service = AIService()
 performance_repo = TaskPerformanceRepository()
+observation_service = ObservationService()
+evaluation_service = EvaluationService()
 
 # In-memory sliding window rate limiter: user_id -> list of request timestamps
 _PARSE_RATE_LIMITS = defaultdict(list)
@@ -89,7 +96,7 @@ def get_today_tasks(
     """
     return task_service.list_today_tasks(db, current_user)
 
-@router.post("/parse", response_model=List[TaskCreate])
+@router.post("/parse", response_model=List[TaskCandidateResponse])
 def parse_unstructured_tasks(
     request: TaskParseRequest,
     current_user: User = Depends(get_current_user),
@@ -106,9 +113,14 @@ def parse_unstructured_tasks(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
 
+    user_tz = current_user.preferences.timezone if current_user.preferences else "UTC"
     start_time = time.perf_counter()
     try:
-        candidates = ai_service.parse_task_dump(clean_text)
+        candidates = ai_service.parse_task_dump(
+            clean_text,
+            user_timezone_str=user_tz,
+            force_ai=bool(request.use_ai),
+        )
         latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
         # Safe audit logging: user_id, duration, candidate count — NEVER log private text content
         logger.info(
@@ -209,4 +221,39 @@ def record_task_feedback(
         distraction_score=feedback_in.distraction_score,
         notes=feedback_in.notes,
     )
-    return performance_repo.create(db, performance)
+    created_perf = performance_repo.create(db, performance)
+
+    # Automatically feed verified focus feedback into the readiness observation layer
+    try:
+        t_type = task.task_type.value if hasattr(task.task_type, "value") else str(task.task_type)
+        t_diff = task.difficulty.value if hasattr(task.difficulty, "value") else str(task.difficulty)
+        obs_create = ObservationCreate(
+            task_id=task.id,
+            energy_rating=feedback_in.energy_score,
+            focus_rating=feedback_in.focus_score,
+            difficulty_rating=feedback_in.difficulty_score,
+            distraction_rating=feedback_in.distraction_score,
+            planned_minutes=task.estimated_minutes,
+            actual_minutes=actual_duration,
+            task_type=t_type,
+            task_difficulty=t_diff,
+            outcome="completed",
+            source=ObservationSource.observed,
+        )
+        saved_obs = observation_service.record_observation(db, current_user.id, obs_create)
+        evaluation_service.record_evaluation(db, current_user.id, saved_obs)
+
+        # Trigger Personalization Profile update to close the learning loop
+        from ...engines.personalization_engine import PersonalizationEngine
+        from ...repositories.readiness_repository import ReadinessRepository
+        read_repo = ReadinessRepository()
+        user_prof = read_repo.get_profile(db, current_user.id)
+        if user_prof:
+            all_obs = read_repo.list_observations(db, current_user.id, limit=200)
+            PersonalizationEngine().recompute_profile(user_prof, all_obs)
+            db.commit()
+    except Exception as e:
+        logger.warning(f"Non-critical feedback observation hook error: {e}")
+
+    return created_perf
+

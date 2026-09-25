@@ -1,10 +1,12 @@
+import 'package:intl/intl.dart';
 import '../models/task_item.dart';
 import '../models/readiness_model.dart';
 import '../models/schedule_item.dart';
 import '../theme/flow_colors.dart';
 
 /// Scheduling Engine
-/// Matches task difficulty, duration, and deadlines against optimal cognitive readiness windows.
+/// Matches user tasks against cognitive readiness windows and explicit scheduled times.
+/// Strictly schedules REAL user tasks. Never fabricates fake tasks or synthetic lunch breaks.
 class SchedulingEngine {
   const SchedulingEngine();
 
@@ -16,113 +18,133 @@ class SchedulingEngine {
 
     // Filter uncompleted tasks
     final pendingTasks = tasks.where((t) => !t.isCompleted).toList();
+    if (pendingTasks.isEmpty) {
+      return [];
+    }
 
-    // 1. Primary Deep Work during peak focus window (e.g. 9:30 AM)
-    final deepWorkTasks = pendingTasks.where((t) => t.difficulty == TaskDifficulty.high).toList();
-    if (deepWorkTasks.isNotEmpty) {
-      final task = deepWorkTasks.first;
+    final now = DateTime.now();
+
+    // 1. Anchored tasks (explicitly scheduled by the user)
+    final anchoredTasks = pendingTasks.where((t) => t.scheduledStart != null).toList();
+    final flexibleTasks = pendingTasks.where((t) => t.scheduledStart == null).toList();
+
+    for (final task in anchoredTasks) {
+      final sStart = task.scheduledStart!;
+      final timeStr = DateFormat('h:mm').format(sStart);
+      final periodStr = DateFormat('a').format(sStart);
+
       schedule.add(
         ScheduleItem(
-          id: 'sched-1',
-          time: '9:30',
-          period: 'AM',
+          id: 'sched-${task.id}',
+          time: timeStr,
+          period: periodStr,
           title: task.title,
-          type: 'High Focus',
-          tagText: 'DEEP WORK',
-          tagBg: FlowColors.tagDeepWorkBg,
-          tagColor: FlowColors.tagDeepWorkText,
+          type: _resolveTaskTypeLabel(task),
+          tagText: _resolveTagText(task),
+          tagBg: _resolveTagBg(task),
+          tagColor: _resolveTagColor(task),
+          isActive: task.status == TaskStatus.inProgress,
           durationMinutes: task.durationMinutes,
         ),
       );
     }
 
-    // 2. Medium focus task before lunch (e.g. 11:30 AM)
-    final mediumTasks = pendingTasks.where((t) => t.difficulty == TaskDifficulty.medium).toList();
-    if (mediumTasks.isNotEmpty) {
-      final task = mediumTasks.first;
-      schedule.add(
-        ScheduleItem(
-          id: 'sched-2',
-          time: '11:30',
-          period: 'AM',
-          title: task.title,
-          type: 'Study',
-          tagText: 'MEDIUM',
-          tagBg: FlowColors.tagMediumBg,
-          tagColor: FlowColors.tagMediumText,
-          isActive: true,
-          durationMinutes: task.durationMinutes,
-        ),
-      );
+    // 2. Schedule flexible tasks
+    // Sort flexible tasks by urgency (priority high first, then duration)
+    flexibleTasks.sort((a, b) {
+      if (a.isPriority != b.isPriority) {
+        return a.isPriority ? -1 : 1;
+      }
+      return b.durationMinutes.compareTo(a.durationMinutes);
+    });
+
+    DateTime cursor = now.minute % 15 == 0 ? now : now.add(Duration(minutes: 15 - (now.minute % 15)));
+    if (cursor.hour < 9) {
+      cursor = DateTime(now.year, now.month, now.day, 9, 0);
     }
 
-    // 3. Natural Rest / Recovery break at midday (1:00 PM)
-    schedule.add(
-      const ScheduleItem(
-        id: 'sched-3',
-        time: '1:00',
-        period: 'PM',
-        title: 'Lunch & Recovery Walk',
-        type: 'Rest',
-        tagText: 'REST',
-        tagBg: FlowColors.tagRestBg,
-        tagColor: FlowColors.tagRestText,
-        durationMinutes: 45,
-      ),
-    );
+    for (final task in flexibleTasks) {
+      final timeStr = DateFormat('h:mm').format(cursor);
+      final periodStr = DateFormat('a').format(cursor);
 
-    // 4. Light/Admin task during energy dip window (2:30 PM)
-    final lightTasks = pendingTasks.where((t) => t.difficulty == TaskDifficulty.light).toList();
-    if (lightTasks.isNotEmpty) {
-      final task = lightTasks.first;
       schedule.add(
         ScheduleItem(
-          id: 'sched-4',
-          time: '2:30',
-          period: 'PM',
+          id: 'sched-${task.id}',
+          time: timeStr,
+          period: periodStr,
           title: task.title,
-          type: 'Admin',
-          tagText: 'LIGHT',
-          tagBg: FlowColors.tagLightBg,
-          tagColor: FlowColors.tagLightText,
+          type: _resolveTaskTypeLabel(task),
+          tagText: _resolveTagText(task),
+          tagBg: _resolveTagBg(task),
+          tagColor: _resolveTagColor(task),
+          isActive: task.status == TaskStatus.inProgress,
           durationMinutes: task.durationMinutes,
         ),
       );
-    }
 
-    // 5. Physical or Fitness block later in the afternoon (5:30 PM)
-    final physicalTasks = pendingTasks.where((t) => t.difficulty == TaskDifficulty.physical).toList();
-    if (physicalTasks.isNotEmpty) {
-      final task = physicalTasks.first;
-      schedule.add(
-        ScheduleItem(
-          id: 'sched-5',
-          time: '5:30',
-          period: 'PM',
-          title: task.title,
-          type: 'Health',
-          tagText: 'PHYSICAL',
-          tagBg: FlowColors.tagPhysicalBg,
-          tagColor: FlowColors.tagPhysicalText,
-          durationMinutes: task.durationMinutes,
-        ),
-      );
-    } else {
-      schedule.add(
-        const ScheduleItem(
-          id: 'sched-5',
-          time: '5:30',
-          period: 'PM',
-          title: 'Gym Session',
-          type: 'Health',
-          tagText: 'PHYSICAL',
-          tagBg: FlowColors.tagPhysicalBg,
-          tagColor: FlowColors.tagPhysicalText,
-          durationMinutes: 60,
-        ),
-      );
+      cursor = cursor.add(Duration(minutes: task.durationMinutes + 15));
     }
 
     return schedule;
+  }
+
+  static String _resolveTaskTypeLabel(TaskItem task) {
+    switch (task.taskType) {
+      case TaskType.deepWork:
+        return 'High Focus';
+      case TaskType.study:
+        return 'Study';
+      case TaskType.admin:
+        return 'Admin';
+      case TaskType.physical:
+        return 'Physical';
+      default:
+        return 'Focus';
+    }
+  }
+
+  static String _resolveTagText(TaskItem task) {
+    switch (task.taskType) {
+      case TaskType.deepWork:
+        return 'DEEP WORK';
+      case TaskType.study:
+        return 'MEDIUM';
+      case TaskType.admin:
+        return 'LIGHT';
+      case TaskType.physical:
+        return 'PHYSICAL';
+      default:
+        return 'TASK';
+    }
+  }
+
+  static dynamic _resolveTagBg(TaskItem task) {
+    switch (task.taskType) {
+      case TaskType.deepWork:
+        return FlowColors.tagDeepWorkBg;
+      case TaskType.study:
+        return FlowColors.tagMediumBg;
+      case TaskType.admin:
+        return FlowColors.tagLightBg;
+      case TaskType.physical:
+        return FlowColors.tagPhysicalBg;
+      default:
+        return FlowColors.tagMediumBg;
+    }
+  }
+
+  static dynamic _resolveTagColor(TaskItem task) {
+    switch (task.taskType) {
+      case TaskType.deepWork:
+        return FlowColors.tagDeepWorkText;
+      case TaskType.study:
+        return FlowColors.tagMediumText;
+      case TaskType.admin:
+        return FlowColors.tagLightText;
+      case TaskType.physical:
+        return FlowColors.tagPhysicalText;
+      default:
+        return FlowColors.tagMediumText;
+    }
   }
 }

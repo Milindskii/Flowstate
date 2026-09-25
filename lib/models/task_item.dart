@@ -250,6 +250,9 @@ class TaskItem {
   final DateTime? scheduledEnd;
   final DateTime? startedAt;
   final DateTime? completedAt;
+  final double? confidence;
+  final List<String> missingFields;
+  final List<String> ambiguities;
 
   const TaskItem({
     required this.id,
@@ -271,6 +274,9 @@ class TaskItem {
     this.scheduledEnd,
     this.startedAt,
     this.completedAt,
+    this.confidence,
+    this.missingFields = const [],
+    this.ambiguities = const [],
   });
 
   TaskItem copyWith({
@@ -293,6 +299,9 @@ class TaskItem {
     DateTime? scheduledEnd,
     DateTime? startedAt,
     DateTime? completedAt,
+    double? confidence,
+    List<String>? missingFields,
+    List<String>? ambiguities,
   }) {
     return TaskItem(
       id: id ?? this.id,
@@ -314,6 +323,9 @@ class TaskItem {
       scheduledEnd: scheduledEnd ?? this.scheduledEnd,
       startedAt: startedAt ?? this.startedAt,
       completedAt: completedAt ?? this.completedAt,
+      confidence: confidence ?? this.confidence,
+      missingFields: missingFields ?? this.missingFields,
+      ambiguities: ambiguities ?? this.ambiguities,
     );
   }
 
@@ -402,6 +414,9 @@ class TaskItem {
       scheduledEnd: schedEnd,
       startedAt: started,
       completedAt: completed,
+      confidence: (json['confidence'] as num?)?.toDouble(),
+      missingFields: (json['missing_fields'] as List?)?.map((e) => e.toString()).toList() ?? const [],
+      ambiguities: (json['ambiguities'] as List?)?.map((e) => e.toString()).toList() ?? const [],
     );
   }
 
@@ -426,5 +441,42 @@ class TaskItem {
         'scheduled_end': scheduledEnd?.toUtc().toIso8601String(),
         'started_at': startedAt?.toUtc().toIso8601String(),
         'completed_at': completedAt?.toUtc().toIso8601String(),
+        if (confidence != null) 'confidence': confidence,
+        if (missingFields.isNotEmpty) 'missing_fields': missingFields,
+        if (ambiguities.isNotEmpty) 'ambiguities': ambiguities,
       };
+
+  String get energyRequired {
+    if (difficulty == TaskDifficulty.high || taskType == TaskType.deepWork) {
+      return 'High';
+    } else if (difficulty == TaskDifficulty.medium || taskType == TaskType.study || taskType == TaskType.creative) {
+      return 'Medium';
+    }
+    return 'Low';
+  }
+
+  String get importanceLabel {
+    switch (priority) {
+      case TaskPriority.urgent:
+      case TaskPriority.high:
+        return 'High';
+      case TaskPriority.medium:
+        return 'Medium';
+      case TaskPriority.low:
+        return 'Low';
+    }
+  }
+
+  int get difficultyScore {
+    switch (difficulty) {
+      case TaskDifficulty.high:
+        return 4;
+      case TaskDifficulty.medium:
+        return 3;
+      case TaskDifficulty.light:
+        return 1;
+      case TaskDifficulty.physical:
+        return 2;
+    }
+  }
 }

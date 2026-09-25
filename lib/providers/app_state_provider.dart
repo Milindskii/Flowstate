@@ -20,6 +20,17 @@ import '../services/health_service.dart';
 import '../services/today_service.dart';
 import '../utils/mock_data.dart';
 
+/// Explicit Today Network Status (kept separate from content/task lifecycle state)
+enum TodayNetworkState {
+  loading,
+  networkFailure,
+  serverError,
+  emptySuccess,
+  tasksSuccess,
+  @Deprecated('Use tasksSuccess or emptySuccess')
+  success,
+}
+
 /// Central App State Provider coordinating UI data and the backend single source of truth.
 class AppStateProvider extends ChangeNotifier {
   // Local Deterministic Engines (Used for initial mock / demo state)
@@ -46,12 +57,14 @@ class AppStateProvider extends ChangeNotifier {
 
   TodayResponseModel? _todaySnapshot;
   DateTime? _lastUpdatedAt;
+  DateTime? _lastBackendSyncAt;  // guards local recomputation
   bool _isOffline = false;
+  TodayNetworkState _todayNetworkState = TodayNetworkState.emptySuccess;
 
   AuthUser? _currentUser;
   bool _isLoading = false;
   String? _errorMessage;
-  bool _isDemoMode = true; // Demo mode default for instant development preview
+  bool _isDemoMode = false;
 
   int _currentNavIndex = 0;
   String _selectedCategory = 'All';
@@ -70,17 +83,22 @@ class AppStateProvider extends ChangeNotifier {
     healthService = HealthService(api: apiService);
     todayService = TodayService(api: apiService);
 
-    // Initial user context
-    _currentUser = const AuthUser(
-      id: 'user-demo-1',
-      email: 'alex@flowstate.local',
-      name: 'Alex',
-    );
+    // Check if session is already restored from Supabase client
+    _currentUser = authService.currentUser;
+    if (_currentUser != null) {
+      _isDemoMode = false;
+      _tasks = [];
+      loadUserTasks();
+      refreshTodayData();
+    } else {
+      _tasks = [];
+      _schedule = [];
+      _readiness = ReadinessModel.uncalibrated();
+    }
 
-    _recalculateReadiness();
-    _recalculateSchedule();
     _loadOnboardingState();
   }
+
 
   // Getters
   PersonalData get personalData => _personalData;
@@ -95,6 +113,17 @@ class AppStateProvider extends ChangeNotifier {
   DateTime? get lastUpdatedAt => _lastUpdatedAt;
   TodayResponseModel? get todaySnapshot => _todaySnapshot;
   TodayResponseModel? get todayData => _todaySnapshot;
+
+  TodayNetworkState get todayNetworkState => _todayNetworkState;
+  bool get hasTodayTasks => _todaySnapshot != null
+      ? (_todaySnapshot!.hasActionableTasks || _tasks.any((t) => !t.isCompleted))
+      : _tasks.any((t) => !t.isCompleted);
+  bool get isTodayEmpty => _todaySnapshot != null
+      ? (_todaySnapshot!.lifecycleState == TodayLifecycleState.newUser && _tasks.isEmpty)
+      : _tasks.isEmpty;
+  bool get isTodayCompleted => _todaySnapshot != null
+      ? _todaySnapshot!.lifecycleState == TodayLifecycleState.completed
+      : (_tasks.isNotEmpty && _tasks.every((t) => t.isCompleted));
 
   String get greetingName => _currentUser?.name ?? 'Friend';
   bool get onboardingComplete => _onboardingComplete;
@@ -114,6 +143,9 @@ class AppStateProvider extends ChangeNotifier {
 
   // Progressive lifecycle state helpers
   TodayLifecycleState get lifecycleState {
+    final hasTasks = _tasks.isNotEmpty;
+    final allCompleted = hasTasks && _tasks.every((t) => t.isCompleted);
+    if (allCompleted) return TodayLifecycleState.completed;
     if (_todaySnapshot != null) {
       return _todaySnapshot!.lifecycleState;
     }
@@ -122,9 +154,11 @@ class AppStateProvider extends ChangeNotifier {
     return TodayLifecycleState.calibrated;
   }
 
+  TodayState get todayState => lifecycleState;
   bool get isNewUser => lifecycleState == TodayLifecycleState.newUser;
   bool get isLearningRhythm => lifecycleState == TodayLifecycleState.learning;
   bool get isMatureUser => lifecycleState == TodayLifecycleState.calibrated;
+  bool get isDayCompleted => lifecycleState == TodayLifecycleState.completed;
 
   int get currentNavIndex => _currentNavIndex;
   String get selectedCategory => _selectedCategory;
@@ -132,7 +166,7 @@ class AppStateProvider extends ChangeNotifier {
   TaskItem? get activeFocusTask => _activeFocusTask;
   PersonalLearningEngine get learningEngine => _learningEngine;
 
-  // AI Brief
+  // AI Brief — always from backend when available
   AIBriefModel get aiBrief {
     if (_todaySnapshot != null) {
       return _todaySnapshot!.aiBrief;
@@ -140,7 +174,7 @@ class AppStateProvider extends ChangeNotifier {
     if (isNewUser) {
       return const AIBriefModel(
         title: 'FLOWSTATE',
-        message: 'Good morning. You haven’t planned any tasks yet. Add what you need to get done.',
+        message: 'Good morning. You haven\'t planned any tasks yet. Add what you need to get done.',
         actionLabel: 'Add a task',
       );
     }
@@ -148,7 +182,7 @@ class AppStateProvider extends ChangeNotifier {
     final topTask = recommendedTask?.title ?? 'your top task';
     return AIBriefModel(
       title: 'FLOWSTATE',
-      message: 'You have $pendingCount important tasks today.\nYour strongest focus window starts in 15 minutes.\nI’d tackle $topTask first.',
+      message: 'You have $pendingCount task${pendingCount == 1 ? '' : 's'} today. Start with "$topTask".',
       actionLabel: 'Use this plan',
     );
   }
@@ -175,7 +209,7 @@ class AppStateProvider extends ChangeNotifier {
     );
   }
 
-  // Reasons for current recommendation
+  // Reasons for current recommendation (from backend engine output)
   List<String> get recommendationReasons {
     if (_todaySnapshot?.currentRecommendation != null &&
         _todaySnapshot!.currentRecommendation!.reasons.isNotEmpty) {
@@ -183,12 +217,15 @@ class AppStateProvider extends ChangeNotifier {
     }
     final rec = recommendedTask;
     if (rec == null) return const [];
-    return [
-      rec.isPriority ? 'High priority' : 'Aligned with goals',
-      'Strong focus window',
-      rec.deadline,
-    ];
+    // Fallback: derive reasons from task data only (no fabricated readiness claims)
+    final reasons = <String>[];
+    if (rec.isPriority) reasons.add('High priority');
+    if (rec.deadline.isNotEmpty) reasons.add(rec.deadline);
+    return reasons;
   }
+
+  /// The current recommendation decision ID for tracking accept/override/later
+  String? get currentDecisionId => _todaySnapshot?.decisionId;
 
   List<TaskItem> get filteredTasks {
     if (_selectedCategory == 'All') return _tasks;
@@ -242,19 +279,118 @@ class AppStateProvider extends ChangeNotifier {
 
   void setDemoMode(bool enabled) {
     _isDemoMode = enabled;
-    if (enabled && _tasks.isEmpty) {
-      _tasks = List.from(MockData.initialTasks);
-      _recalculateReadiness();
-      _recalculateSchedule();
-    }
     notifyListeners();
   }
+
+  /// One-click instant guest mode.
+  Future<void> enterGuestMode({bool startWithOnboarding = true}) async {
+    final guest = await authService.loginAsGuest();
+    _currentUser = guest;
+    _isDemoMode = false;
+    _onboardingComplete = !startWithOnboarding;
+    _currentNavIndex = 0;
+    _tasks = [];
+    _schedule = [];
+    _readiness = ReadinessModel.uncalibrated();
+    _todayNetworkState = TodayNetworkState.emptySuccess;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('flowstate_onboarding_complete', !startWithOnboarding);
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  /// Create local guest session with entered email when Supabase is offline
+  Future<void> enterOfflineDemoUser(String email, {bool startWithOnboarding = true}) async {
+    final cleanEmail = email.trim();
+    final name = cleanEmail.contains('@') ? cleanEmail.split('@').first : 'Guest';
+    _currentUser = AuthUser(
+      id: 'guest_${DateTime.now().millisecondsSinceEpoch}',
+      email: cleanEmail,
+      name: name,
+      onboardingCompleted: !startWithOnboarding,
+    );
+    _isDemoMode = false;
+    _onboardingComplete = !startWithOnboarding;
+    _currentNavIndex = 0;
+    _tasks = [];
+    _schedule = [];
+    _readiness = ReadinessModel.uncalibrated();
+    _todayNetworkState = TodayNetworkState.emptySuccess;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('flowstate_onboarding_complete', !startWithOnboarding);
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  void setCalibratedStateForTesting() {
+    _tasks = [
+      const TaskItem(
+        id: 'task-test-1',
+        title: 'Finish ML Assignment',
+        durationMinutes: 90,
+        difficulty: TaskDifficulty.high,
+        deadline: 'Due Tomorrow',
+        category: 'Study',
+        taskType: TaskType.deepWork,
+        isPriority: true,
+      ),
+      const TaskItem(
+        id: 'task-test-2',
+        title: 'Review DBMS Notes',
+        durationMinutes: 45,
+        difficulty: TaskDifficulty.medium,
+        deadline: 'Due Friday',
+        category: 'Study',
+        taskType: TaskType.study,
+        isPriority: false,
+      ),
+    ];
+    _readiness = const ReadinessModel(
+      score: 78,
+      statusMessage: 'Ready for a good session',
+      focusWindowRange: '9:30 AM – 11:30 AM',
+      explanation: 'Your readiness is based on recent sleep, your usual rhythm, and previous work sessions.',
+      hourlyRhythm: [
+        EnergyPoint('6a', 0.4),
+        EnergyPoint('8a', 0.7),
+        EnergyPoint('10a', 0.9),
+        EnergyPoint('12p', 0.6),
+        EnergyPoint('2p', 0.5),
+        EnergyPoint('4p', 0.7),
+        EnergyPoint('6p', 0.5),
+      ],
+      isCalibrated: true,
+      factors: ['Consistent wake-up schedule', 'Optimal sleep duration for focus', 'Circadian morning peak alignment'],
+      confidence: 0.85,
+    );
+    _todayNetworkState = TodayNetworkState.tasksSuccess;
+    _recalculateSchedule();
+    notifyListeners();
+  }
+
 
   void clearAllTasksForNewUserState() {
     _tasks = [];
     _schedule = [];
     _readiness = ReadinessModel.uncalibrated();
     _todaySnapshot = null;
+    _todayNetworkState = TodayNetworkState.emptySuccess;
+    _errorMessage = null;
+    _isOffline = false;
+    notifyListeners();
+  }
+
+  void setTodayNetworkStateForTesting(TodayNetworkState state, {String? errorMessage}) {
+    _todayNetworkState = state;
+    _errorMessage = errorMessage;
+    notifyListeners();
+  }
+
+  void setOnboardingCompleteForTesting(bool complete) {
+    _onboardingComplete = complete;
+    _currentNavIndex = 0;
     notifyListeners();
   }
 
@@ -271,6 +407,7 @@ class AppStateProvider extends ChangeNotifier {
       ),
     ];
     _readiness = ReadinessModel.uncalibrated();
+    _todayNetworkState = TodayNetworkState.tasksSuccess;
     _recalculateSchedule();
     notifyListeners();
   }
@@ -336,6 +473,19 @@ class AppStateProvider extends ChangeNotifier {
     _recalculateReadiness();
     _recalculateSchedule();
     notifyListeners();
+  }
+
+  void updateTask(TaskItem task) {
+    final index = _tasks.indexWhere((t) => t.id == task.id);
+    if (index != -1) {
+      _tasks[index] = task;
+      if (!_isDemoMode) {
+        taskService.updateTask(task).catchError((_) => task);
+      }
+      _recalculateReadiness();
+      _recalculateSchedule();
+      notifyListeners();
+    }
   }
 
   // Optimization Trigger
@@ -437,7 +587,16 @@ class AppStateProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Guards local readiness recomputation from overwriting fresh backend data.
+  /// When backend data is < 5 minutes old, skip client-side computation.
+  bool get _isBackendDataFresh {
+    if (_lastBackendSyncAt == null) return false;
+    return DateTime.now().difference(_lastBackendSyncAt!).inMinutes < 5;
+  }
+
   void _recalculateReadiness() {
+    // Skip local computation when backend data is fresh — it would be wrong
+    if (_isBackendDataFresh && _todaySnapshot != null) return;
     final bias = _learningEngine.computeReadinessAdaptiveBias();
     _readiness = _readinessEngine.computeReadiness(
       personalData: _personalData,
@@ -446,33 +605,76 @@ class AppStateProvider extends ChangeNotifier {
   }
 
   void _recalculateSchedule() {
+    // Skip local schedule computation when backend data is fresh
+    if (_isBackendDataFresh && _todaySnapshot != null) {
+      _schedule = _todaySnapshot!.upcomingTimeline;
+      return;
+    }
     _schedule = _schedulingEngine.generateOptimizedSchedule(
       tasks: _tasks,
       readiness: _readiness,
     );
   }
 
-  /// Confirm a list of brain-dump parsed candidates, adding them all as tasks.
-  /// Called when the user taps 'Looks good' in the onboarding or BrainDumpSheet flow.
-  void confirmCandidates(List<TaskItem> candidates) {
-    for (final candidate in candidates) {
-      // Assign fresh IDs to avoid demo-stub ID collisions
-      final task = candidate.copyWith(
-        id: 'task-${DateTime.now().millisecondsSinceEpoch}-${candidates.indexOf(candidate)}',
-      );
-      _tasks.insert(0, task);
-      if (!_isDemoMode) {
-        taskService.createTask(task).catchError((_) => task);
+  /// Records a user override (Later / Choose different task) to the backend.
+  /// Returns the backend response containing next_window if available.
+  /// Never blocks the user — fails silently if backend is unavailable.
+  Future<Map<String, dynamic>?> recordOverride({
+    String? reason,
+    String? chosenTaskId,
+  }) async {
+    final decisionId = currentDecisionId;
+    if (decisionId == null || _currentUser == null) return null;
+    try {
+      final res = await apiService.post('/api/v1/today/override', body: {
+        'decision_id': decisionId,
+        if (chosenTaskId != null) 'chosen_task_id': chosenTaskId,
+        if (reason != null) 'reason': reason,
+      });
+      if (res is Map<String, dynamic>) {
+        return res;
       }
+    } catch (_) {
+      // Non-critical — never block the user for analytics failures
+    }
+    return null;
+  }
+
+  /// Confirm a list of brain-dump parsed candidates, adding them all as tasks.
+  /// Persists them to PostgreSQL via taskService and refreshes Today.
+  Future<void> confirmCandidates(List<TaskItem> candidates) async {
+    final List<TaskItem> createdTasks = [];
+    for (int i = 0; i < candidates.length; i++) {
+      final candidate = candidates[i];
+      final tempTask = candidate.copyWith(
+        id: 'task-${DateTime.now().millisecondsSinceEpoch}-$i',
+      );
+      _tasks.insert(0, tempTask);
+      createdTasks.add(tempTask);
     }
     _recalculateReadiness();
     _recalculateSchedule();
     notifyListeners();
+
+    for (final tempTask in createdTasks) {
+      try {
+        final persisted = await taskService.createTask(tempTask);
+        final idx = _tasks.indexWhere((t) => t.id == tempTask.id);
+        if (idx != -1) {
+          _tasks[idx] = persisted;
+        }
+      } catch (e) {
+        debugPrint('Error creating task in backend: $e');
+      }
+    }
+    notifyListeners();
+    await refreshTodayData();
   }
 
   /// Persist onboarding completion status to SharedPreferences.
   Future<void> markOnboardingComplete() async {
     _onboardingComplete = true;
+    _currentNavIndex = 0;
     notifyListeners();
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -492,9 +694,8 @@ class AppStateProvider extends ChangeNotifier {
   }
 
   Future<void> refreshTodayData() async {
-    if (_isDemoMode) return;
-
     _isLoading = true;
+    _todayNetworkState = TodayNetworkState.loading;
     _errorMessage = null;
     notifyListeners();
 
@@ -502,12 +703,14 @@ class AppStateProvider extends ChangeNotifier {
       final today = await todayService.getTodayExperience();
       _todaySnapshot = today;
       _lastUpdatedAt = today.lastUpdatedAt;
+      _lastBackendSyncAt = DateTime.now();
       _readiness = today.readiness;
-      if (today.upcomingTimeline.isNotEmpty) {
-        _schedule = today.upcomingTimeline;
-      }
+      _schedule = today.upcomingTimeline;
       _isOffline = false;
       _isLoading = false;
+      final hasTasks = _tasks.isNotEmpty || today.upcomingTimeline.isNotEmpty || today.currentRecommendation != null;
+      _todayNetworkState = hasTasks ? TodayNetworkState.tasksSuccess : TodayNetworkState.emptySuccess;
+      _errorMessage = null;
       notifyListeners();
     } catch (e) {
       // Check for cached offline data
@@ -516,17 +719,108 @@ class AppStateProvider extends ChangeNotifier {
         _todaySnapshot = cached;
         _lastUpdatedAt = cached.lastUpdatedAt;
         _readiness = cached.readiness;
-        if (cached.upcomingTimeline.isNotEmpty) {
-          _schedule = cached.upcomingTimeline;
-        }
+        _schedule = cached.upcomingTimeline;
         _isOffline = true;
         _isLoading = false;
+        _todayNetworkState = TodayNetworkState.networkFailure;
         notifyListeners();
       } else {
-        _errorMessage = 'We couldn’t update your plan.';
+        if (e is ApiException && e.statusCode != null && e.statusCode! >= 500) {
+          _todayNetworkState = TodayNetworkState.serverError;
+          _errorMessage = 'Server error. Please try again later.';
+        } else {
+          _todayNetworkState = TodayNetworkState.networkFailure;
+          _errorMessage = 'We couldn’t update your plan.';
+        }
+        _isOffline = true;
         _isLoading = false;
         notifyListeners();
       }
     }
   }
+
+  /// Called when a real user signs in, signs up, or restores a Supabase session.
+  /// Wipes all demo data, disables demo mode, loads real tasks, and fetches real Today plan.
+  Future<void> onUserAuthenticated(AuthUser user) async {
+    _currentUser = user;
+    _isDemoMode = false;
+    _tasks = [];
+    _schedule = [];
+    _readiness = ReadinessModel.uncalibrated();
+    _todaySnapshot = null;
+
+    if (user.onboardingCompleted) {
+      _onboardingComplete = true;
+      _currentNavIndex = 0;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('flowstate_onboarding_complete', true);
+      } catch (_) {}
+    } else {
+      _currentNavIndex = 0;
+    }
+
+    notifyListeners();
+
+    // Query backend single source of truth for onboarding/profile state
+    try {
+      final profile = await authService.fetchUserProfile();
+      if (profile != null) {
+        _currentUser = profile;
+        if (profile.onboardingCompleted) {
+          _onboardingComplete = true;
+          _currentNavIndex = 0;
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setBool('flowstate_onboarding_complete', true);
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
+    notifyListeners();
+
+    await loadUserTasks();
+    await refreshTodayData();
+  }
+
+  /// Fetches real tasks belonging exclusively to the authenticated user from the database.
+  Future<void> loadUserTasks() async {
+    try {
+      final remoteTasks = await taskService.getTasks();
+      _tasks = remoteTasks;
+      _recalculateReadiness();
+      _recalculateSchedule();
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  /// Pull-to-refresh helper to refresh both tasks and today snapshot concurrently
+  Future<void> refreshAllData() async {
+    await Future.wait([
+      loadUserTasks(),
+      refreshTodayData(),
+    ]);
+  }
+
+
+  /// Sign out current user, wipe in-memory tasks & schedule, clear persistent onboarding state.
+  Future<void> logout() async {
+    await authService.logout();
+    _currentUser = null;
+    _tasks = [];
+    _schedule = [];
+    _todaySnapshot = null;
+    _readiness = ReadinessModel.uncalibrated();
+    _onboardingComplete = false;
+    _currentNavIndex = 0;
+    _todayNetworkState = TodayNetworkState.emptySuccess;
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('flowstate_onboarding_complete');
+    } catch (_) {}
+  }
 }
+

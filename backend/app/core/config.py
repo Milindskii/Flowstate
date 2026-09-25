@@ -7,10 +7,12 @@ class Settings(BaseSettings):
     VERSION: str = "1.0.0"
     ENVIRONMENT: str = "development" # "development", "staging", "production"
 
+    DEBUG: bool = False
+
     # Database: SQLite default fallback for local zero-config testing; PostgreSQL via Supabase in production
     DATABASE_URL: str = "sqlite:///./flowstate.db"
 
-    # Supabase / Auth credentials
+    # Supabase / Auth credentials (configured via .env)
     SUPABASE_URL: str = "https://drfjprhnynktjkiplbzy.supabase.co"
     SUPABASE_KEY: str = "sb_publishable_LDiD72aRDOVKMwD5AMoU5Q_oNntJRrv"
     SUPABASE_JWKS_URL: str = "https://drfjprhnynktjkiplbzy.supabase.co/auth/v1/.well-known/jwks.json"
@@ -33,10 +35,15 @@ class Settings(BaseSettings):
     ]
 
     # Model settings
-    READINESS_MODEL_VERSION: str = "v1.0.0-deterministic"
-    SCHEDULING_MODEL_VERSION: str = "v1.0.0-deterministic"
+    READINESS_MODEL_VERSION: str = "v2.0.0-progressive"
+    SCHEDULING_MODEL_VERSION: str = "v2.0.0-progressive"
     CALIBRATION_MIN_SESSIONS: int = 30
     LEARNING_MIN_SESSIONS: int = 1
+
+    # Google Gemini AI settings (loaded strictly from environment / .env)
+    GEMINI_API_KEY: str = ""
+    GEMINI_PROJECT_ID: str = ""
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
 
     model_config = SettingsConfigDict(
         env_file=".env",

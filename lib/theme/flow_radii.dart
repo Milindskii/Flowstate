@@ -11,6 +11,7 @@ class FlowRadii {
   static const double button = 18.0;
   static const double inputField = 18.0;
   static const double chip = 14.0;
+  static const double badge = 8.0;
   static const double pill = 999.0;
   static const double avatar = 999.0;
 
@@ -20,5 +21,6 @@ class FlowRadii {
   static const BorderRadius buttonRadius = BorderRadius.all(Radius.circular(button));
   static const BorderRadius inputRadius = BorderRadius.all(Radius.circular(inputField));
   static const BorderRadius chipRadius = BorderRadius.all(Radius.circular(chip));
+  static const BorderRadius badgeRadius = BorderRadius.all(Radius.circular(badge));
   static const BorderRadius pillRadius = BorderRadius.all(Radius.circular(pill));
 }

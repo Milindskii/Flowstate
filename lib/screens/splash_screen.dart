@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:percent_indicator/circular_percent_indicator.dart';
+import 'package:provider/provider.dart';
 import '../components/flow_logo.dart';
+import '../providers/app_state_provider.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_typography.dart';
 import 'auth_screen.dart';
+import 'main_shell.dart';
+import 'onboarding_flow_screen.dart';
 
 /// Screen 1: Splash Screen
 /// Minimal animated breathing splash screen with Flowstate logo and tagline.
+/// Restores persistent Supabase session and routes cleanly to appropriate screen.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -37,20 +41,48 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
 
     _animController.repeat(reverse: true);
 
-    // Smooth transition to auth after 2.2 seconds
-    Future.delayed(const Duration(milliseconds: 2200), () {
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          PageRouteBuilder(
-            pageBuilder: (_, __, ___) => const AuthScreen(),
-            transitionsBuilder: (_, animation, __, child) {
-              return FadeTransition(opacity: animation, child: child);
-            },
-            transitionDuration: const Duration(milliseconds: 500),
-          ),
-        );
+    _checkInitialAuth();
+  }
+
+  Future<void> _checkInitialAuth() async {
+    final startTime = DateTime.now();
+    final appState = Provider.of<AppStateProvider>(context, listen: false);
+
+    // Attempt restoring existing session from Supabase
+    final user = await appState.authService.restoreSession();
+    if (user != null) {
+      await appState.onUserAuthenticated(user);
+    }
+
+    // Preserve minimum brand splash visibility (~1.6s)
+    final elapsed = DateTime.now().difference(startTime);
+    final remaining = const Duration(milliseconds: 1600) - elapsed;
+    if (remaining > Duration.zero) {
+      await Future.delayed(remaining);
+    }
+
+    if (!mounted) return;
+
+    Widget targetScreen;
+    if (user != null) {
+      if (appState.onboardingComplete) {
+        targetScreen = const MainShell();
+      } else {
+        targetScreen = const OnboardingFlowScreen();
       }
-    });
+    } else {
+      targetScreen = const AuthScreen();
+    }
+
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => targetScreen,
+        transitionsBuilder: (_, animation, __, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+        transitionDuration: const Duration(milliseconds: 400),
+      ),
+    );
   }
 
   @override
@@ -61,11 +93,13 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
 
   @override
   Widget build(BuildContext context) {
+    final isDark = FlowColors.isDark(context);
+
     return Scaffold(
-      backgroundColor: FlowColors.darkBackground,
+      backgroundColor: FlowColors.background(context),
       body: Stack(
         children: [
-          // Background ambient subtle glow circles (Cyan and Mint, no purple)
+          // Background ambient subtle glow cards (Cyan and Mint, no purple)
           Positioned(
             top: -60,
             left: -60,
@@ -73,8 +107,8 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
               width: 260,
               height: 260,
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: FlowColors.cyan.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(64),
+                color: FlowColors.cyan.withValues(alpha: isDark ? 0.08 : 0.04),
               ),
             ),
           ),
@@ -85,8 +119,8 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
               width: 240,
               height: 240,
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: FlowColors.mint.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(64),
+                color: FlowColors.mint.withValues(alpha: isDark ? 0.06 : 0.03),
               ),
             ),
           ),
@@ -116,7 +150,9 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                   // Brand name
                   Text(
                     'FLOWSTATE',
-                    style: FlowTypography.displayMedium().copyWith(
+                    style: FlowTypography.displayMedium(
+                      color: FlowColors.textPrimaryOf(context),
+                    ).copyWith(
                       fontWeight: FontWeight.w800,
                       letterSpacing: 2.0,
                     ),
@@ -126,24 +162,30 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                   // Tagline
                   Text(
                     'Work with your rhythm.',
-                    style: FlowTypography.titleMedium(color: FlowColors.textSecondary),
+                    style: FlowTypography.titleMedium(
+                      color: FlowColors.textSecondaryOf(context),
+                    ),
                   ),
 
                   const Spacer(flex: 3),
 
                   // Syncing indicator
-                  CircularPercentIndicator(
-                    radius: 12.0,
-                    lineWidth: 2.5,
-                    percent: 0.75,
-                    animation: true,
-                    progressColor: FlowColors.cyan,
-                    backgroundColor: FlowColors.darkBorder,
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      value: 0.75,
+                      strokeWidth: 2.5,
+                      color: FlowColors.cyan,
+                      backgroundColor: FlowColors.border(context),
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Text(
                     'Syncing your energy...',
-                    style: FlowTypography.labelSmall(color: FlowColors.textMuted),
+                    style: FlowTypography.labelSmall(
+                      color: FlowColors.textMutedOf(context),
+                    ),
                   ),
 
                   const Spacer(flex: 1),
@@ -155,15 +197,17 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(
+                          Icon(
                             Icons.shield_outlined,
                             size: 14,
-                            color: FlowColors.textMuted,
+                            color: FlowColors.textMutedOf(context),
                           ),
                           const SizedBox(width: 6),
                           Text(
                             'Private & Local',
-                            style: FlowTypography.labelSmall(color: FlowColors.textMuted),
+                            style: FlowTypography.labelSmall(
+                              color: FlowColors.textMutedOf(context),
+                            ),
                           ),
                         ],
                       ),

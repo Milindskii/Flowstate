@@ -13,6 +13,7 @@ class ScheduleItem {
   final Color tagBg;
   final Color tagColor;
   final bool isActive;
+  final bool isCompleted;
   final int durationMinutes;
 
   const ScheduleItem({
@@ -25,6 +26,7 @@ class ScheduleItem {
     this.tagBg = FlowColors.tagDeepWorkBg,
     this.tagColor = FlowColors.tagDeepWorkText,
     this.isActive = false,
+    this.isCompleted = false,
     this.durationMinutes = 60,
   });
 
@@ -38,6 +40,7 @@ class ScheduleItem {
     Color? tagBg,
     Color? tagColor,
     bool? isActive,
+    bool? isCompleted,
     int? durationMinutes,
   }) {
     return ScheduleItem(
@@ -50,6 +53,7 @@ class ScheduleItem {
       tagBg: tagBg ?? this.tagBg,
       tagColor: tagColor ?? this.tagColor,
       isActive: isActive ?? this.isActive,
+      isCompleted: isCompleted ?? this.isCompleted,
       durationMinutes: durationMinutes ?? this.durationMinutes,
     );
   }
@@ -88,6 +92,7 @@ class ScheduleItem {
       tagBg: bg,
       tagColor: fg,
       isActive: json['is_active'] as bool? ?? false,
+      isCompleted: json['is_completed'] as bool? ?? false,
       durationMinutes: (json['duration_minutes'] as num?)?.toInt() ?? 60,
     );
   }
@@ -100,6 +105,7 @@ class ScheduleItem {
         'type': type,
         'tag_text': tagText,
         'is_active': isActive,
+        'is_completed': isCompleted,
         'duration_minutes': durationMinutes,
       };
 }

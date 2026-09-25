@@ -95,12 +95,14 @@ Flowstate implements an adaptive feedback-learning loop:
 
 1. **Splash Screen (`lib/screens/splash_screen.dart`)**: Animated breathing Flowstate logo, tagline *"Work with your rhythm."*, sync progress, and *"Private & Local"* privacy badge.
 2. **Auth & Sign Up (`lib/screens/auth_screen.dart`)**: Ambient flowing energy visual (top 35%), *"Plan around your energy."*, Google Auth, Email Modal, and Sign In toggle.
-3. **5-Step Onboarding (`lib/screens/onboarding_screen.dart`)**:
-   - Step 1: Wake up time
-   - Step 2: Peak focus timing (Morning, Afternoon, Evening, Varies)
-   - Step 3: Energy dip timing
-   - Step 4: Sleep duration
-   - Step 5: Primary goal (College, Work, Personal projects, Fitness, General)
+3. **7-Step Onboarding (`lib/screens/onboarding_flow_screen.dart`)**:
+   - Step 1: Welcome
+   - Step 2: Brain dump
+   - Step 3: Processing
+   - Step 4: First plan
+   - Step 5: Why
+   - Step 6: Personalization
+   - Step 7: Rhythm
 4. **Today Dashboard (`lib/screens/today_dashboard_tab.dart`)**: Greeting, Avatar, Today's Readiness Hero Card with dynamic circadian wave, Recommended Next Task card, Today's Schedule timeline, and floating *"What should I do now?"* CTA.
 5. **Tasks Inbox (`lib/screens/task_inbox_tab.dart`)**: Category filter pills (All, Work, Personal, Study, Health), High Priority and Later Today sections, complete/reschedule actions, and `+ Add Task` button.
 6. **Add Task Modal (`lib/screens/add_task_sheet.dart`)**: AI-assisted task creation modal with real-time attribute inference (Duration, Difficulty, Focus requirement, Deadline, Category), and *"Add & Schedule"* button.
@@ -155,7 +157,7 @@ c:\FULL STACK WEBDEVLOPMENT\FLowstate\
     ├── screens/
     │   ├── splash_screen.dart
     │   ├── auth_screen.dart
-    │   ├── onboarding_screen.dart
+    │   ├── onboarding_flow_screen.dart
     │   ├── main_shell.dart
     │   ├── today_dashboard_tab.dart
     │   ├── task_inbox_tab.dart

@@ -50,7 +50,14 @@ app.*.map.json
 # Python / Backend
 backend/venv/
 backend/.env
+backend/.env.*
+*.env
+*.env.*
+**/*.db
+**/*.sqlite*
+**/*.key
+**/*.pem
+**/*.log
 **/__pycache__/
 .pytest_cache/
-*.db
 

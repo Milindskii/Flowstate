@@ -98,7 +98,7 @@ class FlowColors {
   // ─────────────────────────────────────────────────────────
   // LIGHT PALETTE (Primary Default Identity)
   // ─────────────────────────────────────────────────────────
-  static const Color bgLight = Color(0xFFFFFFFF);
+  static const Color bgLight = Color(0xFFF8FAFC); // Slate 50 (clean luminous canvas)
   static const Color surfaceLight = Color(0xFFFFFFFF);
   static const Color surfaceElevatedLight = Color(0xFFF8FAFC); // Slate 50
   static const Color surfaceContainerLight = Color(0xFFF1F5F9); // Slate 100
@@ -106,8 +106,8 @@ class FlowColors {
   static const Color dividerLight = Color(0xFFF1F5F9); // Slate 100
   static const Color textPrimaryLight = Color(0xFF0F172A); // Slate 900 (Deep Charcoal)
   static const Color textSecondaryLight = Color(0xFF475569); // Slate 600
-  static const Color textMutedLight = Color(0xFF94A3B8); // Slate 400
-  static const Color softShadowLight = Color(0x0A000000); // 4% black
+  static const Color textMutedLight = Color(0xFF64748B); // Slate 500 (WCAG 2.1 AA 4.6:1 contrast ratio)
+  static const Color softShadowLight = Color(0x140F172A); // 8% Slate-900 subtle soft elevation shadow
 
   // ─────────────────────────────────────────────────────────
   // DARK PALETTE (Secondary Optional Theme)
@@ -120,7 +120,7 @@ class FlowColors {
   static const Color dividerDark = Color(0xFF1C2739);
   static const Color textPrimaryDark = Color(0xFFF8FAFC); // Slate 50 (Crisp off-white)
   static const Color textSecondaryDark = Color(0xFF94A3B8); // Slate 400 (Cool gray)
-  static const Color textMutedDark = Color(0xFF64748B); // Slate 500 (Muted gray)
+  static const Color textMutedDark = Color(0xFF94A3B8); // Slate 400 (WCAG 2.1 AA >5:1 contrast on Obsidian)
   static const Color softShadowDark = Color(0x28000000); // Subtle dark shadow
 
   // ─────────────────────────────────────────────────────────
@@ -194,6 +194,7 @@ class FlowColors {
 
   static const Color cyan = accentCyan;
   static const Color cyanLight = accentCyan;
+  static const Color cyanDark = Color(0xFF0369A1);
   static const Color mint = accentMint;
   static const Color mintLight = accentMint;
   static const Color iceBlue = accentBlue;

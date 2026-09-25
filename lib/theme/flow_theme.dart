@@ -12,6 +12,7 @@ class FlowTheme {
   static ThemeData lightTheme([Color accentColor = FlowColors.accentCyan]) {
     return ThemeData(
       useMaterial3: true,
+      splashFactory: InkRipple.splashFactory,
       brightness: Brightness.light,
       scaffoldBackgroundColor: FlowColors.bgLight,
       colorScheme: ColorScheme.light(
@@ -29,6 +30,7 @@ class FlowTheme {
       ).apply(
         bodyColor: FlowColors.textPrimaryLight,
         displayColor: FlowColors.textPrimaryLight,
+        fontFamilyFallback: const ['Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', 'sans-serif'],
       ),
       cardTheme: const CardThemeData(
         color: FlowColors.surfaceLight,
@@ -104,6 +106,7 @@ class FlowTheme {
   static ThemeData darkTheme([Color accentColor = FlowColors.accentCyanDark]) {
     return ThemeData(
       useMaterial3: true,
+      splashFactory: InkRipple.splashFactory,
       brightness: Brightness.dark,
       scaffoldBackgroundColor: FlowColors.bgDark,
       colorScheme: ColorScheme.dark(
@@ -121,6 +124,7 @@ class FlowTheme {
       ).apply(
         bodyColor: FlowColors.textPrimaryDark,
         displayColor: FlowColors.textPrimaryDark,
+        fontFamilyFallback: const ['Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', 'sans-serif'],
       ),
       cardTheme: const CardThemeData(
         color: FlowColors.surfaceDark,

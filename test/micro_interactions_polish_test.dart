@@ -11,10 +11,17 @@ import 'package:flowstate/screens/today_dashboard_tab.dart';
 import 'package:flowstate/screens/task_inbox_tab.dart';
 import 'package:flowstate/screens/calendar_tab.dart';
 import 'package:flowstate/screens/insights_tab.dart';
+import 'package:flowstate/services/flow_clock.dart';
 
 void main() {
   setUp(() {
+    FlowClock.enableAutoTick = false;
+    FlowClock().stopTimer();
     SharedPreferences.setMockInitialValues({});
+  });
+
+  tearDown(() {
+    FlowClock().stopTimer();
   });
 
   group('Flowstate Micro-Interactions, Haptics, and Empty States', () {
@@ -57,6 +64,7 @@ void main() {
 
       Widget buildNav(int index) {
         return MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(
             bottomNavigationBar: FlowBottomNav(
               currentIndex: index,
@@ -90,10 +98,10 @@ void main() {
       await tester.pumpWidget(buildNav(1));
       await tester.pumpAndSettle();
 
-      // Today should now be Icons.today_outlined
       // Tasks should now be Icons.assignment_rounded
-      expect(find.byIcon(Icons.today_outlined), findsOneWidget);
+      // Today should now be Icons.today_outlined
       expect(find.byIcon(Icons.assignment_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.today_outlined), findsOneWidget);
     });
 
     testWidgets('4. Major Empty States Audit: All 4 major tabs answer "What is happening? + What should I do?"', (WidgetTester tester) async {
@@ -108,6 +116,7 @@ void main() {
             ChangeNotifierProvider<ThemeProvider>.value(value: themeProvider),
           ],
           child: MaterialApp(
+            theme: ThemeData(splashFactory: InkRipple.splashFactory),
             home: child,
           ),
         );
@@ -117,7 +126,7 @@ void main() {
       await tester.pumpWidget(wrapWithProviders(const TodayDashboardTab()));
       await tester.pumpAndSettle();
       expect(find.text("What's on your plate?"), findsOneWidget);
-      expect(find.text("Tell Flowstate what you need to do and we'll shape your day."), findsOneWidget);
+      expect(find.text("Add everything you need to get done and we'll organize it."), findsOneWidget);
       expect(find.text('Build my day'), findsOneWidget);
 
       // 4b. Task Inbox Empty State
@@ -137,19 +146,21 @@ void main() {
       // 4d. Insights Empty State (learning mode without fabricated stats)
       await tester.pumpWidget(wrapWithProviders(const InsightsTab()));
       await tester.pumpAndSettle();
-      expect(find.text('Gathering your pattern data'), findsOneWidget);
-      expect(find.textContaining('Flowstate never fabricates metrics'), findsOneWidget);
-      expect(find.text('Go to Today plan'), findsOneWidget);
+      expect(find.text("We're still learning your rhythm."), findsOneWidget);
+      expect(find.textContaining('more focus sessions will help us understand'), findsOneWidget);
+      expect(find.text('Start a focus session'), findsOneWidget);
     });
 
     testWidgets('5. RightNowTaskCard provides tactile state transitions and responsive feedback', (WidgetTester tester) async {
       final appState = AppStateProvider();
+      appState.setCalibratedStateForTesting();
       final task = appState.tasks.first;
       bool started = false;
       bool completed = false;
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(
             body: RightNowTaskCard(
               task: task,
@@ -169,14 +180,16 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Due tomorrow'), findsOneWidget);
 
-      // Tap "Start"
-      await tester.tap(find.text('Start'));
+      // Tap "Start Focus"
+      expect(find.text('Start Focus'), findsOneWidget);
+      await tester.tap(find.text('Start Focus'));
       await tester.pumpAndSettle();
       expect(started, isTrue);
 
       // Re-render in running state
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(
             body: RightNowTaskCard(
               task: task,

@@ -169,9 +169,9 @@ class _FlowPressScaleState extends State<FlowPressScale> {
   }
 }
 
-/// Smooth crossfade for IndexedStack tabs.
-/// Keeps all child tab states alive while delivering a fast, subtle transition.
-/// Avoids duplicate widget tree layout passes.
+/// Smooth concurrent crossfade for tab navigation.
+/// Keeps all child tab states and scroll positions alive while delivering a fluid,
+/// visible crossfade between outgoing and incoming screens without blank flashes.
 class FlowFadeIndexedStack extends StatefulWidget {
   final int index;
   final List<Widget> children;
@@ -181,7 +181,7 @@ class FlowFadeIndexedStack extends StatefulWidget {
     super.key,
     required this.index,
     required this.children,
-    this.duration = const Duration(milliseconds: 180),
+    this.duration = const Duration(milliseconds: 240),
   });
 
   @override
@@ -191,8 +191,10 @@ class FlowFadeIndexedStack extends StatefulWidget {
 class _FlowFadeIndexedStackState extends State<FlowFadeIndexedStack>
     with SingleTickerProviderStateMixin {
   late final AnimationController _animController;
-  late final Animation<double> _fadeAnimation;
+  late final Animation<double> _fadeInAnimation;
+  late final Animation<double> _fadeOutAnimation;
   late int _currentIndex;
+  int? _previousIndex;
 
   @override
   void initState() {
@@ -202,10 +204,23 @@ class _FlowFadeIndexedStackState extends State<FlowFadeIndexedStack>
       vsync: this,
       duration: widget.duration,
     );
-    _fadeAnimation = CurvedAnimation(
+    _fadeInAnimation = CurvedAnimation(
       parent: _animController,
-      curve: Curves.easeOutCubic,
+      curve: Curves.easeInOutCubic,
     );
+    _fadeOutAnimation = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(
+        parent: _animController,
+        curve: Curves.easeInOutCubic,
+      ),
+    );
+    _animController.addStatusListener((status) {
+      if (status == AnimationStatus.completed && mounted) {
+        setState(() {
+          _previousIndex = null;
+        });
+      }
+    });
     _animController.value = 1.0;
   }
 
@@ -213,11 +228,12 @@ class _FlowFadeIndexedStackState extends State<FlowFadeIndexedStack>
   void didUpdateWidget(FlowFadeIndexedStack oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.index != oldWidget.index) {
+      final oldIndex = _currentIndex;
       setState(() {
+        _previousIndex = oldIndex;
         _currentIndex = widget.index;
       });
-      _animController.reset();
-      _animController.forward();
+      _animController.forward(from: 0.0);
     }
   }
 
@@ -230,18 +246,50 @@ class _FlowFadeIndexedStackState extends State<FlowFadeIndexedStack>
   @override
   Widget build(BuildContext context) {
     if (FlowMotion.isReducedMotion(context)) {
-      return IndexedStack(
-        index: widget.index,
-        children: widget.children,
+      return Stack(
+        fit: StackFit.expand,
+        children: List.generate(widget.children.length, (i) {
+          final isCurrent = i == widget.index;
+          return TickerMode(
+            key: ValueKey<int>(i),
+            enabled: isCurrent,
+            child: Offstage(
+              offstage: !isCurrent,
+              child: widget.children[i],
+            ),
+          );
+        }),
       );
     }
 
-    return FadeTransition(
-      opacity: _fadeAnimation,
-      child: IndexedStack(
-        index: _currentIndex,
-        children: widget.children,
-      ),
+    final isTransitioning = _previousIndex != null && _animController.isAnimating;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: List.generate(widget.children.length, (i) {
+        final bool isIncoming = i == _currentIndex;
+        final bool isOutgoing = isTransitioning && i == _previousIndex;
+        final bool isVisible = isIncoming || isOutgoing;
+
+        final Animation<double> opacityAnim = isIncoming
+            ? (isTransitioning ? _fadeInAnimation : const AlwaysStoppedAnimation<double>(1.0))
+            : (isOutgoing ? _fadeOutAnimation : const AlwaysStoppedAnimation<double>(0.0));
+
+        return TickerMode(
+          key: ValueKey<int>(i),
+          enabled: isVisible,
+          child: Offstage(
+            offstage: !isVisible,
+            child: IgnorePointer(
+              ignoring: !isIncoming,
+              child: FadeTransition(
+                opacity: opacityAnim,
+                child: widget.children[i],
+              ),
+            ),
+          ),
+        );
+      }),
     );
   }
 }

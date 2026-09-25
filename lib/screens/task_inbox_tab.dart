@@ -1,24 +1,41 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../components/category_chip.dart';
+import '../components/skeleton_loaders.dart';
 import '../components/task_card.dart';
 import '../models/task_item.dart';
 import '../providers/app_state_provider.dart';
 import '../providers/theme_provider.dart';
+import '../services/task_parse_service.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_spacing.dart';
 import '../theme/flow_typography.dart';
-import '../utils/mock_data.dart';
 import 'add_task_sheet.dart';
+
 import 'brain_dump_sheet.dart';
+import 'parsed_plan_confirm_sheet.dart';
 import 'task_feedback_sheet.dart';
 import 'what_should_i_do_screen.dart';
 
-/// Screen 5: Tasks Inbox
-class TaskInboxTab extends StatelessWidget {
+/// Screen 5: Tasks Inbox with "+ What do you need to get done?" natural-language parser input
+class TaskInboxTab extends StatefulWidget {
   const TaskInboxTab({super.key});
+
+  @override
+  State<TaskInboxTab> createState() => _TaskInboxTabState();
+}
+
+class _TaskInboxTabState extends State<TaskInboxTab> {
+  final TextEditingController _quickInputCtrl = TextEditingController();
+  bool _isParsing = false;
+
+  @override
+  void dispose() {
+    _quickInputCtrl.dispose();
+    super.dispose();
+  }
 
   void _openAddTaskSheet(BuildContext context) {
     showModalBottomSheet(
@@ -43,6 +60,32 @@ class TaskInboxTab extends StatelessWidget {
     );
   }
 
+  Future<void> _handleQuickInput() async {
+    final text = _quickInputCtrl.text.trim();
+    if (text.isEmpty || _isParsing) return;
+
+    setState(() => _isParsing = true);
+    final appState = Provider.of<AppStateProvider>(context, listen: false);
+    final parseService = TaskParseService(api: appState.apiService);
+
+    try {
+      final results = await parseService.parseBrainDump(
+        text,
+        isDemoMode: appState.isDemoMode,
+      );
+      _quickInputCtrl.clear();
+      if (!mounted) return;
+      setState(() => _isParsing = false);
+      if (results.isNotEmpty) {
+        showParsedPlanConfirmSheet(context, candidates: results);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _isParsing = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = Provider.of<AppStateProvider>(context);
@@ -50,6 +93,10 @@ class TaskInboxTab extends StatelessWidget {
     try {
       accent = Provider.of<ThemeProvider>(context).accentColor;
     } catch (_) {}
+
+    if (state.isLoading) {
+      return const TaskInboxSkeleton();
+    }
 
     final allTasks = state.selectedCategory == 'All'
         ? state.tasks
@@ -59,7 +106,7 @@ class TaskInboxTab extends StatelessWidget {
     final completed = allTasks.where((t) => t.isCompleted).toList();
 
     return Scaffold(
-      backgroundColor: FlowColors.background(context),
+      backgroundColor: Colors.transparent,
       floatingActionButton: Padding(
         padding: const EdgeInsets.only(bottom: 74.0), // Above bottom nav
         child: FloatingActionButton.extended(
@@ -81,11 +128,15 @@ class TaskInboxTab extends StatelessWidget {
         ),
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: EdgeInsets.symmetric(
-            horizontal: FlowSpacing.pageMargin(context),
-            vertical: 16.0,
-          ),
+        child: RefreshIndicator(
+          color: accent,
+          onRefresh: () => state.refreshAllData(),
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.symmetric(
+              horizontal: FlowSpacing.pageMargin(context),
+              vertical: 16.0,
+            ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -128,19 +179,63 @@ class TaskInboxTab extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
+
+              // P1.1: "+ What do you need to get done?" Natural Language Quick Input Bar
+              Container(
+                decoration: BoxDecoration(
+                  color: FlowColors.darkCard,
+                  borderRadius: FlowRadii.cardRadius,
+                  border: Border.all(color: FlowColors.darkBorder, width: 1.0),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _quickInputCtrl,
+                        style: FlowTypography.bodyMedium(),
+                        textInputAction: TextInputAction.send,
+                        onSubmitted: (_) => _handleQuickInput(),
+                        decoration: InputDecoration(
+                          hintText: '+ What do you need to get done?',
+                          hintStyle: FlowTypography.bodyMedium(color: FlowColors.textMuted),
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        ),
+                      ),
+                    ),
+                    if (_isParsing)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 14),
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: FlowColors.accentCyan),
+                        ),
+                      )
+                    else
+                      IconButton(
+                        icon: Icon(Icons.arrow_upward_rounded, color: accent, size: 20),
+                        tooltip: 'Parse tasks',
+                        onPressed: () => _handleQuickInput(),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
 
               // Category Filter Horizontal Strip
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
-                  children: MockData.categories.map((cat) {
+                  children: const ['All', 'Study', 'Deep Work', 'Admin', 'Fitness', 'Personal'].map((cat) {
                     return CategoryChip(
                       label: cat,
                       isSelected: state.selectedCategory == cat,
                       onTap: () => state.setSelectedCategory(cat),
                     );
                   }).toList(),
+
                 ),
               ),
               const SizedBox(height: 24),
@@ -149,100 +244,100 @@ class TaskInboxTab extends StatelessWidget {
               if (allTasks.isEmpty) ...[
                 _buildEmptyState(context, state, accent),
               ] else ...[
-
-              // High Priority Section
-              if (highPriority.isNotEmpty) ...[
-                Text(
-                  'High Priority',
-                  style: FlowTypography.labelLarge(color: FlowColors.textSecondary).copyWith(
-                    fontWeight: FontWeight.w600,
+                // High Priority Section
+                if (highPriority.isNotEmpty) ...[
+                  Text(
+                    'High Priority',
+                    style: FlowTypography.labelLarge(color: FlowColors.textSecondary).copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 14),
-                ...highPriority.map((t) => TaskCard(
-                      task: t,
-                      onToggleComplete: () {
-                        final willComplete = !t.isCompleted;
-                        state.toggleTaskCompletion(t.id);
-                        if (willComplete) {
-                          showTaskFeedbackSheet(
-                            context,
-                            taskId: t.id,
-                            actualMinutes: t.durationMinutes,
-                            onSubmit: (fb) {
-                              state.recordTaskFeedback(
-                                taskId: t.id,
-                                actualMinutes: fb.actualMinutes,
-                                feeling: fb.feeling,
-                                durationFeedback: fb.durationFeedback,
-                                blockerNote: fb.blockerNote,
-                              );
-                            },
-                          );
-                        }
-                      },
-                      onTap: () => _openTaskDetail(context, t),
-                    )),
-                const SizedBox(height: 16),
-              ],
+                  const SizedBox(height: 14),
+                  ...highPriority.map((t) => TaskCard(
+                        task: t,
+                        onToggleComplete: () {
+                          final willComplete = !t.isCompleted;
+                          state.toggleTaskCompletion(t.id);
+                          if (willComplete) {
+                            showTaskFeedbackSheet(
+                              context,
+                              taskId: t.id,
+                              actualMinutes: t.durationMinutes,
+                              onSubmit: (fb) {
+                                state.recordTaskFeedback(
+                                  taskId: t.id,
+                                  actualMinutes: fb.actualMinutes,
+                                  feeling: fb.feeling,
+                                  durationFeedback: fb.durationFeedback,
+                                  blockerNote: fb.blockerNote,
+                                );
+                              },
+                            );
+                          }
+                        },
+                        onTap: () => _openTaskDetail(context, t),
+                      )),
+                  const SizedBox(height: 16),
+                ],
 
-              // Later Today Section
-              if (later.isNotEmpty) ...[
-                Text(
-                  'Later Today',
-                  style: FlowTypography.labelLarge(color: FlowColors.textSecondary).copyWith(
-                    fontWeight: FontWeight.w600,
+                // Later Today Section
+                if (later.isNotEmpty) ...[
+                  Text(
+                    'Later Today',
+                    style: FlowTypography.labelLarge(color: FlowColors.textSecondary).copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 14),
-                ...later.map((t) => TaskCard(
-                      task: t,
-                      onToggleComplete: () {
-                        final willComplete = !t.isCompleted;
-                        state.toggleTaskCompletion(t.id);
-                        if (willComplete) {
-                          showTaskFeedbackSheet(
-                            context,
-                            taskId: t.id,
-                            actualMinutes: t.durationMinutes,
-                            onSubmit: (fb) {
-                              state.recordTaskFeedback(
-                                taskId: t.id,
-                                actualMinutes: fb.actualMinutes,
-                                feeling: fb.feeling,
-                                durationFeedback: fb.durationFeedback,
-                                blockerNote: fb.blockerNote,
-                              );
-                            },
-                          );
-                        }
-                      },
-                      onTap: () => _openTaskDetail(context, t),
-                    )),
-                const SizedBox(height: 16),
-              ],
+                  const SizedBox(height: 14),
+                  ...later.map((t) => TaskCard(
+                        task: t,
+                        onToggleComplete: () {
+                          final willComplete = !t.isCompleted;
+                          state.toggleTaskCompletion(t.id);
+                          if (willComplete) {
+                            showTaskFeedbackSheet(
+                              context,
+                              taskId: t.id,
+                              actualMinutes: t.durationMinutes,
+                              onSubmit: (fb) {
+                                state.recordTaskFeedback(
+                                  taskId: t.id,
+                                  actualMinutes: fb.actualMinutes,
+                                  feeling: fb.feeling,
+                                  durationFeedback: fb.durationFeedback,
+                                  blockerNote: fb.blockerNote,
+                                );
+                              },
+                            );
+                          }
+                        },
+                        onTap: () => _openTaskDetail(context, t),
+                      )),
+                  const SizedBox(height: 16),
+                ],
 
-              // Completed Tasks Section
-              if (completed.isNotEmpty) ...[
-                Text(
-                  'Completed (${completed.length})',
-                  style: FlowTypography.labelLarge(color: FlowColors.mintLight).copyWith(
-                    fontWeight: FontWeight.w600,
+                // Completed Tasks Section
+                if (completed.isNotEmpty) ...[
+                  Text(
+                    'Completed (${completed.length})',
+                    style: FlowTypography.labelLarge(color: FlowColors.mintLight).copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 14),
-                ...completed.map((t) => TaskCard(
-                      task: t,
-                      onToggleComplete: () => state.toggleTaskCompletion(t.id),
-                      onTap: () => _openTaskDetail(context, t),
-                    )),
+                  const SizedBox(height: 14),
+                  ...completed.map((t) => TaskCard(
+                        task: t,
+                        onToggleComplete: () => state.toggleTaskCompletion(t.id),
+                        onTap: () => _openTaskDetail(context, t),
+                      )),
+                ],
               ],
-            ], // closes else ...[
 
               // Safe clearance for bottom nav & FAB
               const SizedBox(height: 100),
             ],
           ),
+        ),
         ),
       ),
     );

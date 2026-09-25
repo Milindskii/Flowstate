@@ -216,7 +216,7 @@ async def test_flutter_e2e_contract_lifecycle(auth_headers):
     """
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         now = datetime.now(timezone.utc)
-        today_start = now + timedelta(hours=1)
+        today_start = now
 
         # 1. Flutter TaskItem.toJson() creation payload
         flutter_task_payload = {

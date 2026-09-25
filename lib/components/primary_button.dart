@@ -53,7 +53,7 @@ class PrimaryButton extends StatelessWidget {
                   onPressed!();
                 },
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               mainAxisSize: fullWidth ? MainAxisSize.max : MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
@@ -71,12 +71,16 @@ class PrimaryButton extends StatelessWidget {
                   const SizedBox(width: 12),
                 ] else if (icon != null) ...[
                   icon!,
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
                 ],
-                Text(
-                  label,
-                  style: FlowTypography.labelLarge(color: FlowColors.textInverse).copyWith(
-                    fontWeight: FontWeight.w700,
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: FlowTypography.labelLarge(color: FlowColors.textInverse).copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ],

@@ -20,6 +20,7 @@ class RightNowTaskCard extends StatefulWidget {
   final VoidCallback? onPause;
   final VoidCallback? onComplete;
   final VoidCallback? onTakeBreak;
+  final VoidCallback? onFocusRitual;
 
   const RightNowTaskCard({
     super.key,
@@ -32,6 +33,7 @@ class RightNowTaskCard extends StatefulWidget {
     this.onPause,
     this.onComplete,
     this.onTakeBreak,
+    this.onFocusRitual,
   });
 
   @override
@@ -40,6 +42,7 @@ class RightNowTaskCard extends StatefulWidget {
 
 class _RightNowTaskCardState extends State<RightNowTaskCard> {
   bool _showWhy = false;
+  bool _isExpanded = false;
 
   String _formatElapsed(int totalSecs) {
     final m = (totalSecs ~/ 60).toString().padLeft(2, '0');
@@ -63,78 +66,234 @@ class _RightNowTaskCardState extends State<RightNowTaskCard> {
         ? widget.reasons!
         : defaultReasons;
 
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: FlowColors.surface(context),
-        borderRadius: FlowRadii.cardLargeRadius,
-        border: Border.all(
-          color: widget.isRunning ? accent.withValues(alpha: 0.5) : FlowColors.border(context),
-          width: 1.0,
+    return GestureDetector(
+      onTap: () {
+        FlowHaptics.lightTap();
+        setState(() {
+          _isExpanded = !_isExpanded;
+        });
+      },
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: FlowColors.surface(context),
+          borderRadius: FlowRadii.cardLargeRadius,
+          border: Border.all(
+            color: widget.isRunning ? accent.withValues(alpha: 0.5) : FlowColors.border(context),
+            width: 1.0,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: FlowColors.softShadow(context),
+              blurRadius: 14,
+              offset: const Offset(0, 3),
+            ),
+          ],
         ),
-        boxShadow: [
-          BoxShadow(
-            color: FlowColors.softShadow(context),
-            blurRadius: 14,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(22.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Section Header: DO THIS NOW
-          Row(
-            children: [
-              Container(
-                width: 6,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: accent,
-                  shape: BoxShape.circle,
+        padding: const EdgeInsets.all(22.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Section Header: DO THIS NOW + Expand toggle icon
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: accent,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'DO THIS NOW',
+                      style: FlowTypography.badgeText(color: FlowColors.textSecondary).copyWith(
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.0,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'DO THIS NOW',
-                style: FlowTypography.badgeText(color: FlowColors.textSecondary).copyWith(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 1.0,
-                  fontSize: 11,
+                Icon(
+                  _isExpanded ? Icons.unfold_less_rounded : Icons.unfold_more_rounded,
+                  size: 18,
+                  color: FlowColors.textMutedOf(context),
                 ),
+              ],
+            ),
+            const SizedBox(height: 14),
+
+            // Task Title (Hero - Dominates through typography & whitespace)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                if (widget.onComplete != null) ...[
+                  Semantics(
+                    button: true,
+                    label: 'Mark ${widget.task.title} as done',
+                    child: InkWell(
+                      onTap: () {
+                        FlowHaptics.success();
+                        widget.onComplete!();
+                      },
+                      borderRadius: BorderRadius.circular(20),
+                      child: const Padding(
+                        padding: EdgeInsets.only(right: 10.0),
+                        child: Icon(
+                          Icons.radio_button_unchecked_rounded,
+                          size: 26,
+                          color: FlowColors.mint,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                Expanded(
+                  child: Text(
+                    widget.task.title,
+                    style: FlowTypography.headlineMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 22.0,
+                      height: 1.25,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // Clean Metadata: duration · importance · energy
+            Text(
+              '${widget.task.durationMinutes} min · ${widget.task.importanceLabel} importance · ${widget.task.energyRequired} energy',
+              style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
+                fontWeight: FontWeight.w500,
               ),
-            ],
-          ),
-          const SizedBox(height: 14),
-
-          // Task Title (Hero - Dominates through typography & whitespace)
-          Text(
-            widget.task.title,
-            style: FlowTypography.headlineMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
-              fontWeight: FontWeight.w800,
-              fontSize: 22.0,
-              height: 1.25,
             ),
-          ),
-          const SizedBox(height: 8),
 
-          // Clean Metadata: duration · task type
-          Text(
-            '${widget.task.durationMinutes} min · ${widget.task.taskType.label}',
-            style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
-              fontWeight: FontWeight.w500,
+            // Expandable details: Priority, Window, Deadline
+            AnimatedSize(
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeOutCubic,
+              child: _isExpanded
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 14),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: FlowColors.surfaceElevated(context),
+                            borderRadius: FlowRadii.cardRadius,
+                            border: Border.all(color: FlowColors.border(context)),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceAround,
+                            children: [
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'PRIORITY',
+                                    style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    widget.task.difficulty.name.toUpperCase(),
+                                    style: FlowTypography.bodySmall(color: FlowColors.textPrimaryOf(context)).copyWith(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              Container(width: 1, height: 24, color: FlowColors.border(context)),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'WINDOW',
+                                    style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    widget.task.scheduledTime ?? 'Dynamic Slot',
+                                    style: FlowTypography.bodySmall(color: FlowColors.textPrimaryOf(context)).copyWith(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              Container(width: 1, height: 24, color: FlowColors.border(context)),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'DEADLINE',
+                                    style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    widget.task.deadline,
+                                    style: FlowTypography.bodySmall(color: FlowColors.textPrimaryOf(context)).copyWith(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (widget.onFocusRitual != null) ...[
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: () {
+                                FlowHaptics.lightTap();
+                                widget.onFocusRitual!();
+                              },
+                              icon: Icon(Icons.self_improvement_rounded, size: 18, color: accent),
+                              label: Text(
+                                'Open Focus Ritual with Noya',
+                                style: FlowTypography.labelMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                side: BorderSide(color: accent.withValues(alpha: 0.5)),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(FlowRadii.button)),
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    )
+                  : const SizedBox.shrink(),
             ),
-          ),
-          const SizedBox(height: 16),
 
-          // Action Section: Start (or Running Status) + Later
-          if (!widget.isRunning) ...[
+            const SizedBox(height: 16),
+
+            // Action Section: Start + Later + Done
+            if (!widget.isRunning) ...[
             Row(
               children: [
                 // Primary Start Button with Framer-style press scale
                 Expanded(
-                  flex: 6,
+                  flex: 7,
                   child: FramerMotionPressScale(
                     onTap: () {
                       FlowHaptics.lightTap();
@@ -154,26 +313,30 @@ class _RightNowTaskCardState extends State<RightNowTaskCard> {
                           shape: const RoundedRectangleBorder(
                             borderRadius: FlowRadii.buttonRadius,
                           ),
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
                         ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.play_arrow_rounded,
-                              color: FlowColors.textInverse,
-                              size: 18,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              'Start',
-                              style: FlowTypography.labelLarge(color: FlowColors.textInverse).copyWith(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 16.0,
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.play_arrow_rounded,
+                                color: FlowColors.textInverse,
+                                size: 18,
                               ),
-                            ),
-                          ],
+                              const SizedBox(width: 6),
+                              Text(
+                                'Start Focus',
+                                style: FlowTypography.labelLarge(color: FlowColors.textInverse).copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 15.0,
+                                  letterSpacing: 0.3,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -183,7 +346,7 @@ class _RightNowTaskCardState extends State<RightNowTaskCard> {
 
                 // Secondary Later Button
                 Expanded(
-                  flex: 4,
+                  flex: 3,
                   child: SizedBox(
                     height: 48,
                     child: OutlinedButton(
@@ -192,17 +355,20 @@ class _RightNowTaskCardState extends State<RightNowTaskCard> {
                         widget.onReschedule();
                       },
                       style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
                         foregroundColor: FlowColors.textSecondaryOf(context),
                         side: BorderSide(color: FlowColors.border(context), width: 1.0),
                         shape: const RoundedRectangleBorder(
                           borderRadius: FlowRadii.buttonRadius,
                         ),
                       ),
-                      child: Text(
-                        'Later',
-                        style: FlowTypography.labelMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
-                          fontWeight: FontWeight.w600,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          'Later',
+                          style: FlowTypography.labelMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),
@@ -349,6 +515,7 @@ class _RightNowTaskCardState extends State<RightNowTaskCard> {
           ],
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 }

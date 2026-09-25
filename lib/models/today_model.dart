@@ -5,7 +5,8 @@ import 'task_item.dart';
 enum TodayLifecycleState {
   newUser,
   learning,
-  calibrated;
+  calibrated,
+  completed;
 
   static TodayLifecycleState fromString(String? value) {
     switch (value?.toLowerCase()) {
@@ -13,6 +14,8 @@ enum TodayLifecycleState {
         return TodayLifecycleState.learning;
       case 'calibrated':
         return TodayLifecycleState.calibrated;
+      case 'completed':
+        return TodayLifecycleState.completed;
       case 'new_user':
       default:
         return TodayLifecycleState.newUser;
@@ -25,11 +28,16 @@ enum TodayLifecycleState {
         return 'learning';
       case TodayLifecycleState.calibrated:
         return 'calibrated';
+      case TodayLifecycleState.completed:
+        return 'completed';
       case TodayLifecycleState.newUser:
         return 'new_user';
     }
   }
 }
+
+/// Explicit alias for Today state machine
+typedef TodayState = TodayLifecycleState;
 
 class TodayUserContextModel {
   final String id;
@@ -160,6 +168,10 @@ class TodayResponseModel {
   final TaskItem? activeTask;
   final List<ScheduleItem> upcomingTimeline;
   final DateTime lastUpdatedAt;
+  final int completedCount;
+  final bool hasActionableTasks;
+  /// Recommendation audit ID — used for accept/override/later tracking
+  final String? decisionId;
 
   const TodayResponseModel({
     required this.user,
@@ -172,9 +184,13 @@ class TodayResponseModel {
     this.activeTask,
     this.upcomingTimeline = const [],
     required this.lastUpdatedAt,
+    this.completedCount = 0,
+    this.hasActionableTasks = false,
+    this.decisionId,
   });
 
   CurrentRecommendationModel? get recommendation => currentRecommendation;
+  TodayState get state => lifecycleState;
 
   factory TodayResponseModel.fromJson(Map<String, dynamic> json, {DateTime? fetchedAt}) {
     final userContext = json['user'] is Map<String, dynamic>
@@ -208,10 +224,14 @@ class TodayResponseModel {
             .toList() ??
         [];
 
+    final rawState = json['state'] as String? ?? json['lifecycle_state'] as String?;
+    final count = json['completed_count'] as int? ?? 0;
+    final hasTasks = json['has_actionable_tasks'] as bool? ?? false;
+
     return TodayResponseModel(
       user: userContext,
       date: json['date'] as String? ?? '',
-      lifecycleState: TodayLifecycleState.fromString(json['lifecycle_state'] as String?),
+      lifecycleState: TodayLifecycleState.fromString(rawState),
       readiness: readinessObj,
       currentRecommendation: rec,
       aiBrief: brief,
@@ -219,6 +239,9 @@ class TodayResponseModel {
       activeTask: active,
       upcomingTimeline: timelineList,
       lastUpdatedAt: fetchedAt ?? DateTime.now(),
+      completedCount: count,
+      hasActionableTasks: hasTasks,
+      decisionId: json['decision_id'] as String?,
     );
   }
 
@@ -226,6 +249,9 @@ class TodayResponseModel {
         'user': user.toJson(),
         'date': date,
         'lifecycle_state': lifecycleState.value,
+        'state': lifecycleState.value,
+        'completed_count': completedCount,
+        'has_actionable_tasks': hasActionableTasks,
         'readiness': readiness.toJson(),
         'current_recommendation': currentRecommendation?.toJson(),
         'ai_brief': aiBrief.toJson(),

@@ -53,7 +53,10 @@ class CalendarContext(BaseModel):
 class TodayResponse(BaseModel):
     user: TodayUserContext
     date: str
-    lifecycle_state: str  # "new_user" | "learning" | "calibrated"
+    lifecycle_state: str  # "new_user" | "learning" | "calibrated" | "completed"
+    state: str = "new_user"  # "new_user" | "learning" | "calibrated" | "completed"
+    completed_count: int = 0
+    has_actionable_tasks: bool = False
     readiness: ReadinessDetail
     current_recommendation: Optional[CurrentRecommendation] = None
     ai_brief: AIBrief
@@ -61,3 +64,6 @@ class TodayResponse(BaseModel):
     active_task: Optional[TaskResponse] = None
     upcoming_timeline: List[ScheduleItemResponse] = Field(default_factory=list)
     calendar_context: CalendarContext
+    # Audit ID for this recommendation — used by Flutter to log accept/override/later
+    decision_id: Optional[str] = None
+

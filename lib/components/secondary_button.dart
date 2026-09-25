@@ -46,10 +46,14 @@ class SecondaryButton extends StatelessWidget {
                   icon!,
                   const SizedBox(width: 10),
                 ],
-                Text(
-                  label,
-                  style: FlowTypography.labelLarge(color: FlowColors.textPrimary).copyWith(
-                    fontWeight: FontWeight.w600,
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: FlowTypography.labelLarge(color: FlowColors.textPrimary).copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],

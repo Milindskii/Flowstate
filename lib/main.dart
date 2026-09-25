@@ -2,19 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'core/config/env_config.dart';
 import 'providers/app_state_provider.dart';
 import 'providers/theme_provider.dart';
+import 'providers/flow_provider.dart';
 import 'screens/splash_screen.dart';
 import 'theme/flow_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Supabase Auth & Client
+  // Initialize Supabase Auth & Client via EnvConfig
   try {
     await Supabase.initialize(
-      url: 'https://drfjprhnynktjkiplbzy.supabase.co',
-      publishableKey: 'sb_publishable_LDiD72aRDOVKMwD5AMoU5Q_oNntJRrv',
+      url: EnvConfig.supabaseUrl,
+      publishableKey: EnvConfig.supabaseAnonKey,
     );
   } catch (e) {
     // Offline or hot-reload safety fallback
@@ -36,6 +38,7 @@ Future<void> main() async {
       providers: [
         ChangeNotifierProvider(create: (_) => AppStateProvider()),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => FlowProvider()),
       ],
       child: const FlowstateApp(),
     ),

@@ -1,12 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state_provider.dart';
+import '../providers/flow_provider.dart';
 import '../providers/theme_provider.dart';
+import '../services/focus_soundscape_service.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_spacing.dart';
 import '../theme/flow_typography.dart';
+import 'flow_screen.dart';
+import 'auth_screen.dart';
+import 'legal/legal_hub_screen.dart';
+import '../models/ai_plan_models.dart';
+import '../services/ai_plan_service.dart';
+import 'pro_subscription_screen.dart';
 
 /// Screen 10: Profile & Settings Screen with Accent, Density, and Theme Mode Selector
 class ProfileSettingsTab extends StatelessWidget {
@@ -27,7 +35,7 @@ class ProfileSettingsTab extends StatelessWidget {
     final textMuted = FlowColors.textMutedOf(context);
 
     return Scaffold(
-      backgroundColor: FlowColors.background(context),
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: SingleChildScrollView(
           padding: EdgeInsets.symmetric(horizontal: pageMargin, vertical: 16.0),
@@ -87,6 +95,10 @@ class ProfileSettingsTab extends StatelessWidget {
                   ],
                 ),
               ),
+              const SizedBox(height: 24),
+
+              // Go Pro Section
+              const _GoProProfileSection(),
               const SizedBox(height: 24),
 
               // Appearance & Theme Preferences
@@ -285,12 +297,19 @@ class ProfileSettingsTab extends StatelessWidget {
                                 ),
                               ),
                               child: Center(
-                                child: Text(
-                                  mode.label,
-                                  style: FlowTypography.labelSmall(
-                                    color: isSelected ? textPrimary : textMuted,
-                                  ).copyWith(
-                                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                                  child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    child: Text(
+                                      mode.label,
+                                      maxLines: 1,
+                                      style: FlowTypography.labelSmall(
+                                        color: isSelected ? textPrimary : textMuted,
+                                      ).copyWith(
+                                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -301,6 +320,48 @@ class ProfileSettingsTab extends StatelessWidget {
                     ),
                   ],
                 ),
+              ),
+              const SizedBox(height: 20),
+
+              // Flow & Progression Section
+              _buildSectionTitle('Flow & Progression', textPrimary),
+              const SizedBox(height: 12),
+              Builder(
+                builder: (ctx) {
+                  FlowProvider? flowProvider;
+                  try {
+                    flowProvider = Provider.of<FlowProvider>(ctx);
+                  } catch (_) {}
+                  final companion = flowProvider?.companion;
+                  final soundService = FocusSoundscapeService();
+
+                  return Column(
+                    children: [
+                      _buildSettingTile(
+                        context: context,
+                        icon: Icons.pets_rounded,
+                        title: 'Noya & Companion',
+                        subtitle: companion != null
+                            ? '${companion.stage} · Level ${companion.level} · Open Flow Hub'
+                            : 'View living fox companion & progression',
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const FlowScreen()),
+                          );
+                        },
+                        accent: accent,
+                      ),
+                      _buildSettingTile(
+                        context: context,
+                        icon: Icons.waves_rounded,
+                        title: 'Focus Sounds',
+                        subtitle: 'Ambient focus soundscapes (${soundService.currentTrack.label})',
+                        onTap: () => _showSoundscapeSheet(context),
+                        accent: accent,
+                      ),
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 20),
 
@@ -363,6 +424,64 @@ class ProfileSettingsTab extends StatelessWidget {
                     ),
                   ],
                 ),
+              ),
+              // Legal & Privacy Compliance Section
+              _buildSectionTitle('Legal, Privacy & Compliance', textPrimary),
+              const SizedBox(height: 12),
+              _buildSettingTile(
+                context: context,
+                icon: Icons.shield_outlined,
+                title: 'Legal & Privacy Hub',
+                subtitle: 'Privacy Policy, Terms, DPDP & Data Rights, Export & Deletion',
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const LegalHubScreen()),
+                  );
+                },
+                accent: accent,
+              ),
+              const SizedBox(height: 20),
+
+              // Account & Session Section
+              _buildSectionTitle('Account & Security', textPrimary),
+              const SizedBox(height: 12),
+              _buildSettingTile(
+                context: context,
+                icon: Icons.logout_rounded,
+                title: 'Sign Out',
+                subtitle: state.currentUser?.email ?? 'End active session',
+                onTap: () async {
+                  final shouldSignOut = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      backgroundColor: cardBg,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(FlowRadii.cardLarge)),
+                      title: Text('Sign Out?', style: FlowTypography.titleMedium(color: textPrimary)),
+                      content: Text('Your scheduled tasks and rhythm will be securely saved in your account.', style: FlowTypography.bodyMedium(color: textSecondary)),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          child: Text('Cancel', style: FlowTypography.labelMedium(color: textMuted)),
+                        ),
+                        FilledButton(
+                          style: FilledButton.styleFrom(backgroundColor: FlowColors.error),
+                          onPressed: () => Navigator.pop(ctx, true),
+                          child: const Text('Sign Out'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (shouldSignOut == true && context.mounted) {
+                    await state.logout();
+                    if (context.mounted) {
+                      Navigator.of(context).pushAndRemoveUntil(
+                        MaterialPageRoute(builder: (_) => const AuthScreen()),
+                        (route) => false,
+                      );
+                    }
+                  }
+                },
+                accent: FlowColors.error,
               ),
 
               const SizedBox(height: 80),
@@ -490,4 +609,330 @@ class ProfileSettingsTab extends StatelessWidget {
       ),
     );
   }
+
+  void _showSoundscapeSheet(BuildContext context) {
+    FlowHaptics.lightTap();
+    final soundService = FocusSoundscapeService();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: FlowColors.surface(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: FlowSpacing.pageMargin(context),
+                  vertical: 20,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: FlowColors.border(context),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Focus Soundscapes',
+                      style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context)),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Select calm background audio for deep focus rituals.',
+                      style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
+                    ),
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: SoundscapeTrack.values.map((track) {
+                        final isSelected = soundService.currentTrack == track;
+                        return ChoiceChip(
+                          label: Text(track.label),
+                          selected: isSelected,
+                          selectedColor: FlowColors.mint.withValues(alpha: 0.25),
+                          side: BorderSide(
+                            color: isSelected ? FlowColors.mint : FlowColors.border(context),
+                          ),
+                          onSelected: (_) {
+                            soundService.selectTrack(track);
+                            setModalState(() {});
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Icon(Icons.volume_down_rounded, color: FlowColors.textSecondaryOf(context), size: 20),
+                        Expanded(
+                          child: Slider(
+                            value: soundService.volume,
+                            activeColor: FlowColors.mint,
+                            onChanged: (val) {
+                              soundService.setVolume(val);
+                              setModalState(() {});
+                            },
+                          ),
+                        ),
+                        Icon(Icons.volume_up_rounded, color: FlowColors.textSecondaryOf(context), size: 20),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
 }
+
+class _GoProProfileSection extends StatefulWidget {
+  const _GoProProfileSection();
+
+  @override
+  State<_GoProProfileSection> createState() => _GoProProfileSectionState();
+}
+
+class _GoProProfileSectionState extends State<_GoProProfileSection> {
+  SubscriptionStatus? _status;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchStatus();
+  }
+
+  Future<void> _fetchStatus() async {
+    try {
+      final state = Provider.of<AppStateProvider>(context, listen: false);
+      final aiService = AIPlanService(api: state.apiService);
+      final status = await aiService.getSubscriptionStatus();
+      if (mounted) {
+        setState(() {
+          _status = status;
+          _isLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _status = const SubscriptionStatus(isPro: false, subscriptionTier: 'free', status: 'inactive');
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  void _openProScreen() async {
+    FlowHaptics.lightTap();
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ProSubscriptionScreen()),
+    );
+    _fetchStatus();
+  }
+
+  void _manageSubscription() {
+    FlowHaptics.selection();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: FlowColors.darkCard,
+        shape: const RoundedRectangleBorder(borderRadius: FlowRadii.cardRadius),
+        title: Text('Manage Subscription', style: FlowTypography.titleMedium()),
+        content: Text(
+          'Your Flowstate Pro subscription is managed securely through Google Play. You can modify, upgrade, or cancel your subscription at any time via the Google Play Store app.',
+          style: FlowTypography.bodySmall(color: FlowColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text('Got it', style: FlowTypography.labelMedium(color: FlowColors.accentCyan)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final accent = themeProvider.resolveAccent(context);
+    final cardBg = FlowColors.surface(context);
+    final borderColor = FlowColors.border(context);
+    final textPrimary = FlowColors.textPrimaryOf(context);
+    final textSecondary = FlowColors.textSecondaryOf(context);
+
+    if (_isLoading) {
+      return Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: cardBg,
+          borderRadius: FlowRadii.cardRadius,
+          border: Border.all(color: borderColor),
+        ),
+        child: const Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
+    final isPro = _status?.isPro ?? false;
+
+    if (isPro) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: cardBg,
+          borderRadius: FlowRadii.cardRadius,
+          border: Border.all(color: FlowColors.accentMint.withValues(alpha: 0.4), width: 1.5),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: FlowColors.accentMint.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.star_rounded, color: FlowColors.accentMint, size: 20),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'FLOWSTATE PRO',
+                      style: FlowTypography.labelLarge(color: FlowColors.accentMint)
+                          .copyWith(fontWeight: FontWeight.w800, letterSpacing: 0.5),
+                    ),
+                  ],
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: FlowColors.accentMint.withValues(alpha: 0.12),
+                    borderRadius: FlowRadii.pillRadius,
+                  ),
+                  child: Text(
+                    'Active',
+                    style: FlowTypography.labelSmall(color: FlowColors.accentMint)
+                        .copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Your plan is active.',
+              style: FlowTypography.titleSmall(color: textPrimary).copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Plan: ${_status?.subscriptionTier.toUpperCase() ?? 'PRO'} · Google Play Subscription',
+              style: FlowTypography.bodySmall(color: textSecondary),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              height: 42,
+              child: OutlinedButton(
+                onPressed: _manageSubscription,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: textPrimary,
+                  side: BorderSide(color: borderColor),
+                  shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
+                ),
+                child: Text('Manage Subscription', style: FlowTypography.labelMedium(color: textPrimary)),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Free User Card
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: FlowRadii.cardRadius,
+        border: Border.all(color: accent.withValues(alpha: 0.35), width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(Icons.bolt_rounded, color: accent, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'GO PRO',
+                style: FlowTypography.labelLarge(color: accent)
+                    .copyWith(fontWeight: FontWeight.w800, letterSpacing: 0.5),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'More planning power for your Flow.',
+            style: FlowTypography.titleSmall(color: textPrimary).copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Unlock generous AI Brain Dump planning, advanced personalization, and more flexibility.',
+            style: FlowTypography.bodySmall(color: textSecondary),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: ElevatedButton(
+              key: const Key('explore_pro_button'),
+              onPressed: _openProScreen,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: accent,
+                foregroundColor: FlowColors.textInverse,
+                elevation: 0,
+                shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
+              ),
+              child: Text(
+                'Explore Pro',
+                style: FlowTypography.labelLarge(color: FlowColors.textInverse).copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+

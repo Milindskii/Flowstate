@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'api_service.dart';
 
@@ -6,15 +7,17 @@ class AuthUser {
   final String email;
   final String name;
   final String? avatarUrl;
+  final bool onboardingCompleted;
 
   const AuthUser({
     required this.id,
     required this.email,
     required this.name,
     this.avatarUrl,
+    this.onboardingCompleted = false,
   });
 
-  factory AuthUser.fromSupabase(User user) {
+  factory AuthUser.fromSupabase(User user, {bool onboardingCompleted = false}) {
     final meta = user.userMetadata ?? {};
     final name = meta['name'] as String? ??
         meta['full_name'] as String? ??
@@ -24,6 +27,7 @@ class AuthUser {
       email: user.email ?? '',
       name: name,
       avatarUrl: meta['avatar_url'] as String?,
+      onboardingCompleted: onboardingCompleted,
     );
   }
 
@@ -33,6 +37,7 @@ class AuthUser {
       email: json['email'] as String? ?? '',
       name: json['name'] as String? ?? (json['email'] as String?)?.split('@').first ?? 'Friend',
       avatarUrl: json['avatar_url'] as String?,
+      onboardingCompleted: json['onboarding_completed'] as bool? ?? false,
     );
   }
 
@@ -41,7 +46,24 @@ class AuthUser {
         'email': email,
         'name': name,
         'avatar_url': avatarUrl,
+        'onboarding_completed': onboardingCompleted,
       };
+
+  AuthUser copyWith({
+    String? id,
+    String? email,
+    String? name,
+    String? avatarUrl,
+    bool? onboardingCompleted,
+  }) {
+    return AuthUser(
+      id: id ?? this.id,
+      email: email ?? this.email,
+      name: name ?? this.name,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
+      onboardingCompleted: onboardingCompleted ?? this.onboardingCompleted,
+    );
+  }
 }
 
 /// Authentication and Session Management Service
@@ -84,78 +106,110 @@ class AuthService {
   }
 
   AuthUser? get currentUser => _currentUser;
-  bool get isAuthenticated => _token != null || _currentUser != null;
+  String? get token => _token;
+  bool get isAuthenticated => (_token != null && _token!.isNotEmpty) && _currentUser != null;
+
+  Future<AuthUser?> restoreSession() async {
+    try {
+      final session = Supabase.instance.client.auth.currentSession;
+      if (session != null) {
+        _token = session.accessToken;
+        _api.setAuthToken(_token);
+        final user = Supabase.instance.client.auth.currentUser;
+        if (user != null) {
+          _currentUser = AuthUser.fromSupabase(user);
+          return _currentUser;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<AuthUser?> fetchUserProfile() async {
+    try {
+      final res = await _api.get('/api/v1/auth/me');
+      if (res is Map<String, dynamic>) {
+        final profile = AuthUser.fromJson(res);
+        _currentUser = profile;
+        return profile;
+      }
+    } catch (_) {}
+    return _currentUser;
+  }
 
   Future<AuthUser> loginWithEmail(String email, String password) async {
-    try {
-      final res = await Supabase.instance.client.auth.signInWithPassword(
-        email: email,
-        password: password,
-      );
-      _token = res.session?.accessToken;
-      _api.setAuthToken(_token);
-      if (res.user != null) {
-        _currentUser = AuthUser.fromSupabase(res.user!);
-      }
-      return _currentUser ?? AuthUser(id: 'user-default', email: email, name: email.split('@').first);
-    } catch (e) {
-      // Fallback for offline or local preview
-      _currentUser = AuthUser(
-        id: 'user-demo',
-        email: email,
-        name: email.split('@').first,
-      );
+    final res = await Supabase.instance.client.auth.signInWithPassword(
+      email: email.trim(),
+      password: password,
+    );
+    _token = res.session?.accessToken;
+    _api.setAuthToken(_token);
+    if (res.user != null) {
+      _currentUser = AuthUser.fromSupabase(res.user!);
       return _currentUser!;
     }
+    throw Exception('Login succeeded but user profile was not returned.');
   }
 
   Future<AuthUser> signUpWithEmail(String email, String password) async {
-    try {
-      final res = await Supabase.instance.client.auth.signUp(
-        email: email,
-        password: password,
-      );
-      _token = res.session?.accessToken;
-      _api.setAuthToken(_token);
-      if (res.user != null) {
-        _currentUser = AuthUser.fromSupabase(res.user!);
-      }
-      return _currentUser ?? AuthUser(id: 'user-default', email: email, name: email.split('@').first);
-    } catch (e) {
-      _currentUser = AuthUser(
-        id: 'user-demo',
-        email: email,
-        name: email.split('@').first,
-      );
+    final res = await Supabase.instance.client.auth.signUp(
+      email: email.trim(),
+      password: password,
+    );
+    _token = res.session?.accessToken;
+    _api.setAuthToken(_token);
+    if (res.user != null) {
+      _currentUser = AuthUser.fromSupabase(res.user!);
       return _currentUser!;
     }
+    throw Exception('Sign up succeeded but user profile was not returned.');
   }
 
   Future<AuthUser> loginWithGoogle() async {
     try {
-      await Supabase.instance.client.auth.signInWithOAuth(OAuthProvider.google);
+      await Supabase.instance.client.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: kIsWeb ? null : 'io.flowstate://login-callback',
+      );
       final session = Supabase.instance.client.auth.currentSession;
       _token = session?.accessToken;
       _api.setAuthToken(_token);
       if (session?.user != null) {
         _currentUser = AuthUser.fromSupabase(session!.user);
+        return _currentUser!;
       }
-      return _currentUser ?? const AuthUser(id: 'user-google-1', email: 'alex@flowstate.local', name: 'Alex');
-    } catch (_) {
-      _token = 'demo-jwt-token';
-      _api.setAuthToken(_token);
-      _currentUser = const AuthUser(
-        id: 'user-google-1',
-        email: 'alex@flowstate.local',
-        name: 'Alex',
-      );
-      return _currentUser!;
+      throw Exception('Google sign-in completed but active session was not returned.');
+    } on AuthException catch (e) {
+      if (e.message.toLowerCase().contains('unsupported provider') ||
+          e.message.toLowerCase().contains('not enabled')) {
+        throw Exception(
+          'Google Sign-In is not enabled in your Supabase project. '
+          'Please enable Google in Supabase Dashboard > Authentication > Providers, '
+          'or use Email / Guest access.',
+        );
+      }
+      rethrow;
     }
   }
 
+  Future<AuthUser> loginAsGuest() async {
+    final guestId = 'guest_${DateTime.now().millisecondsSinceEpoch}';
+    final guest = AuthUser(
+      id: guestId,
+      email: '$guestId@flowstate.local',
+      name: 'Guest',
+      onboardingCompleted: false,
+    );
+    _currentUser = guest;
+    _token = null;
+    _api.setAuthToken(null);
+    return guest;
+  }
+
+
   Future<void> logout() async {
     try {
-      await Supabase.instance.client.auth.signOut();
+      await Supabase.instance.client.auth.signOut().timeout(const Duration(seconds: 2));
     } catch (_) {}
     _token = null;
     _currentUser = null;

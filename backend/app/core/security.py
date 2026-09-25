@@ -45,16 +45,23 @@ def verify_security_environment():
             "Execution refused to protect user data."
         )
 
+ALLOWED_ALGORITHMS = ["RS256", "ES256", "HS256"]
+
 def decode_access_token(token: str) -> Optional[dict]:
     """
     Decodes and verifies a JWT token issued by Supabase Auth (via live JWKS)
     or the test suite (via symmetric secret).
+    Enforces strict algorithm whitelisting to prevent alg:none and algorithm confusion attacks.
     """
     try:
         # First check unverified header to see if it's a Supabase JWKS-signed token
         header = jwt.get_unverified_header(token)
         kid = header.get("kid")
         alg = header.get("alg", ALGORITHM)
+
+        # Reject any unsupported algorithms (such as 'none')
+        if alg not in ALLOWED_ALGORITHMS:
+            return None
 
         if kid:
             if kid not in _JWKS_KEYS_CACHE:
@@ -67,7 +74,7 @@ def decode_access_token(token: str) -> Optional[dict]:
                     token,
                     public_key,
                     algorithms=[alg],
-                    options={"verify_aud": False}
+                    options={"verify_aud": False, "verify_exp": True}
                 )
                 return payload
 
@@ -76,7 +83,7 @@ def decode_access_token(token: str) -> Optional[dict]:
             token,
             settings.SUPABASE_JWT_SECRET,
             algorithms=[ALGORITHM],
-            options={"verify_aud": False}
+            options={"verify_aud": False, "verify_exp": True}
         )
         return payload
     except JWTError:
@@ -160,4 +167,64 @@ def get_current_user(
         db.commit()
         db.refresh(user)
 
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is deactivated",
+        )
+
     return user
+
+def get_current_user_allow_deactivated(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
+    db: Session = Depends(get_db)
+) -> User:
+    """Dependency that authenticates the user even if currently deactivated (e.g. for reactivation)."""
+    verify_security_environment()
+
+    if settings.DEV_BYPASS_AUTH and (not credentials or not credentials.credentials):
+        user_id = "dev-user-local"
+        user = db.query(User).filter(User.id == user_id).first()
+        return user
+
+    if not credentials or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication credentials required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = credentials.credentials
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_id: Optional[str] = payload.get("sub")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing user identity subject (sub)",
+        )
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    return user
+
+
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Dependency that enforces administrative permissions."""
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrative privileges required",
+        )
+    return current_user

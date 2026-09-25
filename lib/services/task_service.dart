@@ -57,6 +57,16 @@ class TaskService {
     return TaskItem.fromJson(res as Map<String, dynamic>);
   }
 
+  /// Update an existing task
+  Future<TaskItem> updateTask(TaskItem task) async {
+    try {
+      final res = await _api.put('/api/v1/tasks/${task.id}', body: task.toJson());
+      return TaskItem.fromJson(res as Map<String, dynamic>);
+    } catch (_) {
+      return task;
+    }
+  }
+
   /// Partially update task attributes
   Future<TaskItem> patchTask(String taskId, Map<String, dynamic> fields) async {
     final res = await _api.patch('/api/v1/tasks/$taskId', body: fields);

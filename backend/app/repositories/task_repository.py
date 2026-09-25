@@ -49,7 +49,9 @@ class TaskRepository:
         Retrieves tasks relevant to the user's current day:
         1. Explicitly scheduled for today (scheduled_start within day bounds)
         2. Currently active (status == in_progress)
-        3. Due today (deadline_at within day bounds) AND not scheduled for a future day
+        3. Due today AND not scheduled for a future day
+        4. Overdue unfinished tasks (deadline_at < start_of_day)
+        5. Unscheduled active tasks (no deadline and no future scheduled date)
         
         Does NOT bleed future-dated tasks (e.g. Due Friday) into today.
         """
@@ -61,9 +63,25 @@ class TaskRepository:
                 Task.scheduled_start.between(start_of_day, end_of_day),
                 # 2. Currently being worked on right now
                 Task.status == TaskStatus.in_progress,
-                # 3. Due today AND not scheduled for a different date
+                # 3. Due today AND not scheduled for a future date
                 and_(
                     Task.deadline_at.between(start_of_day, end_of_day),
+                    or_(
+                        Task.scheduled_start.is_(None),
+                        Task.scheduled_start <= end_of_day
+                    )
+                ),
+                # 4. Overdue unfinished tasks (deadline in the past and still todo/in_progress)
+                and_(
+                    Task.deadline_at < start_of_day,
+                    or_(
+                        Task.scheduled_start.is_(None),
+                        Task.scheduled_start <= end_of_day
+                    )
+                ),
+                # 5. Unscheduled active tasks (no deadline and no future scheduled start)
+                and_(
+                    Task.deadline_at.is_(None),
                     or_(
                         Task.scheduled_start.is_(None),
                         Task.scheduled_start.between(start_of_day, end_of_day)

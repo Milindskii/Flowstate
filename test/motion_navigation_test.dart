@@ -8,10 +8,17 @@ import 'package:flowstate/screens/onboarding_flow_screen.dart';
 import 'package:flowstate/screens/what_should_i_do_screen.dart';
 import 'package:flowstate/providers/app_state_provider.dart';
 import 'package:flowstate/providers/theme_provider.dart';
+import 'package:flowstate/services/flow_clock.dart';
 
 void main() {
   setUp(() {
+    FlowClock.enableAutoTick = false;
+    FlowClock().stopTimer();
     SharedPreferences.setMockInitialValues({});
+  });
+
+  tearDown(() {
+    FlowClock().stopTimer();
   });
 
   group('Flowstate Motion & Navigation Tests', () {
@@ -20,6 +27,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: StatefulBuilder(
             builder: (context, setState) {
               return Scaffold(
@@ -69,6 +77,7 @@ void main() {
 
     testWidgets('2. TodayDashboardTab does not recreate full entrance stagger on provider rebuild', (WidgetTester tester) async {
       final appState = AppStateProvider();
+      appState.setCalibratedStateForTesting();
       final themeProvider = ThemeProvider();
 
       await tester.pumpWidget(
@@ -108,25 +117,30 @@ void main() {
             ChangeNotifierProvider<AppStateProvider>.value(value: appState),
             ChangeNotifierProvider<ThemeProvider>.value(value: themeProvider),
           ],
-          child: const MaterialApp(
-            home: OnboardingFlowScreen(),
+          child: MaterialApp(
+            theme: ThemeData(splashFactory: InkRipple.splashFactory),
+            home: const MediaQuery(
+              data: MediaQueryData(disableAnimations: true),
+              child: OnboardingFlowScreen(),
+            ),
           ),
         ),
       );
       await tester.pumpAndSettle();
 
-      // On Step 1 (Welcome) - PopScope allows pop or starts at page 0
-      expect(find.text('Build my first day'), findsOneWidget);
+      // On Step 0 (Welcome) - "Let's find your rhythm."
+      expect(find.text("Let's find your rhythm."), findsOneWidget);
+      expect(find.text('Begin'), findsOneWidget);
 
-      // Tap CTA to advance to Step 2 (Brain dump)
-      await tester.tap(find.text('Build my first day'));
+      // Tap CTA to advance to Question 1
+      await tester.tap(find.text('Begin'), warnIfMissed: false);
       for (int i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 40));
       }
 
-      expect(find.text("What's on your plate?"), findsOneWidget);
+      expect(find.text('When does your brain usually feel most switched on?'), findsOneWidget);
 
-      // Now on Step 2 (page 1). PopScope must have canPop = false
+      // Now on Question 1 (page 1). PopScope must have canPop = false
       final popScopeFinder = find.byWidgetPredicate((w) => w is PopScope);
       expect(popScopeFinder, findsWidgets);
       final dynamic popScopeWidget = tester.widget(popScopeFinder.first);
@@ -138,8 +152,8 @@ void main() {
         await tester.pump(const Duration(milliseconds: 40));
       }
 
-      // Must navigate back to Step 1 without exiting onboarding
-      expect(find.text('Build my first day'), findsOneWidget);
+      // Must navigate back to Welcome step without exiting onboarding
+      expect(find.text("Let's find your rhythm."), findsOneWidget);
     });
 
     testWidgets('4. WhatShouldIDoScreen swaps task smoothly when tapping Give me something easier', (WidgetTester tester) async {
@@ -148,6 +162,7 @@ void main() {
       addTearDown(() => tester.view.resetPhysicalSize());
 
       final appState = AppStateProvider();
+      appState.setCalibratedStateForTesting();
       final themeProvider = ThemeProvider();
       final sampleTask = appState.recommendedTask ?? appState.tasks.first;
 
@@ -195,6 +210,53 @@ void main() {
 
       // In reduced motion, widget is immediately visible without needing pumpAndSettle
       expect(find.text('Reduced Motion Target'), findsOneWidget);
+    });
+
+    testWidgets('6. FlowFadeIndexedStack renders both outgoing and incoming tabs concurrently during mid-transition', (WidgetTester tester) async {
+      int activeIndex = 0;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
+          home: StatefulBuilder(
+            builder: (context, setState) {
+              return Scaffold(
+                body: FlowFadeIndexedStack(
+                  index: activeIndex,
+                  duration: const Duration(milliseconds: 240),
+                  children: const [
+                    Text('Tab A Content'),
+                    Text('Tab B Content'),
+                  ],
+                ),
+                floatingActionButton: FloatingActionButton(
+                  onPressed: () => setState(() => activeIndex = 1),
+                  child: const Icon(Icons.swap_horiz),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+
+      expect(find.text('Tab A Content'), findsOneWidget);
+      expect(find.text('Tab B Content'), findsNothing); // Offstage
+
+      // Trigger transition to Tab B
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pump(); // Start animation frame
+
+      // Advance by 120ms (exactly 50% of the 240ms transition duration)
+      await tester.pump(const Duration(milliseconds: 120));
+
+      // Both tabs MUST be rendered simultaneously in the tree and not offstage
+      expect(find.text('Tab A Content', skipOffstage: false), findsOneWidget);
+      expect(find.text('Tab B Content', skipOffstage: false), findsOneWidget);
+
+      // Settle completely
+      await tester.pumpAndSettle();
+      expect(find.text('Tab B Content'), findsOneWidget);
+      expect(find.text('Tab A Content'), findsNothing); // Tab A is now offstage
     });
   });
 }

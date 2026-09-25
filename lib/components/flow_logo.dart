@@ -19,7 +19,7 @@ class FlowLogo extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(size * 0.32),
+        borderRadius: BorderRadius.circular(size * 0.22),
         gradient: const LinearGradient(
           colors: [FlowColors.cyan, FlowColors.mint],
           begin: Alignment.topLeft,

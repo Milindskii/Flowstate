@@ -16,6 +16,16 @@ class TaskCreate(BaseModel):
     scheduled_end: Optional[datetime] = None
     source: TaskSource = TaskSource.manual
 
+class FieldProvenance(BaseModel):
+    source: str = "default"  # "explicit", "inferred", "default"
+    confidence: float = 1.0
+
+class TaskCandidateResponse(TaskCreate):
+    confidence: float = 1.0
+    missing_fields: List[str] = Field(default_factory=list)
+    ambiguities: List[str] = Field(default_factory=list)
+    field_provenance: dict[str, FieldProvenance] = Field(default_factory=dict)
+
 class TaskUpdate(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=255)
     description: Optional[str] = None
@@ -37,6 +47,7 @@ class TaskParseRequest(BaseModel):
     text: Optional[str] = Field(default=None, max_length=1500, description="Natural language task description")
     raw_text: Optional[str] = Field(default=None, max_length=1500)
     timezone: Optional[str] = Field(default="UTC", max_length=50)
+    use_ai: Optional[bool] = Field(default=False, description="Whether to prioritize cloud AI extraction")
 
     def get_clean_text(self) -> str:
         content = (self.text or self.raw_text or "").strip()
