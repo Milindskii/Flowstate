@@ -284,9 +284,38 @@ class TaskParseService {
     const actionVerbs = r'(?:finish|study|go to|gym|workout|review|call|email|buy|read|write|prep|pay|meet|clean|submit|update|complete|dentist|doctor|appointment|sync|class|lecture|groceries|errands?|pick up|drop off|walk|exercise|run)';
 
     for (final chunk in primaryChunks) {
+      final lower = chunk.toLowerCase().trim();
+
+      // Task Segmentation: independently executable activities
+      // e.g. "gym work assignment" -> ["Gym", "Work", "Assignment"]
+      // Preserves single outcome phrases like "finish my work assignment" or "finish my python assignment and submit it"
+      final isSingleTransitiveAction = RegExp(r'^(?:finish|complete|submit|do|start|review|write|read)\b', caseSensitive: false).hasMatch(lower);
+      final hasPronounReference = RegExp(r'\b(?:and\s+submit\s+it|and\s+send\s+it|and\s+file\s+it)\b', caseSensitive: false).hasMatch(lower);
+
+      if (!isSingleTransitiveAction && !hasPronounReference) {
+        final seg3 = RegExp(r'^(gym|workout|exercise|run)\s+(work|meeting|emails?)\s+(assignment|study|homework|thesis)$', caseSensitive: false).firstMatch(lower);
+        if (seg3 != null) {
+          clauses.addAll([
+            sanitizeTitle(seg3.group(1)!),
+            sanitizeTitle(seg3.group(2)!),
+            sanitizeTitle(seg3.group(3)!),
+          ]);
+          continue;
+        }
+
+        final seg2 = RegExp(r'^(gym|workout|exercise|run)\s+(work|meeting|emails?|assignment|study|homework|thesis|dentist|groceries)$', caseSensitive: false).firstMatch(lower);
+        if (seg2 != null) {
+          clauses.addAll([
+            sanitizeTitle(seg2.group(1)!),
+            sanitizeTitle(seg2.group(2)!),
+          ]);
+          continue;
+        }
+      }
+
       final parts = chunk
           .split(RegExp(
-            r'(?:,\s*(?:and|then|and then)\s+|\s+(?:and then|then)\s+|,\s*(?=' + actionVerbs + r'\b)|\s+and\s+(?=' + actionVerbs + r'\b)|,\s*(?=[a-zA-Z0-9_\-\s]+\b(?:at|by|for)\s+\d+))',
+            r'(?:,\s*(?:and|then|and then)\s+|\s+(?:and then|then)\s+|,\s*(?=' + actionVerbs + r'\b)|\s+and\s+(?=' + actionVerbs + r'\b(?!\s+(?:it|them)\b))|,\s*(?=[a-zA-Z0-9_\-\s]+\b(?:at|by|for)\s+\d+))',
             caseSensitive: false,
           ))
           .map((s) => s.trim())

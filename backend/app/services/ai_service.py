@@ -47,14 +47,30 @@ class AIService:
         primary_chunks = [c.strip() for c in re.split(r'[\n;•\*\-]+', text) if c.strip()]
         clauses: List[str] = []
 
-        action_verbs = r'(?:finish|study|go to|gym|workout|review|call|email|buy|read|write|prep|pay|meet|clean|submit|update|complete|walk|exercise|run)'
+        action_verbs = r'(?:finish|study|go to|gym|workout|review|call|email|buy|read|write|prep|pay|meet|clean|submit|update|complete|walk|exercise|run|dentist|doctor)'
 
         for chunk in primary_chunks:
+            lower = chunk.strip().lower()
+
+            # Task Segmentation: independently executable activities
+            # e.g. "gym work assignment" -> ["Gym", "Work", "Assignment"]
+            # Preserves single outcome phrases like "finish my work assignment" or "finish my python assignment and submit it"
+            if not re.match(r'^(?:finish|complete|submit|do|start|review|write|read)\b', lower) and not re.search(r'\b(?:and\s+submit\s+it|and\s+send\s+it)\b', lower):
+                seg_match3 = re.match(r'^(gym|workout|exercise|run)\s+(work|meeting|emails?)\s+(assignment|study|homework|thesis)$', lower)
+                if seg_match3:
+                    clauses.extend([seg_match3.group(1).capitalize(), seg_match3.group(2).capitalize(), seg_match3.group(3).capitalize()])
+                    continue
+
+                seg_match2 = re.match(r'^(gym|workout|exercise|run)\s+(work|meeting|emails?|assignment|study|homework|thesis|dentist|groceries)$', lower)
+                if seg_match2:
+                    clauses.extend([seg_match2.group(1).capitalize(), seg_match2.group(2).capitalize()])
+                    continue
+
             # Split on compound sentence dividers:
             # - ", and " or ", then " or " and then "
             # - ", " followed by action verb
-            # - " and " followed by action verb
-            pattern = rf'(?:,\s*(?:and|then|and then)\s+|\s+(?:and then|then)\s+|,\s*(?={action_verbs}\b)|\s+and\s+(?={action_verbs}\b))'
+            # - " and " followed by action verb (unless followed by "it" or "them", e.g. "and submit it")
+            pattern = rf'(?:,\s*(?:and|then|and then)\s+|\s+(?:and then|then)\s+|,\s*(?={action_verbs}\b)|\s+and\s+(?={action_verbs}\b(?!\s+(?:it|them)\b)))'
             parts = [p.strip() for p in re.split(pattern, chunk, flags=re.IGNORECASE) if p.strip()]
             clauses.extend(parts)
 
@@ -399,6 +415,13 @@ class AIService:
             '  "ambiguities": []\n'
             "}\n\n"
             "STRICT RULES:\n"
+            "- TASK SEGMENTATION RULES:\n"
+            "  * Identify independently executable activities. Semantic independence is more important than commas or punctuation.\n"
+            "  * When multiple independent activities appear in a single sentence or unpunctuated stream, split them into separate task candidates.\n"
+            "  * Examples:\n"
+            "    - 'gym work assignment' -> MUST become 3 separate tasks: 'Gym' (type: physical), 'Work' (type: admin), 'Assignment' (type: study).\n"
+            "    - 'finish my work assignment' -> MUST remain 1 task: 'Finish work assignment'.\n"
+            "    - 'finish my Python assignment and submit it' -> MUST remain 1 task (single unified outcome): 'Finish Python assignment and submit'.\n"
             "- TASK TITLES MUST BE CONCISE, NATURAL, AND USER-FAITHFUL:\n"
             "  * Structure the user's input, DO NOT rewrite it into unnatural or awkward task names.\n"
             "  * Examples:\n"

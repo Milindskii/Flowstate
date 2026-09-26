@@ -342,6 +342,62 @@ class _AIPlanPreviewSheet extends StatelessWidget {
               ],
             ],
           ),
+          if (task.recommendedSlotDisplay != null || task.fixedStart != null) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                Text(
+                  'Recommended: ',
+                  style: FlowTypography.bodySmall(color: FlowColors.textMuted).copyWith(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
+                ),
+                Text(
+                  task.recommendedSlotDisplay ?? (task.fixedStart != null ? _formatFixedStart(task.fixedStart!) : 'Upcoming'),
+                  style: FlowTypography.bodySmall(color: FlowColors.accentMint).copyWith(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (task.schedulingExplanation != null && task.schedulingExplanation!.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: FlowColors.darkCardElevated,
+                borderRadius: FlowRadii.cardRadius,
+                border: Border.all(color: FlowColors.darkBorder.withValues(alpha: 0.6)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Why: ',
+                    style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      task.schedulingExplanation!,
+                      style: FlowTypography.bodySmall(color: FlowColors.textSecondary).copyWith(
+                        fontSize: 11,
+                        height: 1.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

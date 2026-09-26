@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 from ..models.task import TaskStatus, TaskType, TaskDifficulty, TaskPriority, TaskSource
@@ -25,6 +25,11 @@ class TaskCandidateResponse(TaskCreate):
     missing_fields: List[str] = Field(default_factory=list)
     ambiguities: List[str] = Field(default_factory=list)
     field_provenance: dict[str, FieldProvenance] = Field(default_factory=dict)
+    recommended_slot_start: Optional[datetime] = None
+    recommended_slot_end: Optional[datetime] = None
+    recommended_slot_display: Optional[str] = None
+    scheduling_explanation: Optional[str] = None
+    scheduling_reasons: Optional[dict[str, Any]] = None
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=255)
@@ -84,3 +89,26 @@ class TaskListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+class BatchTaskItem(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    category: str = "General"
+    task_type: TaskType = TaskType.deep_work
+    difficulty: TaskDifficulty = TaskDifficulty.medium
+    priority: TaskPriority = TaskPriority.medium
+    estimated_minutes: int = Field(default=45, ge=5, le=480)
+    deadline_at: Optional[datetime] = None
+    scheduled_start: Optional[datetime] = None
+    scheduled_end: Optional[datetime] = None
+    source: TaskSource = TaskSource.ai_parsed
+
+class BatchCreateAndScheduleRequest(BaseModel):
+    tasks: List[BatchTaskItem]
+    idempotency_key: Optional[str] = None
+
+class BatchCreateAndScheduleResponse(BaseModel):
+    created_count: int
+    tasks: List[TaskResponse]
+    message: str = "Tasks created and scheduled successfully"
+

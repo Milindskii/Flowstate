@@ -158,7 +158,11 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         return;
       }
 
-      final candidates = result.tasks.map((t) => t.toTaskItem()).toList();
+      final rawCandidates = result.tasks.map((t) => t.toTaskItem()).toList();
+      final candidates = const SchedulingEngine().enrichTasksWithOptimalSlots(
+        rawCandidates,
+        existingTasks: provider.tasks,
+      );
       final schedule = const SchedulingEngine().generateOptimizedSchedule(
         tasks: candidates,
         readiness: provider.readiness,
@@ -197,14 +201,18 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     }
 
     final provider = Provider.of<AppStateProvider>(context, listen: false);
+    final enrichedTasks = const SchedulingEngine().enrichTasksWithOptimalSlots(
+      localTasks,
+      existingTasks: provider.tasks,
+    );
     final schedule = const SchedulingEngine().generateOptimizedSchedule(
-      tasks: localTasks,
+      tasks: enrichedTasks,
       readiness: provider.readiness,
     );
 
     if (mounted) {
       setState(() {
-        _planCandidates = localTasks;
+        _planCandidates = enrichedTasks;
         _scheduleItems = schedule;
         _planSource = source;
         _fallbackNotice = notice;
@@ -278,12 +286,17 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     _syncCurrentEditToCandidate();
 
     final provider = Provider.of<AppStateProvider>(context, listen: false);
+    final enriched = const SchedulingEngine().enrichTasksWithOptimalSlots(
+      _planCandidates,
+      existingTasks: provider.tasks,
+    );
     final schedule = const SchedulingEngine().generateOptimizedSchedule(
-      tasks: _planCandidates,
+      tasks: enriched,
       readiness: provider.readiness,
     );
 
     setState(() {
+      _planCandidates = enriched;
       _scheduleItems = schedule;
       _viewMode = _BrainDumpViewMode.preview;
     });
@@ -738,6 +751,81 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
               task.deadline,
               style: FlowTypography.bodySmall(color: FlowColors.textSecondary),
             ),
+
+          // RECOMMENDED TIME
+          const SizedBox(height: 8),
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              Text(
+                'Recommended: ',
+                style: FlowTypography.bodySmall(color: FlowColors.textMuted).copyWith(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              ),
+              Text(
+                task.recommendedSlotDisplay ?? timeDisplay ?? 'Upcoming',
+                style: FlowTypography.bodySmall(
+                  color: isFixedTime ? FlowColors.accentCyan : FlowColors.accentMint,
+                ).copyWith(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+              if (isFixedTime)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: FlowColors.accentCyan.withValues(alpha: 0.15),
+                    borderRadius: FlowRadii.pillRadius,
+                  ),
+                  child: Text(
+                    'Fixed',
+                    style: FlowTypography.labelSmall(color: FlowColors.accentCyan).copyWith(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+
+          // WHY / EXPLANATION
+          if (task.schedulingExplanation != null && task.schedulingExplanation!.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: FlowColors.darkCardElevated,
+                borderRadius: FlowRadii.cardRadius,
+                border: Border.all(color: FlowColors.darkBorder.withValues(alpha: 0.6)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Why: ',
+                    style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      task.schedulingExplanation!,
+                      style: FlowTypography.bodySmall(color: FlowColors.textSecondary).copyWith(
+                        fontSize: 11,
+                        height: 1.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

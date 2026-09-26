@@ -254,6 +254,9 @@ class TaskItem {
   final List<String> missingFields;
   final List<String> ambiguities;
   final String? prioritySource; // 'explicit', 'inferred', 'unspecified'
+  final String? schedulingExplanation;
+  final String? recommendedSlotDisplay;
+  final Map<String, dynamic>? schedulingReasons;
 
   bool get isPriorityExplicit => prioritySource == 'explicit';
   bool get isPriorityInferred => prioritySource == 'inferred' || ambiguities.contains('inferred_priority');
@@ -289,6 +292,9 @@ class TaskItem {
     this.missingFields = const [],
     this.ambiguities = const [],
     this.prioritySource,
+    this.schedulingExplanation,
+    this.recommendedSlotDisplay,
+    this.schedulingReasons,
   });
 
   TaskItem copyWith({
@@ -315,6 +321,9 @@ class TaskItem {
     List<String>? missingFields,
     List<String>? ambiguities,
     String? prioritySource,
+    String? schedulingExplanation,
+    String? recommendedSlotDisplay,
+    Map<String, dynamic>? schedulingReasons,
   }) {
     return TaskItem(
       id: id ?? this.id,
@@ -340,6 +349,9 @@ class TaskItem {
       missingFields: missingFields ?? this.missingFields,
       ambiguities: ambiguities ?? this.ambiguities,
       prioritySource: prioritySource ?? this.prioritySource,
+      schedulingExplanation: schedulingExplanation ?? this.schedulingExplanation,
+      recommendedSlotDisplay: recommendedSlotDisplay ?? this.recommendedSlotDisplay,
+      schedulingReasons: schedulingReasons ?? this.schedulingReasons,
     );
   }
 
@@ -432,6 +444,9 @@ class TaskItem {
       missingFields: (json['missing_fields'] as List?)?.map((e) => e.toString()).toList() ?? const [],
       ambiguities: (json['ambiguities'] as List?)?.map((e) => e.toString()).toList() ?? const [],
       prioritySource: json['priority_source'] as String?,
+      schedulingExplanation: json['scheduling_explanation'] as String?,
+      recommendedSlotDisplay: json['recommended_slot_display'] as String?,
+      schedulingReasons: json['scheduling_reasons'] as Map<String, dynamic>?,
     );
   }
 
@@ -460,6 +475,9 @@ class TaskItem {
         if (missingFields.isNotEmpty) 'missing_fields': missingFields,
         if (ambiguities.isNotEmpty) 'ambiguities': ambiguities,
         if (prioritySource != null) 'priority_source': prioritySource,
+        if (schedulingExplanation != null) 'scheduling_explanation': schedulingExplanation,
+        if (recommendedSlotDisplay != null) 'recommended_slot_display': recommendedSlotDisplay,
+        if (schedulingReasons != null) 'scheduling_reasons': schedulingReasons,
       };
 
   String get energyRequired {

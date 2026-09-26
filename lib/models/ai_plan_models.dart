@@ -16,6 +16,11 @@ class ExtractedTaskItem {
   final List<String> dependencies;
   final double confidence;
   final bool needsConfirmation;
+  final DateTime? recommendedSlotStart;
+  final DateTime? recommendedSlotEnd;
+  final String? recommendedSlotDisplay;
+  final String? schedulingExplanation;
+  final Map<String, dynamic>? schedulingReasons;
 
   const ExtractedTaskItem({
     required this.title,
@@ -31,6 +36,11 @@ class ExtractedTaskItem {
     this.dependencies = const [],
     this.confidence = 1.0,
     this.needsConfirmation = false,
+    this.recommendedSlotStart,
+    this.recommendedSlotEnd,
+    this.recommendedSlotDisplay,
+    this.schedulingExplanation,
+    this.schedulingReasons,
   });
 
   bool get isPriorityExplicit => prioritySource == 'explicit';
@@ -41,6 +51,15 @@ class ExtractedTaskItem {
     final rawPrio = json['priority'] as String?;
     final prioSrc = json['priority_source'] as String? ??
         (rawPrio != null ? 'inferred' : 'unspecified');
+
+    DateTime? recStart;
+    if (json['recommended_slot_start'] != null) {
+      recStart = DateTime.tryParse(json['recommended_slot_start'].toString());
+    }
+    DateTime? recEnd;
+    if (json['recommended_slot_end'] != null) {
+      recEnd = DateTime.tryParse(json['recommended_slot_end'].toString());
+    }
 
     return ExtractedTaskItem(
       title: json['title'] as String? ?? 'Untitled Task',
@@ -59,6 +78,11 @@ class ExtractedTaskItem {
           const [],
       confidence: (json['confidence'] as num?)?.toDouble() ?? 1.0,
       needsConfirmation: json['needs_confirmation'] as bool? ?? false,
+      recommendedSlotStart: recStart,
+      recommendedSlotEnd: recEnd,
+      recommendedSlotDisplay: json['recommended_slot_display'] as String?,
+      schedulingExplanation: json['scheduling_explanation'] as String?,
+      schedulingReasons: json['scheduling_reasons'] as Map<String, dynamic>?,
     );
   }
 
@@ -77,6 +101,11 @@ class ExtractedTaskItem {
       'dependencies': dependencies,
       'confidence': confidence,
       'needs_confirmation': needsConfirmation,
+      'recommended_slot_start': recommendedSlotStart?.toIso8601String(),
+      'recommended_slot_end': recommendedSlotEnd?.toIso8601String(),
+      'recommended_slot_display': recommendedSlotDisplay,
+      'scheduling_explanation': schedulingExplanation,
+      'scheduling_reasons': schedulingReasons,
     };
   }
 
@@ -187,6 +216,9 @@ class ExtractedTaskItem {
       ambiguities.add('priority_unspecified');
     }
 
+    final finalSchedStart = scheduledStart ?? recommendedSlotStart;
+    final finalSchedEnd = finalSchedStart != null ? finalSchedStart.add(Duration(minutes: estimatedMinutes)) : null;
+
     return TaskItem(
       id: customId ?? 'task-ai-${now.millisecondsSinceEpoch}',
       title: title,
@@ -198,8 +230,9 @@ class ExtractedTaskItem {
       isPriority: prio == TaskPriority.high || prio == TaskPriority.urgent,
       deadline: deadlineStr,
       deadlineAt: deadlineAt,
-      scheduledTime: scheduledTimeStr,
-      scheduledStart: scheduledStart,
+      scheduledTime: scheduledTimeStr ?? recommendedSlotDisplay,
+      scheduledStart: finalSchedStart,
+      scheduledEnd: finalSchedEnd,
       taskType: tType,
       category: tType == TaskType.study
           ? 'Study'
@@ -207,6 +240,9 @@ class ExtractedTaskItem {
       source: TaskSource.aiParsed,
       confidence: confidence,
       ambiguities: ambiguities,
+      schedulingExplanation: schedulingExplanation,
+      recommendedSlotDisplay: recommendedSlotDisplay,
+      schedulingReasons: schedulingReasons,
     );
   }
 }

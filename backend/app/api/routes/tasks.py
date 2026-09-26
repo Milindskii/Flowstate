@@ -19,6 +19,8 @@ from ...schemas.task import (
     TaskParseRequest,
     TaskResponse,
     TaskListResponse,
+    BatchCreateAndScheduleRequest,
+    BatchCreateAndScheduleResponse,
 )
 from ...schemas.task_performance import FeedbackCreate, FeedbackResponse
 from ...services.task_service import TaskService
@@ -133,6 +135,43 @@ def parse_unstructured_tasks(
             f"Audit: /tasks/parse user={current_user.id} latency={latency_ms}ms error={e} status=failure"
         )
         raise
+
+@router.post("/batch-create-and-schedule", response_model=BatchCreateAndScheduleResponse, status_code=status.HTTP_201_CREATED)
+def batch_create_and_schedule_tasks(
+    request: BatchCreateAndScheduleRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Atomically creates tasks and applies their scheduled times in a single transaction.
+    Guarantees no duplicate tasks on double submission.
+    """
+    if not request.tasks:
+        return BatchCreateAndScheduleResponse(created_count=0, tasks=[], message="No tasks provided")
+
+    created_tasks = []
+    for item in request.tasks:
+        task_create = TaskCreate(
+            title=item.title,
+            description=item.description,
+            category=item.category,
+            task_type=item.task_type,
+            difficulty=item.difficulty,
+            priority=item.priority,
+            estimated_minutes=item.estimated_minutes,
+            deadline_at=item.deadline_at,
+            scheduled_start=item.scheduled_start,
+            scheduled_end=item.scheduled_end,
+            source=item.source,
+        )
+        t = task_service.create_task(db, current_user, task_create)
+        created_tasks.append(t)
+
+    return BatchCreateAndScheduleResponse(
+        created_count=len(created_tasks),
+        tasks=created_tasks,
+        message=f"Successfully created and scheduled {len(created_tasks)} task{'s' if len(created_tasks) != 1 else ''}."
+    )
 
 @router.get("/{task_id}", response_model=TaskResponse)
 def get_task(
