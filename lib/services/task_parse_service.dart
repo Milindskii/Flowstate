@@ -47,6 +47,9 @@ class TaskParseService {
     return deterministicFallbackParse(cleanInput);
   }
 
+  /// Helper indicating if text can be handled deterministically without AI
+  static bool canParseDeterministically(String text) => !requiresAiEnrichment(text);
+
   /// Checks whether an input contains complex or ambiguous natural language
   /// that cannot be confidently and safely structured by deterministic rules alone.
   static bool requiresAiEnrichment(String text) {
@@ -92,18 +95,26 @@ class TaskParseService {
 
       // Priority extraction (explicit user words always win)
       TaskPriority priority = TaskPriority.medium;
+      String prioritySource = 'unspecified';
       if (RegExp(r'\b(?:urgent|critical|p0|asap)\b', caseSensitive: false).hasMatch(lower)) {
         priority = TaskPriority.urgent;
+        prioritySource = 'explicit';
         title = title.replaceAll(RegExp(r'\b(?:urgent|critical|p0|asap)\b', caseSensitive: false), '').trim();
       } else if (RegExp(r'\b(?:high\s+priority|p1|important|top\s+priority)\b', caseSensitive: false).hasMatch(lower)) {
         priority = TaskPriority.high;
+        prioritySource = 'explicit';
         title = title.replaceAll(RegExp(r'\b(?:high\s+priority|p1|important|top\s+priority)\b', caseSensitive: false), '').trim();
       } else if (RegExp(r'\b(?:low\s+priority|p3|optional)\b', caseSensitive: false).hasMatch(lower)) {
         priority = TaskPriority.low;
+        prioritySource = 'explicit';
         title = title.replaceAll(RegExp(r'\b(?:low\s+priority|p3|optional)\b', caseSensitive: false), '').trim();
       } else if (RegExp(r'\b(?:medium\s+priority|p2|normal\s+priority)\b', caseSensitive: false).hasMatch(lower)) {
         priority = TaskPriority.medium;
+        prioritySource = 'explicit';
         title = title.replaceAll(RegExp(r'\b(?:medium\s+priority|p2|normal\s+priority)\b', caseSensitive: false), '').trim();
+      } else {
+        // Priority was not explicitly specified by user
+        ambiguities.add('priority_unspecified');
       }
 
       // Duration extraction
@@ -200,8 +211,10 @@ class TaskParseService {
         difficulty = TaskDifficulty.high;
         category = 'Study';
         durationMinutes ??= 45;
-      } else if (RegExp(r'\b(email|call|meet|schedule|buy|pay|clean|admin|errand|dentist|doctor)\b', caseSensitive: false).hasMatch(lower)) {
-        taskType = TaskType.admin;
+      } else if (RegExp(r'\b(work|client|meeting|sync|email|call|schedule|buy|pay|clean|admin|errand|dentist|doctor)\b', caseSensitive: false).hasMatch(lower)) {
+        taskType = RegExp(r'\b(work|client)\b', caseSensitive: false).hasMatch(lower)
+            ? TaskType.deepWork
+            : TaskType.admin;
         difficulty = TaskDifficulty.light;
         category = 'Admin';
         durationMinutes ??= 30;
@@ -209,15 +222,10 @@ class TaskParseService {
         durationMinutes ??= 45;
       }
 
-      // Clean leading and trailing prepositions or punctuation
-      title = title.replaceAll(RegExp(r'^[,\s\-•*]+|[,\s\-•*]+$'), '').trim();
+      // Clean, concise, user-faithful task title
+      title = sanitizeTitle(title);
       if (title.isEmpty) {
-        title = clause;
-      }
-
-      // Capitalize first letter
-      if (title.isNotEmpty) {
-        title = title[0].toUpperCase() + title.substring(1);
+        title = sanitizeTitle(clause);
       }
 
       results.add(
@@ -232,6 +240,7 @@ class TaskParseService {
           scheduledStart: scheduledStart,
           taskType: taskType,
           priority: priority,
+          prioritySource: prioritySource,
           category: category,
           isPriority: priority == TaskPriority.high || priority == TaskPriority.urgent,
           ambiguities: ambiguities,
@@ -242,11 +251,37 @@ class TaskParseService {
     return results;
   }
 
+  /// Ensures task titles are concise, natural, and user-faithful.
+  /// Removes bloated filler ('to do', 'task for', 'task', redundant 'my'/'the').
+  static String sanitizeTitle(String rawTitle) {
+    if (rawTitle.trim().isEmpty) return 'Task';
+    String t = rawTitle.trim();
+    // Strip leading/trailing punctuation or bullet marks
+    t = t.replaceAll(RegExp(r'^[,\s\-•*:]+|[,\s\-•*:]+$'), '').trim();
+    // Strip prefixes like "task for ", "task: ", "to do: "
+    t = t.replaceAll(RegExp(r'^(?:task\s+for|task\s*:|to\s*do\s*:)\s*', caseSensitive: false), '').trim();
+    // Strip suffixes like " to do", " todo", " task"
+    t = t.replaceAll(RegExp(r'\s+(?:to\s+do|todo|task)$', caseSensitive: false), '').trim();
+    // Strip filler like 'my' or 'the' after action verbs (e.g. 'finish my assignment' -> 'Finish assignment')
+    t = t.replaceAll(RegExp(r'\b(?:my|the)\s+(?=assignment|project|lab|homework|thesis|work|task|exam|quiz|session|workout)\b', caseSensitive: false), '');
+    // Strip leading filler words ("and", "to", "go to", "also", "then")
+    t = t.replaceAll(RegExp(r'^(?:and\s+|then\s+|also\s+|go\s+to\s+|to\s+)', caseSensitive: false), '').trim();
+    // Strip extra whitespace
+    t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
+    // Capitalize first letter
+    if (t.length > 1) {
+      t = t[0].toUpperCase() + t.substring(1);
+    } else if (t.length == 1) {
+      t = t.toUpperCase();
+    }
+    return t.isEmpty ? 'Task' : t;
+  }
+
   static List<String> _splitClauses(String text) {
     // 1. Primary delimiters: newlines, semicolons, bullets
     final primaryChunks = text.split(RegExp(r'[\n;•\*\-]+')).map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
     final List<String> clauses = [];
-    const actionVerbs = r'(?:finish|study|go to|gym|workout|review|call|email|buy|read|write|prep|pay|meet|clean|submit|update|complete|dentist|doctor|appointment|sync|class|lecture|groceries|errands?|pick up|drop off)';
+    const actionVerbs = r'(?:finish|study|go to|gym|workout|review|call|email|buy|read|write|prep|pay|meet|clean|submit|update|complete|dentist|doctor|appointment|sync|class|lecture|groceries|errands?|pick up|drop off|walk|exercise|run)';
 
     for (final chunk in primaryChunks) {
       final parts = chunk

@@ -8,8 +8,8 @@ class ExtractedTaskItem {
   final String type; // 'deep_work', 'study', 'physical', 'admin', 'recovery', etc.
   final int estimatedMinutes;
   final String difficulty; // 'light', 'medium', 'high', 'physical'
-  final String priority; // 'low', 'medium', 'high', 'urgent'
-  final String prioritySource; // 'explicit' or 'inferred'
+  final String? priority; // 'low', 'medium', 'high', 'urgent', or null
+  final String prioritySource; // 'explicit', 'inferred', or 'unspecified'
   final String? deadline; // e.g. "2026-09-26" or "tomorrow"
   final String? fixedStart; // e.g. "18:00"
   final bool isRecurring;
@@ -23,7 +23,7 @@ class ExtractedTaskItem {
     required this.type,
     required this.estimatedMinutes,
     required this.difficulty,
-    required this.priority,
+    this.priority,
     required this.prioritySource,
     this.deadline,
     this.fixedStart,
@@ -33,15 +33,23 @@ class ExtractedTaskItem {
     this.needsConfirmation = false,
   });
 
+  bool get isPriorityExplicit => prioritySource == 'explicit';
+  bool get isPriorityInferred => prioritySource == 'inferred';
+  bool get isPriorityUnspecified => prioritySource == 'unspecified' || priority == null;
+
   factory ExtractedTaskItem.fromJson(Map<String, dynamic> json) {
+    final rawPrio = json['priority'] as String?;
+    final prioSrc = json['priority_source'] as String? ??
+        (rawPrio != null ? 'inferred' : 'unspecified');
+
     return ExtractedTaskItem(
       title: json['title'] as String? ?? 'Untitled Task',
       description: json['description'] as String?,
       type: json['type'] as String? ?? 'deep_work',
       estimatedMinutes: (json['estimated_minutes'] as num?)?.toInt() ?? 45,
       difficulty: json['difficulty'] as String? ?? 'medium',
-      priority: json['priority'] as String? ?? 'medium',
-      prioritySource: json['priority_source'] as String? ?? 'inferred',
+      priority: rawPrio,
+      prioritySource: prioSrc,
       deadline: json['deadline'] as String?,
       fixedStart: json['fixed_start'] as String?,
       isRecurring: json['is_recurring'] as bool? ?? false,
@@ -97,20 +105,22 @@ class ExtractedTaskItem {
 
     // Map priority
     TaskPriority prio = TaskPriority.medium;
-    switch (priority.toLowerCase()) {
-      case 'urgent':
-        prio = TaskPriority.urgent;
-        break;
-      case 'high':
-        prio = TaskPriority.high;
-        break;
-      case 'low':
-        prio = TaskPriority.low;
-        break;
-      case 'medium':
-      default:
-        prio = TaskPriority.medium;
-        break;
+    if (priority != null) {
+      switch (priority!.toLowerCase()) {
+        case 'urgent':
+          prio = TaskPriority.urgent;
+          break;
+        case 'high':
+          prio = TaskPriority.high;
+          break;
+        case 'low':
+          prio = TaskPriority.low;
+          break;
+        case 'medium':
+        default:
+          prio = TaskPriority.medium;
+          break;
+      }
     }
 
     // Map task type
@@ -173,6 +183,8 @@ class ExtractedTaskItem {
     }
     if (prioritySource == 'inferred') {
       ambiguities.add('inferred_priority');
+    } else if (prioritySource == 'unspecified') {
+      ambiguities.add('priority_unspecified');
     }
 
     return TaskItem(
@@ -182,6 +194,7 @@ class ExtractedTaskItem {
       durationMinutes: estimatedMinutes,
       difficulty: diff,
       priority: prio,
+      prioritySource: prioritySource,
       isPriority: prio == TaskPriority.high || prio == TaskPriority.urgent,
       deadline: deadlineStr,
       deadlineAt: deadlineAt,

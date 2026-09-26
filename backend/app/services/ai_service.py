@@ -8,6 +8,31 @@ from ..models.task import TaskType, TaskDifficulty, TaskPriority, TaskSource
 from ..schemas.task import TaskCandidateResponse, FieldProvenance
 from ..core.config import settings
 
+def sanitize_task_title(title: str) -> str:
+    """
+    Ensures task titles are concise, natural, and user-faithful.
+    Strips awkward filler ('to do', 'task for', 'task', 'my ...', 'the ...', 'go to').
+    """
+    if not title:
+        return "Task"
+    t = title.strip()
+    # Strip leading/trailing punctuation or bullet marks
+    t = re.sub(r'^[,\s\-•*:]+|[,\s\-•*:]+$', '', t).strip()
+    # Strip prefixes like "task for ", "task: ", "to do: "
+    t = re.sub(r'^(?:task\s+for|task\s*:|to\s*do\s*:)\s*', '', t, flags=re.IGNORECASE).strip()
+    # Strip suffixes like " to do", " todo", " task"
+    t = re.sub(r'\s+(?:to\s+do|todo|task)$', '', t, flags=re.IGNORECASE).strip()
+    # Strip filler like 'my' or 'the' after action verbs (e.g. 'finish my assignment' -> 'Finish assignment')
+    t = re.sub(r'\b(?:my|the)\s+(?=assignment|project|lab|homework|thesis|work|task|exam|quiz|session|workout)\b', '', t, flags=re.IGNORECASE)
+    # Strip extra whitespace
+    t = re.sub(r'\s+', ' ', t).strip()
+    # Capitalize first letter
+    if len(t) > 1:
+        t = t[0].upper() + t[1:]
+    elif len(t) == 1:
+        t = t.upper()
+    return t or "Task"
+
 class AIService:
     """
     Service responsible for Natural Language Task Parsing ('What's on your plate?')
@@ -22,7 +47,7 @@ class AIService:
         primary_chunks = [c.strip() for c in re.split(r'[\n;•\*\-]+', text) if c.strip()]
         clauses: List[str] = []
 
-        action_verbs = r'(?:finish|study|go to|gym|workout|review|call|email|buy|read|write|prep|pay|meet|clean|submit|update|complete)'
+        action_verbs = r'(?:finish|study|go to|gym|workout|review|call|email|buy|read|write|prep|pay|meet|clean|submit|update|complete|walk|exercise|run)'
 
         for chunk in primary_chunks:
             # Split on compound sentence dividers:
@@ -214,49 +239,68 @@ class AIService:
         if not deadline_found and not scheduled_start:
             missing_fields.append("deadline")
 
-        # 4. Classification Priors (Starting Priors, NOT rigid ground truth)
+        # 4. Priority Extraction (Explicit user input ALWAYS wins)
+        explicit_priority = None
+        if re.search(r'\b(?:urgent|critical|p0|asap)\b', lower):
+            explicit_priority = TaskPriority.urgent
+            title = re.sub(r'\b(?:urgent|critical|p0|asap)\b', '', title, flags=re.IGNORECASE).strip()
+        elif re.search(r'\b(?:high\s+priority|p1|important|top\s+priority)\b', lower):
+            explicit_priority = TaskPriority.high
+            title = re.sub(r'\b(?:high\s+priority|p1|important|top\s+priority)\b', '', title, flags=re.IGNORECASE).strip()
+        elif re.search(r'\b(?:low\s+priority|p3|optional)\b', lower):
+            explicit_priority = TaskPriority.low
+            title = re.sub(r'\b(?:low\s+priority|p3|optional)\b', '', title, flags=re.IGNORECASE).strip()
+        elif re.search(r'\b(?:medium\s+priority|p2|normal\s+priority)\b', lower):
+            explicit_priority = TaskPriority.medium
+            title = re.sub(r'\b(?:medium\s+priority|p2|normal\s+priority)\b', '', title, flags=re.IGNORECASE).strip()
+
+        # 5. Classification Priors (Starting Priors, NOT rigid ground truth)
         task_type = TaskType.deep_work
         difficulty = TaskDifficulty.medium
-        priority = TaskPriority.medium
+        priority = explicit_priority or TaskPriority.medium
         category = "General"
 
         if any(w in lower for w in ["assignment", "code", "coding", "paper", "research", "build", "design", "ml", "math", "develop", "thesis", "algorithm"]):
             task_type = TaskType.deep_work
             difficulty = TaskDifficulty.high
-            priority = TaskPriority.high
+            if explicit_priority is None:
+                priority = TaskPriority.high
             category = "College"
             provenance["task_type"] = FieldProvenance(source="inferred", confidence=0.88)
         elif any(w in lower for w in ["study", "review", "read", "reading", "notes", "quiz", "prep", "exam", "dbms", "lecture"]):
             task_type = TaskType.study
             difficulty = TaskDifficulty.medium
-            priority = TaskPriority.medium
+            if explicit_priority is None:
+                priority = TaskPriority.medium
             category = "College"
             provenance["task_type"] = FieldProvenance(source="inferred", confidence=0.85)
         elif any(w in lower for w in ["gym", "workout", "run", "lift", "stretch", "walk", "exercise", "training"]):
             task_type = TaskType.physical
             difficulty = TaskDifficulty.physical
-            priority = TaskPriority.low
+            if explicit_priority is None:
+                priority = TaskPriority.low
             category = "Fitness"
             provenance["task_type"] = FieldProvenance(source="inferred", confidence=0.92)
-        elif any(w in lower for w in ["email", "reply", "pay", "submit", "file", "call", "sync", "organize", "grocery", "groceries", "buy"]):
+        elif any(w in lower for w in ["email", "reply", "pay", "submit", "file", "call", "sync", "organize", "grocery", "groceries", "buy", "dentist", "doctor"]):
             task_type = TaskType.admin
             difficulty = TaskDifficulty.light
-            priority = TaskPriority.low
+            if explicit_priority is None:
+                priority = TaskPriority.low
             category = "Personal"
             provenance["task_type"] = FieldProvenance(source="inferred", confidence=0.85)
         else:
             provenance["task_type"] = FieldProvenance(source="default", confidence=0.50)
 
-        # 5. Title Cleanup & Normalization
-        # Strip leading filler words ("and", "to", "go to", "also", "then")
-        title = re.sub(r'^(?:and\s+|then\s+|also\s+|go\s+to\s+|to\s+)', '', title, flags=re.IGNORECASE).strip()
-        title = title.strip(' .,-;:')
+        # Track priority provenance
+        if explicit_priority is not None:
+            provenance["priority"] = FieldProvenance(source="explicit", confidence=1.0)
+        else:
+            # Priority was inferred from context or default
+            provenance["priority"] = FieldProvenance(source="inferred", confidence=0.80)
 
-        # Capitalize nicely
-        if len(title) > 1:
-            title = title[0].upper() + title[1:]
-        elif len(title) == 1:
-            title = title.upper()
+        # 6. Title Cleanup & Normalization: Concise and User-Faithful
+        title = re.sub(r'^(?:and\s+|then\s+|also\s+|go\s+to\s+|to\s+)', '', title, flags=re.IGNORECASE).strip()
+        title = sanitize_task_title(title)
 
         if not title:
             return None
@@ -342,8 +386,8 @@ class AIService:
             '      "type": "deep_work" or "shallow_work" or "study" or "creative" or "admin" or "physical" or "meeting" or "personal",\n'
             '      "estimated_minutes": 45,\n'
             '      "difficulty": "high" or "medium" or "light" or "physical",\n'
-            '      "priority": "low" or "medium" or "high" or "urgent",\n'
-            '      "priority_source": "explicit" or "inferred",\n'
+            '      "priority": "low" or "medium" or "high" or "urgent" or null,\n'
+            '      "priority_source": "explicit" or "inferred" or "unspecified",\n'
             '      "deadline": "YYYY-MM-DD" or null,\n'
             '      "fixed_start": "HH:MM" or null,\n'
             '      "is_recurring": false,\n'
@@ -355,10 +399,22 @@ class AIService:
             '  "ambiguities": []\n'
             "}\n\n"
             "STRICT RULES:\n"
-            "- NEVER invent deadlines or times. If user says 'study Python tomorrow', deadline is the date of tomorrow, fixed_start MUST be null. NEVER invent '10 AM'.\n"
-            "- If user explicitly mentions a time like 'at 5 PM' or 'at 6', set fixed_start to 'HH:MM' (24-hour format).\n"
-            "- Explicit user information ALWAYS wins. If user says 'low priority', priority is 'low' and priority_source is 'explicit'.\n"
-            "- If priority was NOT explicitly mentioned, infer it and set priority_source to 'inferred'. If ambiguous, set needs_confirmation to true.\n"
+            "- TASK TITLES MUST BE CONCISE, NATURAL, AND USER-FAITHFUL:\n"
+            "  * Structure the user's input, DO NOT rewrite it into unnatural or awkward task names.\n"
+            "  * Examples:\n"
+            "    - 'gym tomorrow' -> title: 'Gym', type: 'physical'\n"
+            "    - 'finish my assignment' -> title: 'Finish assignment', type: 'study'\n"
+            "    - 'work tomorrow' -> title: 'Work', type: 'admin'\n"
+            "    - 'call dentist at 5' -> title: 'Call dentist', fixed_start: '17:00'\n"
+            "  * DO NOT generate titles like 'Gym to do', 'Work to do', 'Assignment task', or 'Task for gym'.\n"
+            "  * Keep task category/type SEPARATE from title. Do not encode category into the title.\n"
+            "- PRIORITY RULES:\n"
+            "  * If user explicitly specifies priority ('urgent', 'high priority', 'low priority', etc.): set priority accordingly and priority_source='explicit'.\n"
+            "  * If user does NOT explicitly specify priority: DO NOT silently invent medium priority. Set priority_source='unspecified' (or 'inferred' if strong context) and needs_confirmation=true.\n"
+            "- TIME & DEADLINE RULES:\n"
+            "  * NEVER invent deadlines or times. If user says 'study Python tomorrow', deadline is the date of tomorrow, fixed_start MUST be null. NEVER invent '10 AM'.\n"
+            "  * If user explicitly mentions a time like 'at 5 PM' or 'at 6', set fixed_start to 'HH:MM' (24-hour format).\n"
+            "- FLOWSTATE DETERMINISTIC SCHEDULER is the final calendar scheduler. Never make rigid calendar choices for non-fixed tasks.\n"
         )
 
         headers = {
@@ -432,9 +488,10 @@ class AIService:
                     overall_needs_confirmation = False
 
                     for item in tasks_raw:
-                        title = str(item.get("title", "")).strip()
-                        if not title:
+                        raw_title = str(item.get("title", "")).strip()
+                        if not raw_title:
                             continue
+                        title = sanitize_task_title(raw_title)
                         try:
                             dur = int(item.get("estimated_minutes", 45))
                             dur = max(5, min(480, dur))
@@ -453,15 +510,15 @@ class AIService:
                         except Exception:
                             difficulty = TaskDifficulty.medium
 
-                        raw_prio = str(item.get("priority", "medium")).lower()
+                        raw_prio = str(item.get("priority", "medium")).lower() if item.get("priority") else "medium"
                         try:
                             priority = TaskPriority(raw_prio)
                         except Exception:
                             priority = TaskPriority.medium
 
-                        prio_src = str(item.get("priority_source", "inferred")).lower()
-                        if prio_src not in ["explicit", "inferred"]:
-                            prio_src = "inferred"
+                        prio_src = str(item.get("priority_source", "unspecified")).lower()
+                        if prio_src not in ["explicit", "inferred", "unspecified"]:
+                            prio_src = "unspecified"
 
                         deadline_str = item.get("deadline")
                         deadline_at = None
@@ -488,8 +545,12 @@ class AIService:
 
                         task_needs_conf = bool(item.get("needs_confirmation", False))
                         conf_score = float(item.get("confidence", 0.90))
-                        if task_needs_conf or conf_score < 0.75 or prio_src == "inferred":
+                        if task_needs_conf or conf_score < 0.75 or prio_src in ["inferred", "unspecified"]:
                             overall_needs_confirmation = True
+                        if prio_src == "unspecified" and "priority_unspecified" not in ambiguities:
+                            ambiguities.append("priority_unspecified")
+                        elif prio_src == "inferred" and "inferred_priority" not in ambiguities:
+                            ambiguities.append("inferred_priority")
 
                         provenance = {
                             "title": FieldProvenance(source="gemini", confidence=conf_score),

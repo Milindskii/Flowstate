@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../components/companion/companion_graphic.dart';
 import '../models/ai_plan_models.dart';
 import '../models/task_item.dart';
 import '../providers/app_state_provider.dart';
+import '../providers/flow_provider.dart';
 import '../providers/theme_provider.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
@@ -102,7 +104,46 @@ class _AIPlanPreviewSheet extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 12),
+
+            // Canonical Noya Companion Header
+            Builder(
+              builder: (ctx) {
+                FlowProvider? flowProvider;
+                try {
+                  flowProvider = Provider.of<FlowProvider>(ctx, listen: true);
+                } catch (_) {}
+                final companion = flowProvider?.companion;
+                final species = companion?.species ?? 'fox';
+                final name = companion?.name ?? 'Noya';
+
+                return Container(
+                  key: const Key('noya_companion_header'),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: FlowColors.darkCardElevated,
+                    borderRadius: FlowRadii.cardRadius,
+                    border: Border.all(color: FlowColors.darkBorder),
+                  ),
+                  child: Row(
+                    children: [
+                      CompanionGraphic(species: species, size: 24),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '$name arranged your candidate tasks.',
+                          style: FlowTypography.bodySmall(color: FlowColors.textSecondary).copyWith(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
 
             // Header Section
             if (needsConfirmation) ...[
@@ -171,70 +212,48 @@ class _AIPlanPreviewSheet extends StatelessWidget {
 
             const SizedBox(height: 18),
 
-            // Action Buttons
-            if (needsConfirmation) ...[
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      key: const Key('edit_button'),
-                      onPressed: () => _onEdit(context, candidates),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: FlowColors.textPrimary,
-                        side: const BorderSide(color: FlowColors.darkBorder),
-                        shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      child: Text(
-                        'Edit',
-                        style: FlowTypography.labelLarge(color: FlowColors.textPrimary)
-                            .copyWith(fontWeight: FontWeight.w600),
-                      ),
+            // Pinned Action Buttons: Single Final Action [ Add & Schedule ] + Optional Secondary [ Edit ]
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    key: const Key('edit_button'),
+                    onPressed: () => _onEdit(context, candidates),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: FlowColors.textPrimary,
+                      side: const BorderSide(color: FlowColors.darkBorder),
+                      shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton(
-                      key: const Key('yes_build_day_button'),
-                      onPressed: () => _buildMyDay(context, candidates),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: accent,
-                        foregroundColor: FlowColors.textInverse,
-                        elevation: 0,
-                        shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      child: Text(
-                        'Yes, build my day',
-                        style: FlowTypography.labelLarge(color: FlowColors.textInverse)
-                            .copyWith(fontWeight: FontWeight.w700),
-                      ),
+                    child: Text(
+                      'Edit',
+                      style: FlowTypography.labelLarge(color: FlowColors.textPrimary)
+                          .copyWith(fontWeight: FontWeight.w600),
                     ),
-                  ),
-                ],
-              ),
-            ] else ...[
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  key: const Key('build_my_day_button'),
-                  onPressed: () => _buildMyDay(context, candidates),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: accent,
-                    foregroundColor: FlowColors.textInverse,
-                    elevation: 0,
-                    shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
-                  ),
-                  child: Text(
-                    'Build my day',
-                    style: FlowTypography.labelLarge(color: FlowColors.textInverse)
-                        .copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton(
+                    key: const Key('add_and_schedule_button'),
+                    onPressed: () => _buildMyDay(context, candidates),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: accent,
+                      foregroundColor: FlowColors.textInverse,
+                      elevation: 0,
+                      shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: Text(
+                      'Add & Schedule',
+                      style: FlowTypography.labelLarge(color: FlowColors.textInverse)
+                          .copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -303,9 +322,15 @@ class _AIPlanPreviewSheet extends StatelessWidget {
               ),
               Text('•', style: FlowTypography.bodySmall(color: FlowColors.textMuted)),
               Text(
-                '${_capitalize(task.priority)} priority${isPriorityInferred ? ' (Inferred)' : ''}',
+                task.isPriorityUnspecified || task.priority == null
+                    ? 'Priority not specified'
+                    : isPriorityInferred
+                        ? 'Suggested priority: ${_capitalize(task.priority!)}'
+                        : '${_capitalize(task.priority!)} priority',
                 style: FlowTypography.bodySmall(
-                  color: isPriorityInferred ? FlowColors.warning : FlowColors.textSecondary,
+                  color: isPriorityInferred
+                      ? FlowColors.warning
+                      : (task.isPriorityUnspecified ? FlowColors.textMuted : FlowColors.textSecondary),
                 ).copyWith(fontWeight: isPriorityInferred ? FontWeight.w600 : FontWeight.normal),
               ),
               if (task.deadline != null && task.deadline!.isNotEmpty) ...[

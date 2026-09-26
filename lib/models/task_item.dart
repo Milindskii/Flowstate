@@ -253,6 +253,17 @@ class TaskItem {
   final double? confidence;
   final List<String> missingFields;
   final List<String> ambiguities;
+  final String? prioritySource; // 'explicit', 'inferred', 'unspecified'
+
+  bool get isPriorityExplicit => prioritySource == 'explicit';
+  bool get isPriorityInferred => prioritySource == 'inferred' || ambiguities.contains('inferred_priority');
+  bool get isPriorityUnspecified =>
+      prioritySource == 'unspecified' ||
+      ambiguities.contains('priority_unspecified') ||
+      (!isPriorityExplicit && !isPriorityInferred);
+
+  String get type => taskType == TaskType.deepWork ? 'deep_work' : taskType.name;
+  String? get priorityValue => isPriorityUnspecified ? null : priority.name;
 
   const TaskItem({
     required this.id,
@@ -277,6 +288,7 @@ class TaskItem {
     this.confidence,
     this.missingFields = const [],
     this.ambiguities = const [],
+    this.prioritySource,
   });
 
   TaskItem copyWith({
@@ -302,6 +314,7 @@ class TaskItem {
     double? confidence,
     List<String>? missingFields,
     List<String>? ambiguities,
+    String? prioritySource,
   }) {
     return TaskItem(
       id: id ?? this.id,
@@ -326,6 +339,7 @@ class TaskItem {
       confidence: confidence ?? this.confidence,
       missingFields: missingFields ?? this.missingFields,
       ambiguities: ambiguities ?? this.ambiguities,
+      prioritySource: prioritySource ?? this.prioritySource,
     );
   }
 
@@ -417,6 +431,7 @@ class TaskItem {
       confidence: (json['confidence'] as num?)?.toDouble(),
       missingFields: (json['missing_fields'] as List?)?.map((e) => e.toString()).toList() ?? const [],
       ambiguities: (json['ambiguities'] as List?)?.map((e) => e.toString()).toList() ?? const [],
+      prioritySource: json['priority_source'] as String?,
     );
   }
 
@@ -444,6 +459,7 @@ class TaskItem {
         if (confidence != null) 'confidence': confidence,
         if (missingFields.isNotEmpty) 'missing_fields': missingFields,
         if (ambiguities.isNotEmpty) 'ambiguities': ambiguities,
+        if (prioritySource != null) 'priority_source': prioritySource,
       };
 
   String get energyRequired {

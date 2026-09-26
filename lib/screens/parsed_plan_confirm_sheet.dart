@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../components/companion/companion_graphic.dart';
 import '../models/task_item.dart';
 import '../providers/app_state_provider.dart';
+import '../providers/flow_provider.dart';
 import '../providers/theme_provider.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_radii.dart';
@@ -35,6 +37,7 @@ class _ParsedPlanConfirmSheet extends StatefulWidget {
 class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
   late List<TaskItem> _tasks;
   int? _editingIndex;
+  bool _isSubmitting = false;
 
   @override
   void initState() {
@@ -42,10 +45,13 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
     _tasks = List.from(widget.candidates);
   }
 
-  void _confirm() {
+  Future<void> _confirm() async {
+    if (_isSubmitting || _tasks.isEmpty) return;
+    setState(() => _isSubmitting = true);
     FlowHaptics.success();
     final provider = Provider.of<AppStateProvider>(context, listen: false);
     provider.confirmCandidates(_tasks);
+    if (!mounted) return;
     Navigator.of(context).pop();
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(
@@ -117,7 +123,47 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
                 ),
               ),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 12),
+
+            // Canonical Noya Companion Header
+            Builder(
+              builder: (ctx) {
+                FlowProvider? flowProvider;
+                try {
+                  flowProvider = Provider.of<FlowProvider>(ctx, listen: true);
+                } catch (_) {}
+                final companion = flowProvider?.companion;
+                final species = companion?.species ?? 'fox';
+                final name = companion?.name ?? 'Noya';
+
+                return Container(
+                  key: const Key('noya_companion_header'),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: FlowColors.darkCardElevated,
+                    borderRadius: FlowRadii.cardRadius,
+                    border: Border.all(color: FlowColors.darkBorder),
+                  ),
+                  child: Row(
+                    children: [
+                      CompanionGraphic(species: species, size: 24),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '$name reviewed your parsed tasks.',
+                          style: FlowTypography.bodySmall(color: FlowColors.textSecondary).copyWith(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -152,7 +198,7 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
 
             // Task cards list
             ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.48),
+              constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.45),
               child: ListView.builder(
                 shrinkWrap: true,
                 itemCount: _tasks.length,
@@ -161,22 +207,29 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
             ),
             const SizedBox(height: 16),
 
-            // Bottom Add Action Button
+            // Single Final Action: [ Add & Schedule ]
             SizedBox(
               width: double.infinity,
               height: 50,
               child: ElevatedButton(
-                onPressed: _tasks.isEmpty ? null : _confirm,
+                key: const Key('add_and_schedule_button'),
+                onPressed: (_tasks.isEmpty || _isSubmitting) ? null : _confirm,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _tasks.isEmpty ? FlowColors.darkBorder : accent,
                   foregroundColor: FlowColors.textInverse,
                   elevation: 0,
                   shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
                 ),
-                child: Text(
-                  'Add ${_tasks.length} task${_tasks.length == 1 ? '' : 's'}',
-                  style: FlowTypography.labelLarge(color: FlowColors.textInverse).copyWith(fontWeight: FontWeight.w700),
-                ),
+                child: _isSubmitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(color: FlowColors.textInverse, strokeWidth: 2),
+                      )
+                    : Text(
+                        'Add & Schedule',
+                        style: FlowTypography.labelLarge(color: FlowColors.textInverse).copyWith(fontWeight: FontWeight.w700),
+                      ),
               ),
             ),
           ],

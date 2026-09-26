@@ -62,7 +62,24 @@ class MockAISubscriptionApiService extends ApiService {
         }
       };
     }
-    return {};
+    if (endpoint == '/api/v1/tasks') {
+      if (body is Map) {
+        final res = Map<String, dynamic>.from(body as Map);
+        res['id'] ??= 'task-${DateTime.now().millisecondsSinceEpoch}';
+        return res;
+      }
+      return <String, dynamic>{
+        'id': 'task-${DateTime.now().millisecondsSinceEpoch}',
+        'title': 'Task',
+        'type': 'deep_work',
+        'estimated_minutes': 45,
+        'difficulty': 'medium',
+        'priority': 'medium',
+        'priority_source': 'unspecified',
+        'status': 'pending',
+      };
+    }
+    return <String, dynamic>{};
   }
 
   @override
@@ -622,18 +639,429 @@ void main() {
 
       expect(find.text('YOUR PLAN'), findsOneWidget);
 
-      // Tap Edit to go back to text field
+      // Tap Edit to open structured task editor
       await tester.tap(find.byKey(const Key('edit_button')));
       await tester.pumpAndSettle();
 
-      // Re-build
-      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      // Structured task editor is open, brain dump input is NOT reopened
+      expect(find.byKey(const Key('structured_task_editor')), findsOneWidget);
+      expect(find.byKey(const Key('brain_dump_text_field')), findsNothing);
+
+      // Save changes
+      await tester.tap(find.byKey(const Key('save_changes_button')));
       await tester.pumpAndSettle();
 
       // Verify no duplicates (still exactly 2 task items)
       expect(find.text('YOUR PLAN'), findsOneWidget);
       expect(find.text('Study math'), findsOneWidget);
       expect(find.text('Gym'), findsOneWidget);
+    });
+  });
+
+  group('Part 3: Surgical Brain Dump & AI Plan UX Verification (20 Requirements)', () {
+    // 1. "gym tomorrow" becomes title "Gym"
+    test('1. "gym tomorrow" becomes title "Gym" with type physical', () {
+      final tasks = TaskParseService.deterministicFallbackParse('gym tomorrow');
+      expect(tasks, isNotEmpty);
+      expect(tasks.first.title, 'Gym');
+      expect(tasks.first.type, 'physical');
+    });
+
+    // 2. "finish assignment" becomes a concise title
+    test('2. "finish assignment" becomes concise title "Finish assignment" with type study', () {
+      final tasks = TaskParseService.deterministicFallbackParse('finish my assignment');
+      expect(tasks, isNotEmpty);
+      expect(tasks.first.title, 'Finish assignment');
+      expect(tasks.first.type, 'study');
+    });
+
+    // 3. "gym" does not become "Gym to do"
+    test('3. "gym" does not become "Gym to do" and title sanitization strips redundant tokens', () {
+      expect(TaskParseService.sanitizeTitle('Gym to do'), 'Gym');
+      expect(TaskParseService.sanitizeTitle('Work to do'), 'Work');
+      expect(TaskParseService.sanitizeTitle('Assignment task'), 'Assignment');
+      expect(TaskParseService.sanitizeTitle('Task for gym'), 'Gym');
+      expect(TaskParseService.sanitizeTitle('Finish my assignment'), 'Finish assignment');
+    });
+
+    // 4. Explicit priority is preserved
+    test('4. Explicit priority is preserved with prioritySource = explicit', () {
+      final highResult = TaskParseService.deterministicFallbackParse('client report high priority');
+      expect(highResult.first.priority, TaskPriority.high);
+      expect(highResult.first.priorityValue, 'high');
+      expect(highResult.first.prioritySource, 'explicit');
+      expect(highResult.first.isPriorityExplicit, isTrue);
+
+      final urgentResult = TaskParseService.deterministicFallbackParse('urgent call dentist');
+      expect(urgentResult.first.priority, TaskPriority.urgent);
+      expect(urgentResult.first.priorityValue, 'urgent');
+      expect(urgentResult.first.prioritySource, 'explicit');
+      expect(urgentResult.first.isPriorityExplicit, isTrue);
+    });
+
+    // 5. Missing priority is NOT silently changed to Medium
+    test('5. Missing priority is NOT silently changed to Medium (remains unspecified)', () {
+      final tasks = TaskParseService.deterministicFallbackParse('gym tomorrow');
+      expect(tasks.first.priorityValue, isNull);
+      expect(tasks.first.prioritySource, 'unspecified');
+      expect(tasks.first.isPriorityUnspecified, isTrue);
+      expect(tasks.first.ambiguities, contains('priority_unspecified'));
+    });
+
+    // 6. Inferred priority requires visible confirmation
+    testWidgets('6. Inferred/unspecified priority requires visible confirmation in preview', (tester) async {
+      await tester.pumpWidget(createTestApp(
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'gym tomorrow');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('YOUR PLAN'), findsOneWidget);
+      expect(find.text('Priority not specified'), findsWidgets);
+    });
+
+    // 7. Edit opens structured task editor
+    testWidgets('7. Edit opens structured task editor', (tester) async {
+      await tester.pumpWidget(createTestApp(
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'gym at 6');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('edit_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('structured_task_editor')), findsOneWidget);
+    });
+
+    // 8. Edit does not reopen Brain Dump
+    testWidgets('8. Edit does not reopen Brain Dump input text field', (tester) async {
+      await tester.pumpWidget(createTestApp(
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'work tomorrow');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('edit_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('brain_dump_text_field')), findsNothing);
+      expect(find.byKey(const Key('structured_task_editor')), findsOneWidget);
+    });
+
+    // 9. Edited values persist in preview
+    testWidgets('9. Edited values persist in preview', (tester) async {
+      await tester.pumpWidget(createTestApp(
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'gym at 6');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('edit_button')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('edit_task_title_field')), 'Strength Training');
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('save_changes_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Strength Training'), findsOneWidget);
+      expect(find.text('YOUR PLAN'), findsOneWidget);
+    });
+
+    // 10. Noya remains visible after edit
+    testWidgets('10. Noya remains visible after edit and save', (tester) async {
+      await tester.pumpWidget(createTestApp(
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'gym at 6');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('noya_companion_header')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('edit_button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('noya_companion_header')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('save_changes_button')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('noya_companion_header')), findsOneWidget);
+    });
+
+    // 11. Noya remains visible after preview rebuild
+    testWidgets('11. Noya remains visible after preview rebuild', (tester) async {
+      await tester.pumpWidget(createTestApp(
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('noya_companion_header')), findsOneWidget);
+
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'study physics');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('noya_companion_header')), findsOneWidget);
+    });
+
+    // 12. Only one Add & Schedule action exists
+    testWidgets('12. Only one Add & Schedule action exists', (tester) async {
+      await tester.pumpWidget(createTestApp(
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'gym at 6');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('add_and_schedule_button')), findsOneWidget);
+      expect(find.widgetWithText(ElevatedButton, 'Add Task'), findsNothing);
+      expect(find.text('Add Task'), findsNothing);
+    });
+
+    // 13. Add & Schedule creates and schedules exactly once
+    testWidgets('13. Add & Schedule creates and schedules exactly once', (tester) async {
+      final mockApi = MockAISubscriptionApiService();
+      final appState = AppStateProvider(customApi: mockApi);
+
+      await tester.pumpWidget(createTestApp(
+        customAppState: appState,
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'study react, gym at 6');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      final initialCount = appState.tasks.length;
+      await tester.tap(find.byKey(const Key('add_and_schedule_button')));
+      await tester.pumpAndSettle();
+
+      expect(appState.tasks.length, initialCount + 2);
+      expect(find.byKey(const Key('add_and_schedule_button')), findsNothing);
+    });
+
+    // 14. Double tapping does not duplicate tasks
+    testWidgets('14. Double tapping does not duplicate tasks', (tester) async {
+      final mockApi = MockAISubscriptionApiService();
+      final appState = AppStateProvider(customApi: mockApi);
+
+      await tester.pumpWidget(createTestApp(
+        customAppState: appState,
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'gym at 6');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      final initialCount = appState.tasks.length;
+      await tester.tap(find.byKey(const Key('add_and_schedule_button')));
+      await tester.tap(find.byKey(const Key('add_and_schedule_button')), warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      expect(appState.tasks.length, initialCount + 1);
+    });
+
+    // 15. Simple tasks can be parsed without Gemini
+    test('15. Simple tasks can be parsed without Gemini', () {
+      expect(TaskParseService.canParseDeterministically('Gym at 6'), isTrue);
+      expect(TaskParseService.canParseDeterministically('Study Python tomorrow'), isTrue);
+      expect(TaskParseService.canParseDeterministically('Finish assignment by Friday'), isTrue);
+    });
+
+    // 16. Gemini remains optional
+    testWidgets('16. Gemini remains optional (offline network error falls back)', (tester) async {
+      final mockApi = MockAISubscriptionApiService()..throwOnAiPlan = true;
+      await tester.pumpWidget(createTestApp(
+        api: mockApi,
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'finish assignment');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('YOUR PLAN'), findsOneWidget);
+      expect(find.text('Finish assignment'), findsOneWidget);
+    });
+
+    // 17. Existing deterministic scheduler remains the final scheduler
+    test('17. Existing deterministic scheduler remains the final scheduler', () {
+      const task1 = TaskItem(
+        id: 't1',
+        title: 'Client deliverable',
+        category: 'deep_work',
+        durationMinutes: 60,
+        deadline: 'Today',
+        difficulty: TaskDifficulty.high,
+        isPriority: true,
+        prioritySource: 'explicit',
+      );
+      const task2 = TaskItem(
+        id: 't2',
+        title: 'Gym',
+        category: 'physical',
+        durationMinutes: 45,
+        deadline: 'Today',
+        difficulty: TaskDifficulty.medium,
+        prioritySource: 'unspecified',
+      );
+
+      final schedule = const SchedulingEngine().generateOptimizedSchedule(
+        tasks: [task1, task2],
+        readiness: ReadinessModel.uncalibrated(),
+      );
+
+      expect(schedule, isNotEmpty);
+      expect(schedule.any((s) => s.title == 'Client deliverable'), isTrue);
+      expect(schedule.any((s) => s.title == 'Gym'), isTrue);
+    });
+
+    // 18. No regressions covered by full test suite execution.
+
+    // 19. Test at 320px / 360px / 390px / 432px widths
+    for (final width in [320.0, 360.0, 390.0, 432.0]) {
+      testWidgets('19. No overflow across viewport width ${width.toInt()}px in Brain Dump sheet', (tester) async {
+        tester.view.physicalSize = Size(width * 2.0, 800 * 2.0);
+        tester.view.devicePixelRatio = 2.0;
+        addTearDown(() => tester.view.resetPhysicalSize());
+
+        await tester.pumpWidget(createTestApp(
+          child: Builder(
+            builder: (ctx) => ElevatedButton(
+              onPressed: () => showBrainDumpSheet(ctx),
+              child: const Text('Open'),
+            ),
+          ),
+        ));
+        await tester.tap(find.text('Open'));
+        await tester.pumpAndSettle();
+
+        await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'gym tomorrow, study math 45 min');
+        await tester.pump();
+        await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+        await tester.pumpAndSettle();
+
+        expect(find.text('YOUR PLAN'), findsOneWidget);
+        expect(find.byKey(const Key('add_and_schedule_button')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    // 20. Test with keyboard open
+    testWidgets('20. No overflow with virtual keyboard open', (tester) async {
+      tester.view.physicalSize = const Size(360 * 2.0, 780 * 2.0);
+      tester.view.devicePixelRatio = 2.0;
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300 * 2.0);
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetViewInsets();
+      });
+
+      await tester.pumpWidget(createTestApp(
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('brain_dump_text_field')), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
   });
 }

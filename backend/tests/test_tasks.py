@@ -168,3 +168,65 @@ async def test_missing_fields_no_llm_call(auth_headers):
         assert c["field_provenance"]["duration"]["source"] == "default"
         assert c["field_provenance"]["duration"]["confidence"] == 0.50
 
+@pytest.mark.asyncio
+async def test_concise_user_faithful_task_titles_and_priority(auth_headers):
+    """
+    Verifies:
+    1. 'gym tomorrow' -> title = 'Gym', type = 'physical'
+    2. 'finish my assignment' -> title = 'Finish assignment', type = 'deep_work'
+    3. 'work tomorrow' -> title = 'Work'
+    4. 'call dentist at 5' -> title = 'Call dentist', scheduled_start at 17:00
+    5. Awkward words like 'to do', 'task for', 'task' are stripped
+    6. Explicit priority is preserved exactly as 'explicit'
+    7. Missing priority is flagged as 'inferred', not silently marked as explicit
+    """
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # 1. "gym tomorrow" -> "Gym", physical
+        res1 = await ac.post("/api/v1/tasks/parse", headers=auth_headers, json={"raw_text": "gym tomorrow"})
+        assert res1.status_code == 200
+        c1 = res1.json()[0]
+        assert c1["title"] == "Gym"
+        assert c1["task_type"] == "physical"
+        assert c1["field_provenance"]["priority"]["source"] != "explicit"
+
+        # 2. "finish my assignment" -> "Finish assignment"
+        res2 = await ac.post("/api/v1/tasks/parse", headers=auth_headers, json={"raw_text": "finish my assignment"})
+        assert res2.status_code == 200
+        c2 = res2.json()[0]
+        assert c2["title"] == "Finish assignment"
+        assert c2["task_type"] == "deep_work"
+
+        # 3. "work tomorrow" -> "Work"
+        res3 = await ac.post("/api/v1/tasks/parse", headers=auth_headers, json={"raw_text": "work tomorrow"})
+        assert res3.status_code == 200
+        c3 = res3.json()[0]
+        assert c3["title"] == "Work"
+
+        # 4. "call dentist at 5" -> "Call dentist"
+        res4 = await ac.post("/api/v1/tasks/parse", headers=auth_headers, json={"raw_text": "call dentist at 5"})
+        assert res4.status_code == 200
+        c4 = res4.json()[0]
+        assert c4["title"] == "Call dentist"
+        assert c4["scheduled_start"] is not None
+
+        # 5. Awkward phrases stripped: "Gym to do", "Work to do", "Assignment task", "Task for gym"
+        res5 = await ac.post("/api/v1/tasks/parse", headers=auth_headers, json={"raw_text": "Gym to do\nWork to do\nAssignment task\nTask for gym"})
+        assert res5.status_code == 200
+        c5_list = res5.json()
+        assert c5_list[0]["title"] == "Gym"
+        assert c5_list[1]["title"] == "Work"
+        assert c5_list[2]["title"] == "Assignment"
+        assert c5_list[3]["title"] == "Gym"
+
+        # 6. Explicit priority preserved
+        res6 = await ac.post("/api/v1/tasks/parse", headers=auth_headers, json={"raw_text": "Finish paper urgent, study DBMS high priority, walk dog low priority"})
+        assert res6.status_code == 200
+        c6_list = res6.json()
+        assert c6_list[0]["priority"] == "urgent"
+        assert c6_list[0]["field_provenance"]["priority"]["source"] == "explicit"
+        assert c6_list[1]["priority"] == "high"
+        assert c6_list[1]["field_provenance"]["priority"]["source"] == "explicit"
+        assert c6_list[2]["priority"] == "low"
+        assert c6_list[2]["field_provenance"]["priority"]["source"] == "explicit"
+
+

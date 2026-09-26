@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../components/ai_economy_sheets.dart';
+import '../components/companion/companion_graphic.dart';
+import '../components/companion/flow_companion_animation_controller.dart';
 import '../engines/scheduling_engine.dart';
 import '../models/schedule_item.dart';
 import '../models/task_item.dart';
 import '../providers/app_state_provider.dart';
+import '../providers/flow_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/ai_plan_service.dart';
 import '../services/task_parse_service.dart';
@@ -13,17 +16,19 @@ import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
-import 'parsed_plan_confirm_sheet.dart';
 
-/// Bottom sheet for brain-dump task input and plan preview.
+enum _BrainDumpViewMode { input, preview, edit }
+
+/// Bottom sheet for brain-dump task input, structured plan preview, and task editing.
 ///
 /// Local-First Pipeline:
-/// 1. Natural user text entry (no voice / microphone in V1).
+/// 1. Natural user text entry (no microphone in V1).
 /// 2. If clear and unambiguous, immediately parses locally via deterministic rules (0 AI credits, 0 latency).
 /// 3. If genuinely ambiguous or complex, attempts Gemini task structuring.
 /// 4. If Gemini fails (offline, timeout, API limit), seamlessly falls back to local parser without blocking.
 /// 5. Flowstate deterministic scheduler builds the plan.
-/// 6. Shows Plan Preview with pinned [ Add & Schedule ] action.
+/// 6. Shows Plan Preview with Noya companion header and pinned [ Add & Schedule ] action.
+/// 7. Editing allows fine-tuning structured candidates without losing data or returning to raw input.
 void showBrainDumpSheet(BuildContext context) {
   showModalBottomSheet(
     context: context,
@@ -46,13 +51,24 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
   final _ctrl = TextEditingController();
   bool _isValid = false;
   bool _isLoading = false;
+  bool _isSubmitting = false;
   String? _errorMessage;
   String? _fallbackNotice;
   String? _planSource;
 
-  bool _showPreview = false;
+  _BrainDumpViewMode _viewMode = _BrainDumpViewMode.input;
   List<TaskItem> _planCandidates = [];
   List<ScheduleItem> _scheduleItems = [];
+
+  // Edit State
+  int _editingIndex = 0;
+  final _editTitleCtrl = TextEditingController();
+  TaskType _editType = TaskType.deepWork;
+  int _editDuration = 45;
+  TaskPriority _editPriority = TaskPriority.medium;
+  String _editPrioritySource = 'unspecified';
+  String _editDeadline = 'Today';
+  String? _editFixedTime;
 
   @override
   void initState() {
@@ -66,6 +82,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
   @override
   void dispose() {
     _ctrl.dispose();
+    _editTitleCtrl.dispose();
     super.dispose();
   }
 
@@ -151,7 +168,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         _planCandidates = candidates;
         _scheduleItems = schedule;
         _planSource = 'Enhanced with AI';
-        _showPreview = true;
+        _viewMode = _BrainDumpViewMode.preview;
         _isLoading = false;
       });
       FlowHaptics.selection();
@@ -191,35 +208,153 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         _scheduleItems = schedule;
         _planSource = source;
         _fallbackNotice = notice;
-        _showPreview = true;
+        _viewMode = _BrainDumpViewMode.preview;
         _isLoading = false;
       });
       FlowHaptics.selection();
     }
   }
 
-  void _addAndSchedule() {
+  void _openEditMode([int index = 0]) {
+    FlowHaptics.selection();
+    if (_planCandidates.isEmpty) return;
+    final idx = index.clamp(0, _planCandidates.length - 1);
+    final task = _planCandidates[idx];
+
+    setState(() {
+      _editingIndex = idx;
+      _editTitleCtrl.text = task.title;
+      _editType = task.taskType;
+      _editDuration = task.durationMinutes;
+      _editPriority = task.priority;
+      _editPrioritySource = task.prioritySource ?? (task.isPriorityExplicit ? 'explicit' : 'unspecified');
+      _editDeadline = task.deadline;
+      _editFixedTime = task.scheduledTime;
+      _viewMode = _BrainDumpViewMode.edit;
+    });
+  }
+
+  void _selectTaskToEdit(int idx) {
+    if (idx < 0 || idx >= _planCandidates.length) return;
+    FlowHaptics.selection();
+    _syncCurrentEditToCandidate();
+    final task = _planCandidates[idx];
+    setState(() {
+      _editingIndex = idx;
+      _editTitleCtrl.text = task.title;
+      _editType = task.taskType;
+      _editDuration = task.durationMinutes;
+      _editPriority = task.priority;
+      _editPrioritySource = task.prioritySource ?? (task.isPriorityExplicit ? 'explicit' : 'unspecified');
+      _editDeadline = task.deadline;
+      _editFixedTime = task.scheduledTime;
+    });
+  }
+
+  void _syncCurrentEditToCandidate() {
+    if (_editingIndex < 0 || _editingIndex >= _planCandidates.length) return;
+    final task = _planCandidates[_editingIndex];
+    final title = _editTitleCtrl.text.trim().isNotEmpty ? _editTitleCtrl.text.trim() : task.title;
+    final cleanAmbiguities = List<String>.from(task.ambiguities);
+    if (_editPrioritySource == 'explicit') {
+      cleanAmbiguities.remove('priority_unspecified');
+      cleanAmbiguities.remove('inferred_priority');
+    }
+
+    _planCandidates[_editingIndex] = task.copyWith(
+      title: title,
+      taskType: _editType,
+      durationMinutes: _editDuration,
+      priority: _editPriority,
+      prioritySource: _editPrioritySource,
+      deadline: _editDeadline,
+      scheduledTime: _editFixedTime,
+      ambiguities: cleanAmbiguities,
+    );
+  }
+
+  void _saveEdit() {
     FlowHaptics.success();
+    _syncCurrentEditToCandidate();
+
     final provider = Provider.of<AppStateProvider>(context, listen: false);
-    provider.confirmCandidates(_planCandidates);
+    final schedule = const SchedulingEngine().generateOptimizedSchedule(
+      tasks: _planCandidates,
+      readiness: provider.readiness,
+    );
+
+    setState(() {
+      _scheduleItems = schedule;
+      _viewMode = _BrainDumpViewMode.preview;
+    });
+  }
+
+  void _cancelEdit() {
+    FlowHaptics.lightTap();
+    setState(() {
+      _viewMode = _BrainDumpViewMode.preview;
+    });
+  }
+
+  Future<void> _addAndSchedule() async {
+    if (_isSubmitting || _planCandidates.isEmpty) return;
+    setState(() => _isSubmitting = true);
+    FlowHaptics.success();
+
+    final provider = Provider.of<AppStateProvider>(context, listen: false);
+
+    final finalizedTasks = _planCandidates.map((task) {
+      ScheduleItem? sched;
+      try {
+        sched = _scheduleItems.firstWhere((s) => s.id == 'sched-${task.id}' || s.title == task.title);
+      } catch (_) {}
+
+      final prio = (task.prioritySource == 'unspecified' || task.ambiguities.contains('priority_unspecified'))
+          ? TaskPriority.medium
+          : task.priority;
+      final cleanAmbiguities = List<String>.from(task.ambiguities)
+        ..remove('priority_unspecified')
+        ..remove('inferred_priority')
+        ..remove('needs_confirmation');
+
+      DateTime? start = task.scheduledStart;
+      String? timeStr = task.scheduledTime;
+      if (start == null && sched != null) {
+        try {
+          final parts = sched.time.split(':');
+          if (parts.length >= 2) {
+            int hour = int.parse(parts[0]);
+            final minute = int.parse(parts[1]);
+            if (sched.period.toUpperCase() == 'PM' && hour < 12) hour += 12;
+            if (sched.period.toUpperCase() == 'AM' && hour == 12) hour = 0;
+            final now = DateTime.now();
+            start = DateTime(now.year, now.month, now.day, hour, minute);
+          }
+        } catch (_) {}
+        timeStr = '${sched.time} ${sched.period}';
+      }
+
+      return task.copyWith(
+        priority: prio,
+        scheduledStart: start,
+        scheduledTime: timeStr,
+        ambiguities: cleanAmbiguities,
+      );
+    }).toList();
+
+    provider.confirmCandidates(finalizedTasks);
+    if (!mounted) return;
     Navigator.of(context).pop();
 
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(
-        '${_planCandidates.length} task${_planCandidates.length == 1 ? '' : 's'} added to your day',
+        '${finalizedTasks.length} task${finalizedTasks.length == 1 ? '' : 's'} added to your day',
         style: FlowTypography.bodySmall(color: FlowColors.textPrimary),
       ),
       backgroundColor: FlowColors.darkCardElevated,
       duration: const Duration(seconds: 2),
       behavior: SnackBarBehavior.floating,
     ));
-  }
-
-  void _editPlan() {
-    FlowHaptics.selection();
-    setState(() {
-      _showPreview = false;
-    });
   }
 
   @override
@@ -237,7 +372,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         ),
         child: Container(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.85,
+            maxHeight: MediaQuery.of(context).size.height * 0.88,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -253,13 +388,21 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
+
+              // Canonical Noya Companion Header (Always visible throughout all states)
+              _buildNoyaCompanionHeader(),
+              const SizedBox(height: 10),
 
               // Scrollable Content Area
               Flexible(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: _showPreview ? _buildPlanPreviewContent(accent) : _buildInputContent(),
+                  child: switch (_viewMode) {
+                    _BrainDumpViewMode.input => _buildInputContent(),
+                    _BrainDumpViewMode.preview => _buildPlanPreviewContent(accent),
+                    _BrainDumpViewMode.edit => _buildEditContent(accent),
+                  },
                 ),
               ),
 
@@ -268,6 +411,71 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildNoyaCompanionHeader() {
+    FlowProvider? flowProvider;
+    try {
+      flowProvider = Provider.of<FlowProvider>(context, listen: true);
+    } catch (_) {}
+
+    final companion = flowProvider?.companion;
+    final species = companion?.species ?? 'fox';
+    final name = companion?.name ?? 'Noya';
+
+    String noyaMessage;
+    if (_isLoading) {
+      noyaMessage = '$name is structuring your plan...';
+    } else if (_viewMode == _BrainDumpViewMode.preview) {
+      noyaMessage = '$name arranged your focus flow.';
+    } else if (_viewMode == _BrainDumpViewMode.edit) {
+      noyaMessage = 'Fine-tune with $name.';
+    } else {
+      noyaMessage = '$name is ready to organize your day.';
+    }
+
+    return Container(
+      key: const Key('noya_companion_header'),
+      margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: FlowColors.darkCardElevated,
+        borderRadius: FlowRadii.cardRadius,
+        border: Border.all(color: FlowColors.darkBorder),
+      ),
+      child: Row(
+        children: [
+          CompanionGraphic(
+            species: species,
+            size: 26,
+            state: _isLoading ? CompanionAnimState.focusing : CompanionAnimState.idle,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  name,
+                  style: FlowTypography.labelMedium().copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: FlowColors.textPrimary,
+                  ),
+                ),
+                Text(
+                  noyaMessage,
+                  style: FlowTypography.bodySmall(color: FlowColors.textSecondary).copyWith(
+                    fontSize: 11,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -287,7 +495,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         ),
         const SizedBox(height: 16),
 
-        // Text input container (Microphone completely removed for V1)
+        // Text input container
         Container(
           decoration: BoxDecoration(
             color: FlowColors.darkCard,
@@ -403,9 +611,9 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
             final task = _planCandidates[i];
             ScheduleItem? sched;
             try {
-              sched = _scheduleItems.firstWhere((s) => s.id == 'sched-${task.id}');
+              sched = _scheduleItems.firstWhere((s) => s.id == 'sched-${task.id}' || s.title == task.title);
             } catch (_) {}
-            return _buildTaskPreviewCard(task, sched, accent);
+            return _buildTaskPreviewCard(task, sched, accent, i);
           },
         ),
         const SizedBox(height: 12),
@@ -413,7 +621,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     );
   }
 
-  Widget _buildTaskPreviewCard(TaskItem task, ScheduleItem? sched, Color accent) {
+  Widget _buildTaskPreviewCard(TaskItem task, ScheduleItem? sched, Color accent, int index) {
     String? timeDisplay = task.scheduledTime;
     if (timeDisplay == null && sched != null) {
       final s = sched.time;
@@ -422,84 +630,383 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     }
 
     final isFixedTime = task.scheduledStart != null;
-    final isPriorityInferred = task.ambiguities.contains('inferred_priority');
+    final isExplicit = task.isPriorityExplicit;
+    final isInferred = task.isPriorityInferred;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: FlowColors.darkCard,
         borderRadius: FlowRadii.cardRadius,
-        border: Border.all(color: FlowColors.darkBorder),
+        border: Border.all(
+          color: isInferred ? FlowColors.warning.withValues(alpha: 0.35) : FlowColors.darkBorder,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (timeDisplay != null) ...[
+          // TASK (Title)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  task.title,
+                  style: FlowTypography.titleSmall().copyWith(
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.2,
+                    color: FlowColors.textPrimary,
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: () => _openEditMode(index),
+                child: Padding(
+                  padding: const EdgeInsets.all(4.0),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.edit_outlined, size: 14, color: FlowColors.textMuted),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Edit',
+                        style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+
+          // TYPE · DURATION
+          Text(
+            '${task.taskType.label} · ${task.durationMinutes} min',
+            style: FlowTypography.bodySmall(color: FlowColors.textSecondary).copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+
+          // PRIORITY
+          if (isExplicit)
+            Text(
+              '${_capitalize(task.priority.value)} priority',
+              style: FlowTypography.bodySmall(color: FlowColors.textSecondary),
+            )
+          else if (isInferred)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: isFixedTime
-                    ? FlowColors.accentCyan.withValues(alpha: 0.14)
-                    : FlowColors.darkCardElevated,
+                color: FlowColors.warning.withValues(alpha: 0.12),
                 borderRadius: FlowRadii.pillRadius,
-                border: Border.all(
-                  color: isFixedTime ? FlowColors.accentCyan.withValues(alpha: 0.25) : FlowColors.darkBorder,
+              ),
+              child: Text(
+                'Suggested priority: ${_capitalize(task.priority.value)}',
+                style: FlowTypography.bodySmall(color: FlowColors.warning).copyWith(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 11,
                 ),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.schedule_rounded,
-                    size: 12,
-                    color: isFixedTime ? FlowColors.accentCyan : FlowColors.textMuted,
-                  ),
-                  const SizedBox(width: 4),
-                  Flexible(
-                    child: Text(
-                      isFixedTime ? '$timeDisplay · Fixed time' : timeDisplay,
-                      style: FlowTypography.labelSmall(
-                        color: isFixedTime ? FlowColors.accentCyan : FlowColors.textSecondary,
-                      ).copyWith(fontWeight: FontWeight.w600, fontSize: 11),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
+            )
+          else
+            Text(
+              'Priority not specified',
+              style: FlowTypography.bodySmall(color: FlowColors.textMuted).copyWith(
+                fontStyle: FontStyle.italic,
               ),
             ),
-            const SizedBox(height: 6),
-          ],
-          Text(
-            task.title,
-            style: FlowTypography.bodyLarge().copyWith(fontWeight: FontWeight.w700),
+          const SizedBox(height: 4),
+
+          // TIME / DEADLINE
+          if (timeDisplay != null)
+            Text(
+              isFixedTime ? '$timeDisplay · Fixed time' : timeDisplay,
+              style: FlowTypography.bodySmall(
+                color: isFixedTime ? FlowColors.accentCyan : FlowColors.textSecondary,
+              ).copyWith(
+                fontWeight: isFixedTime ? FontWeight.w600 : FontWeight.normal,
+              ),
+            )
+          else if (task.deadline.isNotEmpty && task.deadline != 'Today')
+            Text(
+              task.deadline,
+              style: FlowTypography.bodySmall(color: FlowColors.textSecondary),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEditContent(Color accent) {
+    if (_planCandidates.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      key: const Key('structured_task_editor'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'EDIT GENERATED TASK',
+                style: FlowTypography.titleSmall().copyWith(
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              Text(
+                '${_editingIndex + 1} of ${_planCandidates.length}',
+                style: FlowTypography.labelSmall(color: FlowColors.textMuted),
+              ),
+            ],
           ),
+          const SizedBox(height: 12),
+
+          // Task Selector tabs if multiple tasks
+          if (_planCandidates.length > 1) ...[
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: List.generate(_planCandidates.length, (i) {
+                  final isSelected = i == _editingIndex;
+                  return GestureDetector(
+                    onTap: () => _selectTaskToEdit(i),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: isSelected ? accent.withValues(alpha: 0.15) : FlowColors.darkCard,
+                        borderRadius: FlowRadii.pillRadius,
+                        border: Border.all(
+                          color: isSelected ? accent : FlowColors.darkBorder,
+                        ),
+                      ),
+                      child: Text(
+                        _planCandidates[i].title,
+                        style: FlowTypography.labelSmall(
+                          color: isSelected ? accent : FlowColors.textSecondary,
+                        ).copyWith(fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500),
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          // Title
+          Text('TASK TITLE', style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(letterSpacing: 0.5)),
+          const SizedBox(height: 6),
+          Container(
+            decoration: BoxDecoration(
+              color: FlowColors.darkCard,
+              borderRadius: FlowRadii.cardRadius,
+              border: Border.all(color: FlowColors.darkBorder),
+            ),
+            child: TextField(
+              key: const Key('edit_task_title_field'),
+              controller: _editTitleCtrl,
+              style: FlowTypography.bodyMedium(),
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Type
+          Text('TASK TYPE', style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(letterSpacing: 0.5)),
           const SizedBox(height: 6),
           Wrap(
             spacing: 8,
-            runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
+            runSpacing: 6,
             children: [
-              Text(
-                '${task.category} · ${task.durationMinutes} min',
-                style: FlowTypography.bodySmall(color: FlowColors.textSecondary),
-              ),
-              Text('•', style: FlowTypography.bodySmall(color: FlowColors.textMuted)),
-              Text(
-                '${_capitalize(task.priority.value)} priority${isPriorityInferred ? ' (Inferred)' : ''}',
-                style: FlowTypography.bodySmall(
-                  color: isPriorityInferred ? FlowColors.warning : FlowColors.textSecondary,
-                ).copyWith(fontWeight: isPriorityInferred ? FontWeight.w600 : FontWeight.normal),
-              ),
-              if (task.deadline.isNotEmpty && task.deadline != 'Today') ...[
-                Text('•', style: FlowTypography.bodySmall(color: FlowColors.textMuted)),
-                Text(
-                  'Due ${task.deadline}',
-                  style: FlowTypography.bodySmall(color: FlowColors.textSecondary),
+              TaskType.deepWork,
+              TaskType.study,
+              TaskType.physical,
+              TaskType.admin,
+              TaskType.meeting,
+              TaskType.creative,
+            ].map((t) {
+              final isSel = _editType == t;
+              return GestureDetector(
+                key: Key('type_chip_${t.value}'),
+                onTap: () {
+                  FlowHaptics.selection();
+                  setState(() => _editType = t);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.darkCard,
+                    borderRadius: FlowRadii.pillRadius,
+                    border: Border.all(color: isSel ? accent : FlowColors.darkBorder),
+                  ),
+                  child: Text(
+                    t.label,
+                    style: FlowTypography.labelSmall(
+                      color: isSel ? accent : FlowColors.textSecondary,
+                    ).copyWith(fontWeight: isSel ? FontWeight.w700 : FontWeight.w500),
+                  ),
                 ),
-              ],
-            ],
+              );
+            }).toList(),
           ),
+          const SizedBox(height: 14),
+
+          // Estimated Duration
+          Text('ESTIMATED DURATION', style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(letterSpacing: 0.5)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [15, 30, 45, 60, 90, 120].map((m) {
+              final isSel = _editDuration == m;
+              return GestureDetector(
+                key: Key('duration_chip_$m'),
+                onTap: () {
+                  FlowHaptics.selection();
+                  setState(() => _editDuration = m);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.darkCard,
+                    borderRadius: FlowRadii.pillRadius,
+                    border: Border.all(color: isSel ? accent : FlowColors.darkBorder),
+                  ),
+                  child: Text(
+                    '$m min',
+                    style: FlowTypography.labelSmall(
+                      color: isSel ? accent : FlowColors.textSecondary,
+                    ).copyWith(fontWeight: isSel ? FontWeight.w700 : FontWeight.w500),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 14),
+
+          // Priority
+          Text('PRIORITY', style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(letterSpacing: 0.5)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              (label: 'Unspecified', prio: TaskPriority.medium, source: 'unspecified'),
+              (label: 'Low', prio: TaskPriority.low, source: 'explicit'),
+              (label: 'Medium', prio: TaskPriority.medium, source: 'explicit'),
+              (label: 'High', prio: TaskPriority.high, source: 'explicit'),
+              (label: 'Urgent', prio: TaskPriority.urgent, source: 'explicit'),
+            ].map((item) {
+              final isSel = item.source == 'unspecified'
+                  ? _editPrioritySource == 'unspecified'
+                  : (_editPriority == item.prio && _editPrioritySource == 'explicit');
+              return GestureDetector(
+                key: Key('priority_chip_${item.label.toLowerCase()}'),
+                onTap: () {
+                  FlowHaptics.selection();
+                  setState(() {
+                    _editPriority = item.prio;
+                    _editPrioritySource = item.source;
+                  });
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.darkCard,
+                    borderRadius: FlowRadii.pillRadius,
+                    border: Border.all(color: isSel ? accent : FlowColors.darkBorder),
+                  ),
+                  child: Text(
+                    item.label,
+                    style: FlowTypography.labelSmall(
+                      color: isSel ? accent : FlowColors.textSecondary,
+                    ).copyWith(fontWeight: isSel ? FontWeight.w700 : FontWeight.w500),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 14),
+
+          // Deadline
+          Text('DEADLINE', style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(letterSpacing: 0.5)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: ['Today', 'Tomorrow', 'Friday', 'Next week'].map((d) {
+              final isSel = _editDeadline == d;
+              return GestureDetector(
+                key: Key('deadline_chip_${d.toLowerCase()}'),
+                onTap: () {
+                  FlowHaptics.selection();
+                  setState(() => _editDeadline = d);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.darkCard,
+                    borderRadius: FlowRadii.pillRadius,
+                    border: Border.all(color: isSel ? accent : FlowColors.darkBorder),
+                  ),
+                  child: Text(
+                    d,
+                    style: FlowTypography.labelSmall(
+                      color: isSel ? accent : FlowColors.textSecondary,
+                    ).copyWith(fontWeight: isSel ? FontWeight.w700 : FontWeight.w500),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 14),
+
+          // Fixed Time
+          Text('FIXED TIME', style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(letterSpacing: 0.5)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [null, '9:00 AM', '2:00 PM', '5:00 PM', '6:00 PM'].map((t) {
+              final isSel = _editFixedTime == t;
+              return GestureDetector(
+                key: Key('time_chip_${t == null ? 'none' : t.replaceAll(' ', '_').replaceAll(':', '')}'),
+                onTap: () {
+                  FlowHaptics.selection();
+                  setState(() => _editFixedTime = t);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.darkCard,
+                    borderRadius: FlowRadii.pillRadius,
+                    border: Border.all(color: isSel ? accent : FlowColors.darkBorder),
+                  ),
+                  child: Text(
+                    t ?? 'No fixed time',
+                    style: FlowTypography.labelSmall(
+                      color: isSel ? accent : FlowColors.textSecondary,
+                    ).copyWith(fontWeight: isSel ? FontWeight.w700 : FontWeight.w500),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 20),
         ],
       ),
     );
@@ -515,77 +1022,128 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         border: Border(top: BorderSide(color: FlowColors.darkBorder, width: 0.8)),
       ),
       padding: EdgeInsets.fromLTRB(horizontalPad, 14, horizontalPad, 16),
-      child: _showPreview
-          ? Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    key: const Key('edit_button'),
-                    onPressed: _editPlan,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: FlowColors.textPrimary,
-                      side: const BorderSide(color: FlowColors.darkBorder),
-                      shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: Text(
-                      'Edit',
-                      style: FlowTypography.labelLarge(color: FlowColors.textPrimary)
-                          .copyWith(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: ElevatedButton(
-                    key: const Key('add_and_schedule_button'),
-                    onPressed: _addAndSchedule,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: accent,
-                      foregroundColor: FlowColors.textInverse,
-                      elevation: 0,
-                      shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: Text(
-                      'Add & Schedule',
-                      style: FlowTypography.labelLarge(color: FlowColors.textInverse)
-                          .copyWith(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ),
-              ],
-            )
-          : SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton(
-                key: const Key('brain_dump_build_button'),
-                onPressed: _isValid && !_isLoading ? _buildPlan : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _isValid ? accent : FlowColors.darkBorder,
-                  foregroundColor: _isValid ? FlowColors.textInverse : FlowColors.textMuted,
-                  elevation: 0,
-                  shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
-                ),
-                child: _isLoading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          color: FlowColors.textInverse,
-                          strokeWidth: 2,
-                        ),
-                      )
-                    : Text(
-                        'Build my day',
-                        style: FlowTypography.labelLarge(
-                          color: _isValid ? FlowColors.textInverse : FlowColors.textMuted,
-                        ).copyWith(fontWeight: FontWeight.w700),
-                      ),
+      child: switch (_viewMode) {
+        _BrainDumpViewMode.input => SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton(
+              key: const Key('brain_dump_build_button'),
+              onPressed: _isValid && !_isLoading ? _buildPlan : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _isValid ? accent : FlowColors.darkBorder,
+                foregroundColor: _isValid ? FlowColors.textInverse : FlowColors.textMuted,
+                elevation: 0,
+                shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
               ),
+              child: _isLoading
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        color: FlowColors.textInverse,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : Text(
+                      'Build my day',
+                      style: FlowTypography.labelLarge(
+                        color: _isValid ? FlowColors.textInverse : FlowColors.textMuted,
+                      ).copyWith(fontWeight: FontWeight.w700),
+                    ),
             ),
+          ),
+        _BrainDumpViewMode.preview => Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  key: const Key('edit_button'),
+                  onPressed: () => _openEditMode(0),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: FlowColors.textPrimary,
+                    side: const BorderSide(color: FlowColors.darkBorder),
+                    shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: Text(
+                    'Edit',
+                    style: FlowTypography.labelLarge(color: FlowColors.textPrimary)
+                        .copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton(
+                  key: const Key('add_and_schedule_button'),
+                  onPressed: _isSubmitting ? null : _addAndSchedule,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: accent,
+                    foregroundColor: FlowColors.textInverse,
+                    elevation: 0,
+                    shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: _isSubmitting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            color: FlowColors.textInverse,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : Text(
+                          'Add & Schedule',
+                          style: FlowTypography.labelLarge(color: FlowColors.textInverse)
+                              .copyWith(fontWeight: FontWeight.w700),
+                        ),
+                ),
+              ),
+            ],
+          ),
+        _BrainDumpViewMode.edit => Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  key: const Key('edit_cancel_button'),
+                  onPressed: _cancelEdit,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: FlowColors.textPrimary,
+                    side: const BorderSide(color: FlowColors.darkBorder),
+                    shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: Text(
+                    'Cancel',
+                    style: FlowTypography.labelLarge(color: FlowColors.textPrimary)
+                        .copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton(
+                  key: const Key('save_changes_button'),
+                  onPressed: _saveEdit,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: accent,
+                    foregroundColor: FlowColors.textInverse,
+                    elevation: 0,
+                    shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: Text(
+                    'Save changes',
+                    style: FlowTypography.labelLarge(color: FlowColors.textInverse)
+                        .copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ],
+          ),
+      },
     );
   }
 
