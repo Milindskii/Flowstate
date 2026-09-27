@@ -6,7 +6,7 @@ import 'package:flowstate/services/task_parse_service.dart';
 void main() {
   group('Master Repair Acceptance Tests', () {
     test('TEST 1: "I have gym work and assignments" produces 3 independent tasks', () {
-      final input = "I have gym work and assignments";
+      const input = "I have gym work and assignments";
       final parsed = TaskParseService.deterministicFallbackParse(input);
 
       expect(parsed.length, 3, reason: 'Must produce 3 independent tasks, not 1 combined task');
@@ -44,7 +44,7 @@ void main() {
     });
 
     test('TEST 2: "gym at 6, important assignment tomorrow, work for 90 minutes" parses accurately and independently', () {
-      final input = "gym at 6, important assignment tomorrow, work for 90 minutes";
+      const input = "gym at 6, important assignment tomorrow, work for 90 minutes";
       final parsed = TaskParseService.deterministicFallbackParse(input);
 
       expect(parsed.length, 3);
@@ -118,7 +118,7 @@ void main() {
     });
 
     test('Semantic preservation: "finish my Python assignment and submit it" remains ONE task', () {
-      final input = "finish my Python assignment and submit it";
+      const input = "finish my Python assignment and submit it";
       final parsed = TaskParseService.deterministicFallbackParse(input);
 
       expect(parsed.length, 1, reason: 'Transitive action with pronoun reference must remain a single task');

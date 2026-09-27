@@ -52,7 +52,7 @@ def test_master_repair_scenario_2_independence():
     Input: "gym at 6, important assignment tomorrow, work for 90 minutes"
     Expected:
     - Gym: fixed = 6 PM
-    - Important assignment: deadline = tomorrow, priority = high (explicit)
+    - Important assignment: target date = tomorrow, priority = high (explicit)
     - Work: duration = 90m
     - Each must be independent
     """
@@ -68,8 +68,10 @@ def test_master_repair_scenario_2_independence():
     # Gym has fixed start
     assert gym_task.scheduled_start is not None
 
-    # Assignment has deadline tomorrow and explicit priority
-    assert assign_task.deadline_at is not None
+    # "tomorrow" is a target date, not an invented deadline.
+    assert assign_task.deadline_at is None
+    assert assign_task.temporal is not None
+    assert assign_task.temporal.target_date is not None
     assert assign_task.priority in (TaskPriority.high, TaskPriority.urgent)
     assert assign_task.field_provenance["priority"].source == "explicit"
 

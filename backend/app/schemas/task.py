@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict, Field
 from ..models.task import TaskStatus, TaskType, TaskDifficulty, TaskPriority, TaskSource
 
@@ -20,11 +20,29 @@ class FieldProvenance(BaseModel):
     source: str = "default"  # "explicit", "inferred", "default"
     confidence: float = 1.0
 
+
+class TemporalConstraints(BaseModel):
+    """User-stated timing information kept separate from the selected schedule."""
+    fixed_start: Optional[datetime] = None
+    earliest_start: Optional[datetime] = None
+    latest_end: Optional[datetime] = None
+    preferred_start: Optional[datetime] = None
+    preferred_window_start: Optional[datetime] = None
+    preferred_window_end: Optional[datetime] = None
+    target_date: Optional[date] = None
+    relative_before: Optional[str] = None
+    relative_after: Optional[str] = None
+    flexibility: str = "flexible"  # fixed | constrained | preferred | flexible
+    confidence: float = 1.0
+    provenance: Dict[str, FieldProvenance] = Field(default_factory=dict)
+
+
 class TaskCandidateResponse(TaskCreate):
     confidence: float = 1.0
     missing_fields: List[str] = Field(default_factory=list)
     ambiguities: List[str] = Field(default_factory=list)
     field_provenance: dict[str, FieldProvenance] = Field(default_factory=dict)
+    temporal: Optional[TemporalConstraints] = None
     recommended_slot_start: Optional[datetime] = None
     recommended_slot_end: Optional[datetime] = None
     recommended_slot_display: Optional[str] = None

@@ -20,7 +20,7 @@ Future<bool> checkAndShowGeminiPrivacyDisclosure(BuildContext context) async {
   final result = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
-    backgroundColor: FlowColors.darkSurface,
+    backgroundColor: FlowColors.surface(context),
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
@@ -58,8 +58,8 @@ class _GeminiPrivacyDisclosureSheet extends StatelessWidget {
               child: Container(
                 width: 36,
                 height: 4,
-                decoration: const BoxDecoration(
-                  color: FlowColors.darkBorder,
+                decoration: BoxDecoration(
+                  color: FlowColors.border(context),
                   borderRadius: FlowRadii.pillRadius,
                 ),
               ),
@@ -79,7 +79,8 @@ class _GeminiPrivacyDisclosureSheet extends StatelessWidget {
                 Expanded(
                   child: Text(
                     'Privacy & AI Notice',
-                    style: FlowTypography.titleMedium().copyWith(fontWeight: FontWeight.w700),
+                    style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context))
+                        .copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
               ],
@@ -88,19 +89,19 @@ class _GeminiPrivacyDisclosureSheet extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: FlowColors.darkCard,
+                color: FlowColors.surfaceContainer(context),
                 borderRadius: FlowRadii.cardRadius,
-                border: Border.all(color: FlowColors.darkBorder),
+                border: Border.all(color: FlowColors.border(context)),
               ),
               child: Text(
                 'Flowstate uses Google Gemini to organize your task list.\nThe text you submit is sent to Google to process your request.',
-                style: FlowTypography.bodyMedium(color: FlowColors.textPrimary).copyWith(height: 1.5),
+                style: FlowTypography.bodyMedium(color: FlowColors.textPrimaryOf(context)).copyWith(height: 1.5),
               ),
             ),
             const SizedBox(height: 12),
             Text(
               'Only raw task notes, current date, and timezone are transmitted. Credentials, passwords, and private profile records are never sent.',
-              style: FlowTypography.bodySmall(color: FlowColors.textMuted),
+              style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)),
             ),
             const SizedBox(height: 20),
             Row(
@@ -109,12 +110,12 @@ class _GeminiPrivacyDisclosureSheet extends StatelessWidget {
                   child: OutlinedButton(
                     onPressed: () => Navigator.of(context).pop(false),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: FlowColors.textMuted,
-                      side: const BorderSide(color: FlowColors.darkBorder),
+                      foregroundColor: FlowColors.textMutedOf(context),
+                      side: BorderSide(color: FlowColors.border(context)),
                       shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                    child: Text('Not now', style: FlowTypography.labelLarge(color: FlowColors.textMuted)),
+                    child: Text('Cancel', style: FlowTypography.labelLarge(color: FlowColors.textMutedOf(context))),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -158,7 +159,7 @@ Future<bool> showShieldConfirmationSheet(
   final result = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
-    backgroundColor: FlowColors.darkSurface,
+    backgroundColor: FlowColors.surface(context),
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
@@ -197,8 +198,8 @@ class _ShieldConfirmationSheet extends StatelessWidget {
               child: Container(
                 width: 36,
                 height: 4,
-                decoration: const BoxDecoration(
-                  color: FlowColors.darkBorder,
+                decoration: BoxDecoration(
+                  color: FlowColors.border(context),
                   borderRadius: FlowRadii.pillRadius,
                 ),
               ),
@@ -218,7 +219,8 @@ class _ShieldConfirmationSheet extends StatelessWidget {
                 Expanded(
                   child: Text(
                     'Use a Shield?',
-                    style: FlowTypography.titleMedium().copyWith(fontWeight: FontWeight.w700),
+                    style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context))
+                        .copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
               ],
@@ -227,22 +229,22 @@ class _ShieldConfirmationSheet extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: FlowColors.darkCard,
+                color: FlowColors.surfaceContainer(context),
                 borderRadius: FlowRadii.cardRadius,
-                border: Border.all(color: FlowColors.darkBorder),
+                border: Border.all(color: FlowColors.border(context)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'You have $freeRemaining free AI plans remaining.',
-                    style: FlowTypography.bodyMedium(color: FlowColors.textPrimary)
+                    'You have $freeRemaining free AI plans remaining today.',
+                    style: FlowTypography.bodyMedium(color: FlowColors.textPrimaryOf(context))
                         .copyWith(fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Using a Shield will give you another AI planning session.\nShields can also protect your Flow streak.',
-                    style: FlowTypography.bodySmall(color: FlowColors.textSecondary).copyWith(height: 1.4),
+                    'Using a Shield unlocks this AI planning session to organize your brain dump.\nShields also protect your Flow streak if you ever miss a day.',
+                    style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(height: 1.4),
                   ),
                   const SizedBox(height: 10),
                   Row(
@@ -272,12 +274,12 @@ class _ShieldConfirmationSheet extends StatelessWidget {
                       Navigator.of(context).pop(false);
                     },
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: FlowColors.textMuted,
-                      side: const BorderSide(color: FlowColors.darkBorder),
+                      foregroundColor: FlowColors.textMutedOf(context),
+                      side: BorderSide(color: FlowColors.border(context)),
                       shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                    child: Text('Not now', style: FlowTypography.labelLarge(color: FlowColors.textMuted)),
+                    child: Text('Not now', style: FlowTypography.labelLarge(color: FlowColors.textMutedOf(context))),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -320,7 +322,7 @@ void showAIExhaustedSheet(
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
-    backgroundColor: FlowColors.darkSurface,
+    backgroundColor: FlowColors.surface(context),
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
@@ -351,8 +353,8 @@ class _AIExhaustedSheet extends StatelessWidget {
               child: Container(
                 width: 36,
                 height: 4,
-                decoration: const BoxDecoration(
-                  color: FlowColors.darkBorder,
+                decoration: BoxDecoration(
+                  color: FlowColors.border(context),
                   borderRadius: FlowRadii.pillRadius,
                 ),
               ),
@@ -372,15 +374,16 @@ class _AIExhaustedSheet extends StatelessWidget {
                 Expanded(
                   child: Text(
                     "You've used your free AI plan.",
-                    style: FlowTypography.titleMedium().copyWith(fontWeight: FontWeight.w700),
+                    style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context))
+                        .copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 12),
             Text(
-              'Use a Shield for another plan or upgrade to Pro.',
-              style: FlowTypography.bodyMedium(color: FlowColors.textSecondary),
+              'Use a Shield for another plan or upgrade to Pro for unlimited AI planning.',
+              style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
             ),
             const SizedBox(height: 20),
             Row(
@@ -389,12 +392,12 @@ class _AIExhaustedSheet extends StatelessWidget {
                   child: OutlinedButton(
                     onPressed: () => Navigator.of(context).pop(),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: FlowColors.textMuted,
-                      side: const BorderSide(color: FlowColors.darkBorder),
+                      foregroundColor: FlowColors.textMutedOf(context),
+                      side: BorderSide(color: FlowColors.border(context)),
                       shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                    child: Text('Close', style: FlowTypography.labelLarge(color: FlowColors.textMuted)),
+                    child: Text('Close', style: FlowTypography.labelLarge(color: FlowColors.textMutedOf(context))),
                   ),
                 ),
                 const SizedBox(width: 12),

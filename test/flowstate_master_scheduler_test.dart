@@ -3,12 +3,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:flowstate/engines/scheduling_engine.dart';
 import 'package:flowstate/models/task_item.dart';
-import 'package:flowstate/models/readiness_model.dart';
 import 'package:flowstate/providers/app_state_provider.dart';
 import 'package:flowstate/providers/flow_provider.dart';
 import 'package:flowstate/providers/theme_provider.dart';
 import 'package:flowstate/screens/brain_dump_sheet.dart';
 import 'package:flowstate/services/api_service.dart';
+import 'package:flowstate/services/auth_service.dart';
 import 'package:flowstate/services/task_parse_service.dart';
 
 class _MockTestApiService extends ApiService {
@@ -36,7 +36,17 @@ Widget _buildTestApp({required Widget child}) {
   final mockApi = _MockTestApiService();
   return MultiProvider(
     providers: [
-      ChangeNotifierProvider<AppStateProvider>(create: (_) => AppStateProvider(customApi: mockApi)),
+      ChangeNotifierProvider<AppStateProvider>(
+        create: (_) => AppStateProvider(
+          customApi: mockApi,
+          initialUser: const AuthUser(
+            id: 'user-1',
+            email: 'test@flowstate.local',
+            name: 'Tester',
+            onboardingCompleted: true,
+          ),
+        ),
+      ),
       ChangeNotifierProvider<FlowProvider>(create: (_) => FlowProvider(api: mockApi)),
       ChangeNotifierProvider<ThemeProvider>(create: (_) => ThemeProvider()),
     ],
@@ -81,8 +91,8 @@ void main() {
     test('4. Current time = 18:22, important work, no deadline -> Recommended: Tomorrow morning', () {
       // 18:22 today
       final nowLocal = DateTime(2026, 9, 26, 18, 22);
-      final scheduler = const SchedulingEngine();
-      final task = TaskItem(
+      const scheduler = SchedulingEngine();
+      const task = TaskItem(
         id: 't1',
         title: 'Important work',
         durationMinutes: 90,
@@ -105,7 +115,7 @@ void main() {
     test('5. Imminent deadline overrides preferred peak window -> Recommended: Today', () {
       final nowLocal = DateTime(2026, 9, 26, 18, 22);
       final tomorrowDeadline = DateTime(2026, 9, 27, 8, 0); // 8:00 AM tomorrow
-      final scheduler = const SchedulingEngine();
+      const scheduler = SchedulingEngine();
       final task = TaskItem(
         id: 't2',
         title: 'Urgent client work',

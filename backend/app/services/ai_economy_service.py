@@ -1,5 +1,6 @@
 import time
 import json
+import threading
 from typing import Optional, Dict, Tuple, Any, List
 from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException, status
@@ -17,6 +18,8 @@ from ..schemas.ai import (
 # Technical Rate Limiting: Max 5 requests per hour per user
 MAX_AI_REQUESTS_PER_HOUR = 5
 _AI_RATE_LIMIT_CACHE: Dict[str, list] = {}
+_AI_REQUEST_LOCKS: Dict[str, threading.Lock] = {}
+_AI_REQUEST_LOCKS_GUARD = threading.Lock()
 
 class AIEconomyService:
     """
@@ -27,6 +30,12 @@ class AIEconomyService:
     4. Idempotency guarantees to prevent double-charging
     5. Pro subscription entitlement verification (never trusting client flags)
     """
+
+    @classmethod
+    def get_user_request_lock(cls, user_id: str) -> threading.Lock:
+        """Return a per-user lock so double taps cannot race the usage finalization."""
+        with _AI_REQUEST_LOCKS_GUARD:
+            return _AI_REQUEST_LOCKS.setdefault(user_id, threading.Lock())
 
     @classmethod
     def check_technical_rate_limit(cls, user_id: str) -> None:
@@ -125,6 +134,21 @@ class AIEconomyService:
                 return json.loads(cached.response_json)
             except Exception:
                 return None
+        # The primary key is global. A collision from another user must never
+        # expose their cached plan or be allowed to overwrite it.
+        foreign_key = (
+            db.query(AIPlanningRequestCache)
+            .filter(
+                AIPlanningRequestCache.idempotency_key == idempotency_key,
+                AIPlanningRequestCache.user_id != user_id,
+            )
+            .first()
+        )
+        if foreign_key:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Idempotency key is already associated with another account.",
+            )
         return None
 
     @classmethod
@@ -203,7 +227,10 @@ class AIEconomyService:
         if idempotency_key:
             cache_entry = (
                 db.query(AIPlanningRequestCache)
-                .filter(AIPlanningRequestCache.idempotency_key == idempotency_key)
+                .filter(
+                    AIPlanningRequestCache.idempotency_key == idempotency_key,
+                    AIPlanningRequestCache.user_id == user_id,
+                )
                 .first()
             )
             if not cache_entry:
@@ -211,13 +238,15 @@ class AIEconomyService:
                     idempotency_key=idempotency_key,
                     user_id=user_id,
                     status="completed",
-                    response_json=json.dumps(response_payload),
+                    # Candidate contracts contain timezone-aware datetimes. Cache their
+                    # JSON API representation, never Python objects, for safe retries.
+                    response_json=json.dumps(response_payload, default=lambda value: value.isoformat()),
                     shield_used=shield_used,
                 )
                 db.add(cache_entry)
             else:
                 cache_entry.status = "completed"
-                cache_entry.response_json = json.dumps(response_payload)
+                cache_entry.response_json = json.dumps(response_payload, default=lambda value: value.isoformat())
                 cache_entry.shield_used = shield_used
 
         db.commit()
@@ -309,26 +338,12 @@ class AIEconomyService:
                 detail="Payment verification failed with Google Play.",
             )
 
-        usage.is_pro = True
-        usage.subscription_tier = product_id
-        usage.subscription_status = "active"
-        usage.google_play_order_id = order_id or f"GPA.{purchase_token[:12]}"
-        usage.subscription_expires_at = datetime.now(timezone.utc) + timedelta(
-            days=365 if "yearly" in product_id else 30
+        # This repository does not yet contain a Google Play Developer API
+        # verifier. Never turn an opaque client token into an entitlement.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google Play purchase verification is not configured. No entitlement was granted.",
         )
-
-        # Keep FlowProfile.is_pro in sync
-        profile = db.query(FlowProfile).filter(FlowProfile.user_id == user_id).first()
-        if profile:
-            profile.is_pro = True
-
-        db.commit()
-        return {
-            "success": True,
-            "is_pro": True,
-            "tier": usage.subscription_tier,
-            "status": "active",
-        }
 
     @classmethod
     def verify_streak_recovery(
@@ -348,25 +363,7 @@ class AIEconomyService:
                 detail="Invalid purchase token. Google Play streak recovery purchase could not be verified.",
             )
 
-        profile = db.query(FlowProfile).filter(FlowProfile.user_id == user_id).first()
-        if not profile:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User profile not found.",
-            )
-
-        # Preserve / restore streak chain
-        user_tz = timezone.utc
-        today_str = datetime.now(user_tz).strftime("%Y-%m-%d")
-        yesterday_str = (datetime.now(user_tz) - timedelta(days=1)).strftime("%Y-%m-%d")
-
-        profile.last_qualifying_date = yesterday_str
-        if profile.current_streak == 0:
-            profile.current_streak = max(1, profile.longest_streak)
-
-        db.commit()
-        return {
-            "success": True,
-            "current_streak": profile.current_streak,
-            "message": "Streak successfully recovered via Google Play purchase.",
-        }
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google Play streak recovery verification is not configured. No recovery was granted.",
+        )

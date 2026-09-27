@@ -151,7 +151,7 @@ class _LegalHubScreenState extends State<LegalHubScreen> {
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
-                value: selectedType,
+                initialValue: selectedType,
                 dropdownColor: FlowColors.surface(context),
                 decoration: const InputDecoration(labelText: 'Request Type', border: OutlineInputBorder()),
                 items: const [

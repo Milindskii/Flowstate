@@ -75,6 +75,23 @@ class SchedulingEngine {
     }
 
     for (final task in candidates) {
+      // Objective 6: Faithfully preserve backend scheduler's final slot & explanation if provided
+      final hasBackendSchedule = (task.recommendedSlotDisplay != null &&
+              task.recommendedSlotDisplay!.isNotEmpty) &&
+          (task.schedulingExplanation != null &&
+              task.schedulingExplanation!.isNotEmpty);
+
+      if (hasBackendSchedule) {
+        if (task.scheduledStart != null) {
+          final s = task.scheduledStart!;
+          final dur = task.durationMinutes > 0 ? task.durationMinutes : 45;
+          final e = task.scheduledEnd ?? s.add(Duration(minutes: dur));
+          busy.add(MapEntry(s, e.add(const Duration(minutes: 10))));
+        }
+        enriched.add(task);
+        continue;
+      }
+
       final eval = evaluateCandidateSlot(
         task,
         existingBusy: busy,

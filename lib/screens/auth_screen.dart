@@ -19,7 +19,14 @@ import 'legal/refund_policy_screen.dart';
 /// Screen 2: Login & Sign Up
 /// Calm, alive, tactile entry screen with soft ambient breathing motion.
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key});
+  final bool returnToBuildMyDay;
+  final VoidCallback? onAuthenticated;
+
+  const AuthScreen({
+    super.key,
+    this.returnToBuildMyDay = false,
+    this.onAuthenticated,
+  });
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -48,6 +55,23 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
+  void _finishAuthentication(AppStateProvider appState) {
+    if (widget.returnToBuildMyDay) {
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      } else {
+        _navigateToDashboard();
+      }
+      widget.onAuthenticated?.call();
+      return;
+    }
+    if (appState.onboardingComplete) {
+      _navigateToDashboard();
+    } else {
+      _navigateToOnboarding();
+    }
+  }
+
   void _showEmailSheet() {
     FlowHaptics.lightTap();
     final emailController = TextEditingController();
@@ -60,7 +84,7 @@ class _AuthScreenState extends State<AuthScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: FlowColors.surface(context),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(FlowRadii.cardLarge)),
       ),
@@ -83,7 +107,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       width: 36,
                       height: 4,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFCBD5E1),
+                        color: FlowColors.border(context),
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -98,7 +122,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         children: [
                           Text(
                             sheetIsLogin ? 'Welcome back' : 'Create your account',
-                            style: FlowTypography.headlineMedium(color: const Color(0xFF0F172A)).copyWith(
+                            style: FlowTypography.headlineMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
                               fontWeight: FontWeight.w800,
                             ),
                           ),
@@ -107,7 +131,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             sheetIsLogin
                                 ? 'Sign in to access your rhythm and daily plan.'
                                 : 'Enter your email to sync your rhythm preferences.',
-                            style: FlowTypography.bodyMedium(color: const Color(0xFF64748B)),
+                            style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
                           ),
                         ],
                       ),
@@ -117,19 +141,20 @@ class _AuthScreenState extends State<AuthScreen> {
                   TextField(
                     controller: emailController,
                     keyboardType: TextInputType.emailAddress,
-                    style: FlowTypography.bodyLarge(color: const Color(0xFF0F172A)),
+                    style: FlowTypography.bodyLarge(color: FlowColors.textPrimaryOf(context)),
                     decoration: InputDecoration(
                       hintText: 'name@domain.com',
-                      prefixIcon: const Icon(Icons.email_outlined, color: Color(0xFF94A3B8)),
+                      hintStyle: FlowTypography.bodyMedium(color: FlowColors.textMutedOf(context)),
+                      prefixIcon: Icon(Icons.email_outlined, color: FlowColors.textMutedOf(context)),
                       filled: true,
-                      fillColor: const Color(0xFFF8FAFC),
+                      fillColor: FlowColors.surfaceContainer(context),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                        borderSide: BorderSide(color: FlowColors.border(context)),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                        borderSide: BorderSide(color: FlowColors.border(context)),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
@@ -141,19 +166,20 @@ class _AuthScreenState extends State<AuthScreen> {
                   TextField(
                     controller: passwordController,
                     obscureText: true,
-                    style: FlowTypography.bodyLarge(color: const Color(0xFF0F172A)),
+                    style: FlowTypography.bodyLarge(color: FlowColors.textPrimaryOf(context)),
                     decoration: InputDecoration(
                       hintText: 'Password',
-                      prefixIcon: const Icon(Icons.lock_outline_rounded, color: Color(0xFF94A3B8)),
+                      hintStyle: FlowTypography.bodyMedium(color: FlowColors.textMutedOf(context)),
+                      prefixIcon: Icon(Icons.lock_outline_rounded, color: FlowColors.textMutedOf(context)),
                       filled: true,
-                      fillColor: const Color(0xFFF8FAFC),
+                      fillColor: FlowColors.surfaceContainer(context),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                        borderSide: BorderSide(color: FlowColors.border(context)),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                        borderSide: BorderSide(color: FlowColors.border(context)),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
@@ -294,11 +320,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                 final user = await appState.authService.loginWithEmail(email, password);
                                 await appState.onUserAuthenticated(user);
                                 if (ctx.mounted) Navigator.pop(ctx);
-                                if (appState.onboardingComplete) {
-                                  _navigateToDashboard();
-                                } else {
-                                  _navigateToOnboarding();
-                                }
+                                _finishAuthentication(appState);
                               } else {
                                 final user = await appState.authService.signUpWithEmail(email, password);
                                 await appState.onUserAuthenticated(user);
@@ -310,7 +332,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                   });
                                 } catch (_) {}
                                 if (ctx.mounted) Navigator.pop(ctx);
-                                _navigateToOnboarding();
+                                _finishAuthentication(appState);
                               }
                             } catch (e) {
                               String msg = e.toString();
@@ -380,78 +402,9 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  void _handleGoogleSignIn() {
+  void _handleGoogleSignIn() async {
     FlowHaptics.lightTap();
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
-          children: [
-            Icon(Icons.g_mobiledata_rounded, color: FlowColors.cyan, size: 30),
-            SizedBox(width: 8),
-            Text('Google Sign-In', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-          ],
-        ),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Google OAuth must be enabled in your Supabase project (Authentication > Providers > Google).\n\n'
-              'If Google OAuth is not enabled, Supabase will return error 400: "Unsupported provider".',
-              style: TextStyle(color: Color(0xFF475569), fontSize: 13.5, height: 1.45),
-            ),
-            SizedBox(height: 12),
-            Text(
-              'To test the full app immediately without any setup, choose "Instant Demo".',
-              style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600, fontSize: 13),
-            ),
-          ],
-        ),
-        actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        actions: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              TextButton.icon(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _enterGuestMode(startWithOnboarding: true);
-                },
-                icon: const Icon(Icons.bolt_rounded, size: 18, color: FlowColors.cyan),
-                label: const Text('Instant Demo', style: TextStyle(fontWeight: FontWeight.w700, color: FlowColors.cyanDark)),
-              ),
-              Row(
-                children: [
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _showEmailSheet();
-                    },
-                    child: const Text('Use Email', style: TextStyle(color: Color(0xFF475569))),
-                  ),
-                  const SizedBox(width: 6),
-                  ElevatedButton(
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      await _performGoogleSignIn();
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0F172A),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    ),
-                    child: const Text('Proceed'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
+    await _performGoogleSignIn();
   }
 
   Future<void> _performGoogleSignIn() async {
@@ -459,18 +412,18 @@ class _AuthScreenState extends State<AuthScreen> {
       final appState = Provider.of<AppStateProvider>(context, listen: false);
       final user = await appState.authService.loginWithGoogle();
       await appState.onUserAuthenticated(user);
-      if (appState.onboardingComplete) {
-        _navigateToDashboard();
-      } else {
-        _navigateToOnboarding();
+      if (mounted) {
+        _finishAuthentication(appState);
       }
     } catch (e) {
       if (mounted) {
+        String err = e.toString();
+        if (err.contains('Exception:')) {
+          err = err.replaceAll('Exception:', '').trim();
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              'Google Sign-In notice: $e',
-            ),
+            content: Text('Google Sign-In: $err'),
             backgroundColor: const Color(0xFFB91C1C),
             duration: const Duration(seconds: 4),
           ),
@@ -484,7 +437,7 @@ class _AuthScreenState extends State<AuthScreen> {
     final screenHeight = MediaQuery.of(context).size.height;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: FlowColors.background(context),
       body: FlowAmbientBackground(
         visualState: OnboardingVisualState.neutral,
         child: SafeArea(
@@ -511,7 +464,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             const SizedBox(height: 18),
                             Text(
                               'FLOWSTATE',
-                              style: FlowTypography.titleSmall(color: const Color(0xFF0F172A)).copyWith(
+                              style: FlowTypography.titleSmall(color: FlowColors.textPrimaryOf(context)).copyWith(
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: 3.0,
                               ),
@@ -530,7 +483,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       translateY: 10.0,
                       child: Text(
                         'Plan around your energy.',
-                        style: FlowTypography.displayMedium(color: const Color(0xFF0F172A)).copyWith(
+                        style: FlowTypography.displayMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
                           fontWeight: FontWeight.w800,
                           letterSpacing: -0.5,
                           height: 1.15,
@@ -547,7 +500,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       translateY: 10.0,
                       child: Text(
                         'Flowstate learns how you work best and helps you put the right task at the right time.',
-                        style: FlowTypography.bodyLarge(color: const Color(0xFF475569)).copyWith(
+                        style: FlowTypography.bodyLarge(color: FlowColors.textSecondaryOf(context)).copyWith(
                           height: 1.45,
                         ),
                       ),
@@ -576,7 +529,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       translateY: 10.0,
                       child: SecondaryButton(
                         label: 'Continue with Google',
-                        icon: const Icon(Icons.g_mobiledata_rounded, size: 28, color: Color(0xFF0F172A)),
+                        icon: Icon(Icons.g_mobiledata_rounded, size: 28, color: FlowColors.textPrimaryOf(context)),
                         onPressed: _handleGoogleSignIn,
                       ),
                     ),
@@ -591,9 +544,9 @@ class _AuthScreenState extends State<AuthScreen> {
                       child: OutlinedButton.icon(
                         onPressed: _enterGuestMode,
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF0F172A),
-                          side: const BorderSide(color: Color(0xFFCBD5E1), width: 1.2),
-                          backgroundColor: Colors.white.withValues(alpha: 0.85),
+                          foregroundColor: FlowColors.textPrimaryOf(context),
+                          side: BorderSide(color: FlowColors.border(context), width: 1.2),
+                          backgroundColor: FlowColors.surface(context).withValues(alpha: 0.85),
                           padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                           elevation: 0,

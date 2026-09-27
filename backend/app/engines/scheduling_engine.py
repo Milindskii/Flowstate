@@ -456,6 +456,52 @@ class SchedulingEngine:
         if deadline and getattr(deadline, "tzinfo", None) is None:
             deadline = deadline.replace(tzinfo=tz)
 
+        # Candidates keep user language separate from Flowstate's final selected slot.
+        # This supports a strict hard-constraints-first pass before cognitive scoring.
+        temporal = getattr(task, "temporal", None)
+        target_date = getattr(temporal, "target_date", None) if temporal else None
+        earliest_start = getattr(temporal, "earliest_start", None) if temporal else None
+        latest_end = getattr(temporal, "latest_end", None) if temporal else None
+        relative_before = getattr(temporal, "relative_before", None) if temporal else None
+        preferred_start = getattr(temporal, "preferred_start", None) if temporal else None
+        preferred_window_start = getattr(temporal, "preferred_window_start", None) if temporal else None
+        preferred_window_end = getattr(temporal, "preferred_window_end", None) if temporal else None
+
+        def _aware(value: Optional[datetime]) -> Optional[datetime]:
+            if value is None:
+                return None
+            return value if value.tzinfo else value.replace(tzinfo=tz)
+
+        earliest_start = _aware(earliest_start)
+        latest_end = _aware(latest_end)
+        preferred_start = _aware(preferred_start)
+        preferred_window_start = _aware(preferred_window_start)
+        preferred_window_end = _aware(preferred_window_end)
+
+        # Explicit starts are immutable anchors. The planner may explain them but must not move them.
+        # EXCEPTION: A fixed_start in the past is invalid; fall through to candidate generation.
+        fixed_start = getattr(task, "scheduled_start", None) or getattr(temporal, "fixed_start", None) if temporal else getattr(task, "scheduled_start", None)
+        fixed_start = _aware(fixed_start)
+        if fixed_start:
+            # HARD INVARIANT: No newly scheduled task may be placed in the past.
+            if fixed_start < now_local:
+                # Past fixed time: do NOT honour it. Fall through to scoring
+                # so the scheduler finds the next best feasible future slot.
+                fixed_start = None
+            else:
+                fixed_end = fixed_start + timedelta(minutes=dur)
+                has_collision = any(fixed_start < b_end and fixed_end > b_start for b_start, b_end in existing_busy)
+                violates_deadline = bool(deadline and fixed_end > deadline)
+                if has_collision or violates_deadline:
+                    return None
+                return SlotScoreResult(
+                    slot=CandidateSlot(fixed_start, fixed_end, 0 if fixed_start.date() == now_local.date() else 1),
+                    score=1.0,
+                    primary_reason="explicit_time",
+                    secondary_reasons=["user_specified_time"],
+                    explanation=f"Scheduled at your requested time ({fixed_start.strftime('%I:%M %p').lstrip('0')}).",
+                )
+
         pri_str = str(getattr(task, "priority", "medium") or "medium").lower()
 
         candidate_slots: List[CandidateSlot] = []
@@ -472,7 +518,13 @@ class SchedulingEngine:
             cursor_today += timedelta(minutes=(15 - rem))
             cursor_today = cursor_today.replace(second=0, microsecond=0)
 
-        while cursor_today + timedelta(minutes=dur) <= today_bedtime:
+        # Sleep remains protected, but an imminent explicit deadline can use a
+        # small, explainable overrun rather than being made impossible outright.
+        today_latest_end = today_bedtime
+        if deadline and deadline > now_local and (deadline - now_local) <= timedelta(hours=14):
+            today_latest_end = today_bedtime + timedelta(minutes=90)
+
+        while cursor_today + timedelta(minutes=dur) <= today_latest_end:
             c_start = cursor_today
             c_end = cursor_today + timedelta(minutes=dur)
             c_h = c_start.hour + c_start.minute / 60.0
@@ -515,14 +567,33 @@ class SchedulingEngine:
             if deadline and slot.end_time > deadline:
                 continue
 
-            # 3. No past scheduling
+            # 3. User-stated temporal bounds. These are hard; preferences are scored below.
+            if target_date and slot.start_time.date() != target_date:
+                continue
+            if earliest_start and slot.start_time < earliest_start:
+                continue
+            if latest_end and slot.end_time > latest_end:
+                continue
+            if relative_before == "bedtime":
+                bedtime = datetime.combine(
+                    slot.start_time.date(),
+                    time(int(profile.bedtime), int((profile.bedtime % 1) * 60)),
+                    tzinfo=tz,
+                )
+                if slot.end_time > bedtime:
+                    continue
+
+            # 4. No past scheduling
             if slot.start_time < now_local:
                 continue
 
             feasible_slots.append(slot)
 
         if not feasible_slots:
-            # Fallback: if all filtered, append to end of existing busy or now_local + 5
+            # A deadline or an explicit temporal bound may never be bypassed by a fallback.
+            if deadline or target_date or earliest_start or latest_end or relative_before:
+                return None
+            # No hard user constraint exists: preserve the legacy earliest-available fallback.
             fallback_start = now_local + timedelta(minutes=5)
             if existing_busy:
                 max_busy_end = max(b[1] for b in existing_busy)
@@ -561,6 +632,40 @@ class SchedulingEngine:
             secondary_reasons: List[str] = []
 
             c_h = slot.start_time.hour + slot.start_time.minute / 60.0
+
+            # Flexible user timing is a soft preference, not an invented fixed appointment.
+            # preferred_window_start/end: reward slots inside the window, penalise slots outside.
+            # preferred_start ("around X PM"): score by proximity — closer = higher reward.
+            if preferred_window_start and preferred_window_end:
+                if preferred_window_start <= slot.start_time <= preferred_window_end:
+                    score += 0.60
+                    secondary_reasons.append("matches_preferred_time_window")
+                    if primary_reason == "available_slot":
+                        primary_reason = "preferred_time_window"
+                else:
+                    # Outside the explicitly stated window: apply a meaningful penalty.
+                    # This is stronger than the old -0.20 so afternoon/evening/after-dinner
+                    # preferences actually beat the default morning-focus heuristic.
+                    score -= 0.55
+            elif preferred_start:
+                distance_minutes = abs((slot.start_time - preferred_start).total_seconds()) / 60.0
+                # Inverse-distance reward: 0 min away = +0.60, 45 min away = +0.15, 90+ min = -0.20
+                if distance_minutes <= 15:
+                    score += 0.60
+                    secondary_reasons.append("near_preferred_time")
+                    if primary_reason == "available_slot":
+                        primary_reason = "preferred_time_window"
+                elif distance_minutes <= 45:
+                    score += 0.45 - (0.30 * (distance_minutes - 15) / 30.0)
+                    secondary_reasons.append("near_preferred_time")
+                    if primary_reason == "available_slot":
+                        primary_reason = "preferred_time_window"
+                elif distance_minutes <= 90:
+                    # Outside ±45 min of preference: small bonus that tapers off
+                    score += 0.15 - (0.35 * (distance_minutes - 45) / 45.0)
+                else:
+                    # Significantly far from preference: penalise
+                    score -= 0.20
 
             # 1. Wake & Cognitive Warmup Window Protection
             target_wake_h = profile.weekend_wake_time if slot.start_time.weekday() >= 5 else profile.weekday_wake_time
@@ -695,6 +800,8 @@ class SchedulingEngine:
                 expl = f"{day_display} at {time_display} — Fits into your afternoon window to maintain momentum without cognitive strain."
             elif primary_reason == "physical_window":
                 expl = f"{day_display} at {time_display} — Ideal physical session window with post-workout recovery space."
+            elif primary_reason == "preferred_time_window":
+                expl = f"{day_display} at {time_display} — Fits the time window you preferred while keeping the schedule feasible."
             elif slot.day_offset == 1 and not deadline:
                 expl = f"Tomorrow at {time_display} — Tomorrow contains a strong uninterrupted focus block."
             else:

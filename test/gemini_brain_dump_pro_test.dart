@@ -3,14 +3,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flowstate/screens/brain_dump_sheet.dart';
-import 'package:flowstate/screens/ai_plan_preview_sheet.dart';
 import 'package:flowstate/screens/pro_subscription_screen.dart';
 import 'package:flowstate/screens/profile_settings_tab.dart';
 import 'package:flowstate/components/ai_economy_sheets.dart';
 import 'package:flowstate/components/routine_building_view.dart';
-import 'package:flowstate/models/ai_plan_models.dart';
 import 'package:flowstate/models/task_item.dart';
 import 'package:flowstate/providers/app_state_provider.dart';
+import 'package:flowstate/services/auth_service.dart';
 import 'package:flowstate/providers/theme_provider.dart';
 import 'package:flowstate/providers/flow_provider.dart';
 import 'package:flowstate/services/api_service.dart';
@@ -64,7 +63,7 @@ class MockAISubscriptionApiService extends ApiService {
     }
     if (endpoint == '/api/v1/tasks') {
       if (body is Map) {
-        final res = Map<String, dynamic>.from(body as Map);
+        final res = Map<String, dynamic>.from(body);
         res['id'] ??= 'task-${DateTime.now().millisecondsSinceEpoch}';
         return res;
       }
@@ -161,7 +160,16 @@ Widget createTestApp({
   AppStateProvider? customAppState,
 }) {
   final mockApi = api ?? MockAISubscriptionApiService();
-  final appState = customAppState ?? AppStateProvider(customApi: mockApi);
+  const testUser = AuthUser(
+    id: 'user-test-1',
+    email: 'tester@flowstate.local',
+    name: 'Tester',
+    onboardingCompleted: true,
+  );
+  final appState = customAppState ?? AppStateProvider(customApi: mockApi, initialUser: testUser);
+  if (appState.currentUser == null) {
+    appState.onUserAuthenticated(testUser);
+  }
   final themeProvider = ThemeProvider();
   final flowProvider = FlowProvider(api: mockApi);
 

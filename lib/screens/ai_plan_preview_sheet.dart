@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../components/companion/companion_graphic.dart';
+import '../components/noya_companion_view.dart';
 import '../models/ai_plan_models.dart';
 import '../models/task_item.dart';
 import '../providers/app_state_provider.dart';
@@ -114,28 +114,46 @@ class _AIPlanPreviewSheet extends StatelessWidget {
                   flowProvider = Provider.of<FlowProvider>(ctx, listen: true);
                 } catch (_) {}
                 final companion = flowProvider?.companion;
-                final species = companion?.species ?? 'fox';
                 final name = companion?.name ?? 'Noya';
 
                 return Container(
                   key: const Key('noya_companion_header'),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
                     color: FlowColors.surfaceElevated(context),
                     borderRadius: FlowRadii.cardRadius,
                     border: Border.all(color: FlowColors.border(context)),
                   ),
                   child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      CompanionGraphic(species: species, size: 40),
-                      const SizedBox(width: 10),
+                      NoyaCompanionView(
+                        state: needsConfirmation ? NoyaState.thinking : NoyaState.proud,
+                        size: 72.0,
+                        showAmbientGlow: true,
+                      ),
+                      const SizedBox(width: 14),
                       Expanded(
-                        child: Text(
-                          '$name arranged your candidate tasks.',
-                          style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              name,
+                              style: FlowTypography.labelLarge(color: FlowColors.textPrimaryOf(context)).copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              needsConfirmation
+                                  ? '$name wants to make sure these match your day.'
+                                  : '$name structured your brain dump into tasks.',
+                              style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
+                                height: 1.3,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],

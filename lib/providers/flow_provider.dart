@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/flow_companion.dart';
 import '../models/flow_profile.dart';
 import '../models/flow_challenge.dart';
@@ -54,6 +56,62 @@ class FlowProvider extends ChangeNotifier {
   String? get latestNotification => _latestNotification;
 
   bool _mockMode = false;
+
+  void setMockMode(bool enabled) {
+    _mockMode = enabled;
+  }
+
+  /// Optimistically increments daily quest and weekly challenge progress on local task completion
+  void recordTaskCompletionLocally({bool isPriority = false}) {
+    final updatedQuests = _overview.dailyQuests.map((q) {
+      if (q.questKey == 'finish_2_tasks' && !q.isCompleted) {
+        final newCount = (q.currentCount + 1).clamp(0, q.targetCount);
+        return FlowDailyQuest(
+          id: q.id,
+          questDate: q.questDate,
+          questKey: q.questKey,
+          title: q.title,
+          description: q.description,
+          targetCount: q.targetCount,
+          currentCount: newCount,
+          rewardFlow: q.rewardFlow,
+          isCompleted: newCount >= q.targetCount,
+          isClaimed: q.isClaimed,
+        );
+      }
+      return q;
+    }).toList();
+
+    _overview = _overview.copyWith(
+      dailyQuests: updatedQuests,
+      totalSessionsCompleted: _overview.totalSessionsCompleted + 1,
+      activeChallenge: (isPriority &&
+              _overview.activeChallenge != null &&
+              !_overview.activeChallenge!.isCompleted)
+          ? FlowChallenge(
+              id: _overview.activeChallenge!.id,
+              weekIdentifier: _overview.activeChallenge!.weekIdentifier,
+              title: _overview.activeChallenge!.title,
+              targetCount: _overview.activeChallenge!.targetCount,
+              currentCount: (_overview.activeChallenge!.currentCount + 1)
+                  .clamp(0, _overview.activeChallenge!.targetCount),
+              isCompleted: (_overview.activeChallenge!.currentCount + 1) >=
+                  _overview.activeChallenge!.targetCount,
+              rewardFlow: _overview.activeChallenge!.rewardFlow,
+              challengeType: _overview.activeChallenge!.challengeType,
+            )
+          : _overview.activeChallenge,
+    );
+
+    // Save to SharedPreferences cache for offline & restart resilience
+    try {
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setString('flowstate_flow_overview_cache', jsonEncode(_overview.toJson()));
+      }).catchError((_) {});
+    } catch (_) {}
+
+    notifyListeners();
+  }
 
   Future<void> loadOverview() async {
     if (_mockMode) return;

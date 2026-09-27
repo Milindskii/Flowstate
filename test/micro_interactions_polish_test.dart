@@ -126,7 +126,7 @@ void main() {
       await tester.pumpWidget(wrapWithProviders(const TodayDashboardTab()));
       await tester.pumpAndSettle();
       expect(find.text("What's on your plate?"), findsOneWidget);
-      expect(find.text("Add everything you need to get done and we'll organize it."), findsOneWidget);
+      expect(find.text('Tell Flowstate everything you need to do, and it figures out when each thing fits.'), findsOneWidget);
       expect(find.text('Build my day'), findsOneWidget);
 
       // 4b. Task Inbox Empty State

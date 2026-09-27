@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../components/break_session_card.dart';
-import '../components/companion/companion_graphic.dart';
-import '../components/companion/flow_companion_view.dart';
-import '../models/flow_companion.dart';
+import '../components/noya_companion_view.dart';
 import '../components/compact_readiness_card.dart';
 import '../components/right_now_task_card.dart';
 import '../components/timeline_current_time_marker.dart';
@@ -58,6 +56,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
         final appState = Provider.of<AppStateProvider>(context, listen: false);
         final flowProvider = Provider.of<FlowProvider>(context, listen: false);
         appState.onTaskCompletedForFlow = () {
+          flowProvider.recordTaskCompletionLocally();
           flowProvider.loadOverview();
         };
       } catch (_) {}
@@ -93,12 +92,6 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
     try {
       accent = Provider.of<ThemeProvider>(context).accentColor;
     } catch (_) {}
-
-    FlowProvider? flowProvider;
-    try {
-      flowProvider = Provider.of<FlowProvider>(context);
-    } catch (_) {}
-    final companion = flowProvider?.companion;
 
     // 1. Loading State: Shimmer Skeleton
     if (state.isLoading) {
@@ -257,8 +250,8 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                         ),
                         child: Row(
                           children: [
-                            CompanionGraphic(
-                              species: companion?.species ?? 'fox',
+                            const NoyaCompanionView(
+                              state: NoyaState.proud,
                               size: 36,
                             ),
                             const SizedBox(width: 10),
@@ -395,6 +388,16 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
     if (!hasAnyTasks || state.todayState == TodayState.newUser) {
       return "Let's build your first plan.";
     }
+    final now = DateTime.now();
+    final currentHour = now.hour + (now.minute / 60.0);
+    final bedtimeHour = state.personalData.bedtimeHour;
+    final isAtOrPastBedtime = bedtimeHour >= 18.0
+        ? (currentHour >= bedtimeHour || currentHour < 5.0)
+        : (bedtimeHour < 6.0
+            ? (currentHour >= bedtimeHour && currentHour < 6.0)
+            : (currentHour >= bedtimeHour));
+    final isDayActuallyFinished = isAtOrPastBedtime;
+
     switch (state.todayState) {
       case TodayState.newUser:
         return "Let's build your first plan.";
@@ -403,7 +406,9 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
       case TodayState.calibrated:
         return "Ready for a good session?";
       case TodayState.completed:
-        return "Nice work today. Take a breather.";
+        return isDayActuallyFinished
+            ? "Nice work today. Time to wind down."
+            : "You're clear for now. What's next?";
     }
   }
 
@@ -422,7 +427,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                   fontWeight: FontWeight.w700,
                   fontSize: 23.0,
                   letterSpacing: -0.3,
-                  color: FlowColors.textPrimary,
+                  color: FlowColors.textPrimaryOf(context),
                 ),
               ),
               const SizedBox(height: 4),
@@ -431,14 +436,14 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                 children: [
                   Text(
                     _getHeaderSubtitle(state, hasAnyTasks),
-                    style: FlowTypography.bodyMedium(color: FlowColors.textSecondary).copyWith(
+                    style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
                       fontWeight: FontWeight.w500,
                     ),
                   ),
                   if (state.isOffline && state.lastUpdatedAt != null) ...[
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 6),
-                      child: Text('•', style: FlowTypography.labelSmall(color: FlowColors.textMuted)),
+                      child: Text('•', style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context))),
                     ),
                     InkWell(
                       onTap: () => state.refreshTodayData(),
@@ -529,9 +534,9 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                CompanionGraphic(
-                  species: companion?.species ?? 'fox',
-                  size: 32,
+                const NoyaCompanionView(
+                  state: NoyaState.idle,
+                  size: 28,
                 ),
                 const SizedBox(width: 6),
                 Text(
@@ -562,19 +567,12 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
   }
 
   Widget _buildNewUserEmptyState(BuildContext context, AppStateProvider state, Color accent) {
-    FlowProvider? flowProvider;
-    try {
-      flowProvider = Provider.of<FlowProvider>(context, listen: true);
-    } catch (_) {}
-
-    final companion = flowProvider?.companion;
-    final companionName = companion?.name ?? 'Noya';
     final isDark = FlowColors.isDark(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 1. HERO: Build My Day
+        // 1. HERO: Build My Day (Flowstate's Signature Planning Feature)
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(20),
@@ -607,7 +605,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
             children: [
               Container(
                 margin: const EdgeInsets.only(bottom: 12),
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3.5),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: FlowColors.accentCyan.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(FlowRadii.pill),
@@ -615,34 +613,52 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.auto_awesome_rounded, size: 12, color: FlowColors.accentCyan),
+                    const Icon(Icons.auto_awesome_rounded, size: 13, color: FlowColors.accentCyan),
                     const SizedBox(width: 5),
                     Text(
-                      'DAY PLANNER',
+                      'AI DAY PLANNER',
                       style: FlowTypography.labelSmall(color: FlowColors.accentCyan).copyWith(
                         fontWeight: FontWeight.w800,
-                        fontSize: 10,
+                        fontSize: 10.5,
                         letterSpacing: 0.7,
                       ),
                     ),
                   ],
                 ),
               ),
-              Text(
-                "What's on your plate?",
-                style: FlowTypography.titleSmall(color: FlowColors.textPrimaryOf(context)).copyWith(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 19,
-                  letterSpacing: -0.2,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                "Add everything you need to get done and we'll organize it.",
-                style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
-                  fontSize: 14,
-                  height: 1.4,
-                ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "What's on your plate?",
+                          style: FlowTypography.titleSmall(color: FlowColors.textPrimaryOf(context)).copyWith(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 20,
+                            letterSpacing: -0.2,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Tell Flowstate everything you need to do, and it figures out when each thing fits.',
+                          style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
+                            fontSize: 13.5,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const NoyaCompanionView(
+                    state: NoyaState.encouraging,
+                    size: 76.0,
+                    showAmbientGlow: true,
+                  ),
+                ],
               ),
               const SizedBox(height: 18),
 
@@ -703,158 +719,10 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
               // Small hint
               Center(
                 child: Text(
-                  'Dump everything at once or add tasks individually.',
+                  'Dump everything at once or add tasks individually. Flowstate finds the best focus windows.',
                   textAlign: TextAlign.center,
                   style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)).copyWith(
                     fontSize: 12,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-
-        // 2. FLOW HERO
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: FlowColors.surface(context),
-            borderRadius: BorderRadius.circular(FlowRadii.cardLarge),
-            border: Border.all(
-              color: isDark ? FlowColors.borderDark : const Color(0xFFE2E8F0),
-              width: 1.0,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.04),
-                blurRadius: 14,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header: + FLOW & 25 min badge
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    '✦ FLOW',
-                    style: FlowTypography.badgeText(color: FlowColors.accentCyan).copyWith(
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.8,
-                      fontSize: 11,
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: isDark ? FlowColors.surfaceElevated(context) : const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(FlowRadii.pill),
-                    ),
-                    child: Text(
-                      '25 min',
-                      style: FlowTypography.labelSmall(color: FlowColors.textSecondaryOf(context)).copyWith(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              // Companion + Text Row (Canonical FlowCompanionView)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  FlowCompanionView(
-                    companion: companion ??
-                        const FlowCompanion(
-                          id: 'default',
-                          species: 'fox',
-                          name: 'Noya',
-                          level: 1,
-                          stage: 'Baby',
-                          companionXp: 0,
-                          xpToNextLevel: 60,
-                        ),
-                    size: 68,
-                    showStageBadge: false,
-                    showStatusText: false,
-                    frameless: true,
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Lock in with $companionName.',
-                          style: FlowTypography.titleSmall(color: FlowColors.textPrimaryOf(context)).copyWith(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          '25 minutes. One thing. No distractions.',
-                          style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
-                            fontSize: 13,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              // Button: Soft Ice-Blue / Cyan Pill "Start Flow" with lightning bolt
-              FramerMotionPressScale(
-                onTap: () {
-                  FlowHaptics.lightTap();
-                  openFocusRitual(context, initialMinutes: 25);
-                },
-                child: Container(
-                  width: double.infinity,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: isDark ? FlowColors.cyan.withValues(alpha: 0.16) : const Color(0xFFE0F2FE),
-                    borderRadius: BorderRadius.circular(FlowRadii.button),
-                  ),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      key: const Key('hero_start_flow_button'),
-                      borderRadius: BorderRadius.circular(FlowRadii.button),
-                      onTap: () {
-                        FlowHaptics.lightTap();
-                        openFocusRitual(context, initialMinutes: 25);
-                      },
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.bolt_rounded,
-                            size: 20,
-                            color: isDark ? FlowColors.cyan : const Color(0xFF0284C7),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Start Flow',
-                            style: FlowTypography.labelLarge(
-                              color: isDark ? FlowColors.cyan : const Color(0xFF0284C7),
-                            ).copyWith(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 15,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
                   ),
                 ),
               ),
@@ -937,13 +805,9 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: CompanionGraphic(
-                    species: companion?.species ?? 'fox',
-                    size: 44,
-                  ),
+                const NoyaCompanionView(
+                  state: NoyaState.idle,
+                  size: 48,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -964,7 +828,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        '25 min · Focus with $name',
+                        'Focus companion · Flow Hub',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
@@ -976,25 +840,32 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              height: 40,
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  FlowHaptics.lightTap();
-                  openFocusRitual(context, initialMinutes: 25);
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: FlowColors.surfaceElevated(context),
-                  foregroundColor: FlowColors.textPrimaryOf(context),
-                  elevation: 0,
-                  side: BorderSide(color: FlowColors.border(context)),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(FlowRadii.button)),
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    'Flow Hub & Companion',
+                    overflow: TextOverflow.ellipsis,
+                    style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)),
+                  ),
                 ),
-                icon: const Icon(Icons.bolt_rounded, size: 16, color: FlowColors.accentCyan),
-                label: const Text('Start Flow'),
-              ),
+                const SizedBox(width: 8),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Open Hub',
+                      style: FlowTypography.labelSmall(color: FlowColors.accentCyan).copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.arrow_forward_ios_rounded, size: 10, color: FlowColors.accentCyan),
+                  ],
+                ),
+              ],
             ),
           ],
         ),
@@ -1012,13 +883,24 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
         state.tasks.where((t) => t.isCompleted).length;
     final focusMinutes = completedCount * 25;
     final now = DateTime.now();
-    final isLate = (now.hour >= 20 && now.minute >= 30) || now.hour >= 21;
 
-    FlowProvider? flowProvider;
-    try {
-      flowProvider = Provider.of<FlowProvider>(context, listen: false);
-    } catch (_) {}
-    final companion = flowProvider?.companion;
+    final bedtimeHour = state.personalData.bedtimeHour; // e.g. 23.0 (11:00 PM)
+    final currentHour = now.hour + (now.minute / 60.0);
+    // Day genuinely finished boundary: strictly at or past configured bedtime
+    final isAtOrPastBedtime = bedtimeHour >= 18.0
+        ? (currentHour >= bedtimeHour || currentHour < 5.0)
+        : (bedtimeHour < 6.0
+            ? (currentHour >= bedtimeHour && currentHour < 6.0)
+            : (currentHour >= bedtimeHour));
+
+    final hasUpcomingTasks = state.tasks.any((t) =>
+        !t.isCompleted &&
+        t.status != TaskStatus.cancelled &&
+        t.status != TaskStatus.archived &&
+        t.scheduledStart != null &&
+        t.scheduledStart!.isAfter(now));
+
+    final isDayActuallyFinished = isAtOrPastBedtime && !hasUpcomingTasks;
 
     final String headline;
     final String subtitle;
@@ -1027,9 +909,9 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
     final String? secondaryButtonLabel;
     final VoidCallback? secondaryButtonAction;
 
-    if (isLate) {
-      // CASE D: Late night completion — wind down
-      headline = "You're all done for today. 🦊";
+    if (isDayActuallyFinished) {
+      // Day is genuinely finished according to configured sleep/bedtime boundary
+      headline = "You're all done for today 🦊";
       subtitle = "Nice work. Time to wind down.";
       primaryButtonLabel = 'Plan tomorrow';
       primaryButtonAction = () {
@@ -1038,35 +920,25 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
       };
       secondaryButtonLabel = null;
       secondaryButtonAction = null;
-    } else if (completedCount == 1) {
-      // CASE B: User completed their only planned task
-      headline = 'One win in the bag. 🦊';
-      subtitle = "You're clear for today.";
-      primaryButtonLabel = '+ Add another task';
-      primaryButtonAction = () {
-        FlowHaptics.selection();
-        _openAddTaskSheet(context);
-      };
-      secondaryButtonLabel = 'Plan tomorrow';
-      secondaryButtonAction = () {
-        FlowHaptics.lightTap();
-        _openAddTaskSheet(context);
-      };
     } else {
-      // CASE C: User completed all planned tasks
-      headline = "You're clear for today. 🦊";
-      subtitle = "Nice work. Your plan is complete.";
-      primaryButtonLabel = '+ Add something';
+      // All planned tasks complete, but day is still active
+      headline = "You're clear for now ✨";
+      subtitle = "Nice work. What's next?";
+      primaryButtonLabel = '+ Add Task';
       primaryButtonAction = () {
         FlowHaptics.selection();
         _openAddTaskSheet(context);
       };
-      secondaryButtonLabel = 'Plan tomorrow';
+      secondaryButtonLabel = '✨ Build My Day';
       secondaryButtonAction = () {
         FlowHaptics.lightTap();
-        _openAddTaskSheet(context);
+        showBrainDumpSheet(context);
       };
     }
+
+    final NoyaState completionNoyaState = isDayActuallyFinished
+        ? NoyaState.sleepy
+        : (completedCount == 1 ? NoyaState.proud : NoyaState.celebrating);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1093,11 +965,12 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  CompanionGraphic(
-                    species: companion?.species ?? 'fox',
-                    size: 44,
+                  NoyaCompanionView(
+                    state: completionNoyaState,
+                    size: 76.0,
+                    showAmbientGlow: true,
                   ),
-                  const SizedBox(width: 14),
+                  const SizedBox(width: 16),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1144,6 +1017,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                 width: double.infinity,
                 height: 46,
                 child: ElevatedButton.icon(
+                  key: const Key('completed_state_primary_button'),
                   onPressed: primaryButtonAction,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: accent,
@@ -1166,65 +1040,25 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
               if (secondaryButtonLabel != null) ...[
                 const SizedBox(height: 8),
                 Center(
-                  child: TextButton(
+                  child: TextButton.icon(
+                    key: const Key('completed_state_secondary_button'),
                     onPressed: secondaryButtonAction,
-                    child: Text(
+                    icon: secondaryButtonLabel.contains('Build')
+                        ? const Icon(Icons.auto_awesome_rounded, size: 16, color: FlowColors.accentCyan)
+                        : null,
+                    label: Text(
                       secondaryButtonLabel,
-                      style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
-                        fontWeight: FontWeight.w600,
+                      style: FlowTypography.labelMedium(
+                        color: secondaryButtonLabel.contains('Build')
+                            ? FlowColors.accentCyan
+                            : FlowColors.textMutedOf(context),
+                      ).copyWith(
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
                 ),
               ],
-            ],
-          ),
-        ),
-        const SizedBox(height: 24),
-
-        // Optional Flow CTA (Keep your momentum alive)
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: FlowColors.surface(context),
-            borderRadius: BorderRadius.circular(FlowRadii.card),
-            border: Border.all(color: FlowColors.border(context)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '✦ FLOW',
-                style: FlowTypography.badgeText(color: FlowColors.accentCyan).copyWith(
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.8,
-                  fontSize: 11,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Keep your momentum alive.',
-                style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
-              ),
-              const SizedBox(height: 14),
-              SizedBox(
-                width: double.infinity,
-                height: 44,
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    FlowHaptics.lightTap();
-                    openFocusRitual(context, initialMinutes: 25);
-                  },
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: FlowColors.textPrimaryOf(context),
-                    side: BorderSide(color: FlowColors.border(context)),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(FlowRadii.button)),
-                  ),
-                  icon: const Icon(Icons.bolt_rounded, size: 18, color: FlowColors.accentCyan),
-                  label: const Text('Start 25 min Flow'),
-                ),
-              ),
             ],
           ),
         ),
@@ -1377,12 +1211,6 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
     }).toList();
 
     if (filteredSchedule.isEmpty) {
-      FlowProvider? flowProvider;
-      try {
-        flowProvider = Provider.of<FlowProvider>(context, listen: false);
-      } catch (_) {}
-      final companion = flowProvider?.companion;
-
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1406,9 +1234,9 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                CompanionGraphic(
-                  species: companion?.species ?? 'fox',
-                  size: 40,
+                const NoyaCompanionView(
+                  state: NoyaState.celebrating,
+                  size: 44,
                 ),
                 const SizedBox(width: 14),
                 Expanded(

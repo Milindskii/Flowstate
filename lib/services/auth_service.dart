@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'api_service.dart';
@@ -165,20 +166,72 @@ class AuthService {
     throw Exception('Sign up succeeded but user profile was not returned.');
   }
 
-  Future<AuthUser> loginWithGoogle() async {
+  Future<AuthUser> loginWithGoogle({Duration timeout = const Duration(minutes: 2)}) async {
     try {
-      await Supabase.instance.client.auth.signInWithOAuth(
+      final existingSession = Supabase.instance.client.auth.currentSession;
+      if (existingSession?.user != null) {
+        _token = existingSession!.accessToken;
+        _api.setAuthToken(_token);
+        _currentUser = AuthUser.fromSupabase(existingSession.user);
+        return _currentUser!;
+      }
+
+      final completer = Completer<AuthUser>();
+      late final StreamSubscription<AuthState> authSub;
+
+      authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+        if (data.session?.user != null && !completer.isCompleted) {
+          final user = AuthUser.fromSupabase(data.session!.user);
+          _currentUser = user;
+          _token = data.session!.accessToken;
+          _api.setAuthToken(_token);
+          completer.complete(user);
+        }
+      }, onError: (err) {
+        if (!completer.isCompleted) {
+          completer.completeError(err);
+        }
+      });
+
+      final launched = await Supabase.instance.client.auth.signInWithOAuth(
         OAuthProvider.google,
         redirectTo: kIsWeb ? null : 'io.flowstate://login-callback',
       );
-      final session = Supabase.instance.client.auth.currentSession;
-      _token = session?.accessToken;
-      _api.setAuthToken(_token);
-      if (session?.user != null) {
-        _currentUser = AuthUser.fromSupabase(session!.user);
-        return _currentUser!;
+
+      if (!launched) {
+        authSub.cancel();
+        throw Exception('Could not launch Google Sign-In browser.');
       }
-      throw Exception('Google sign-in completed but active session was not returned.');
+
+      // Check if session became available immediately
+      final immediateSession = Supabase.instance.client.auth.currentSession;
+      if (immediateSession?.user != null && !completer.isCompleted) {
+        final user = AuthUser.fromSupabase(immediateSession!.user);
+        _currentUser = user;
+        _token = immediateSession.accessToken;
+        _api.setAuthToken(_token);
+        authSub.cancel();
+        return user;
+      }
+
+      // Wait for deep link OAuth redirect event
+      return await completer.future.timeout(
+        timeout,
+        onTimeout: () {
+          authSub.cancel();
+          final fallbackSession = Supabase.instance.client.auth.currentSession;
+          if (fallbackSession?.user != null) {
+            final user = AuthUser.fromSupabase(fallbackSession!.user);
+            _currentUser = user;
+            _token = fallbackSession.accessToken;
+            _api.setAuthToken(_token);
+            return user;
+          }
+          throw Exception('Google Sign-In completed without session or was cancelled.');
+        },
+      ).whenComplete(() {
+        authSub.cancel();
+      });
     } on AuthException catch (e) {
       if (e.message.toLowerCase().contains('unsupported provider') ||
           e.message.toLowerCase().contains('not enabled')) {

@@ -1,4 +1,6 @@
 from typing import Optional, List
+from datetime import datetime, timezone
+from functools import wraps
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -16,6 +18,17 @@ from ...services.ai_service import AIService
 
 router = APIRouter(prefix="/ai", tags=["AI Planning Economy"])
 
+
+def serialize_same_user_ai_plan(endpoint):
+    """Keep authorization, extraction, and finalization atomic within this app process."""
+    @wraps(endpoint)
+    def wrapped(*args, **kwargs):
+        user = kwargs.get("current_user") or args[1]
+        lock = AIEconomyService.get_user_request_lock(user.id)
+        with lock:
+            return endpoint(*args, **kwargs)
+    return wrapped
+
 @router.get("/status", response_model=AIUsageStatus)
 def get_ai_planning_status(
     current_user: User = Depends(get_current_user),
@@ -32,6 +45,7 @@ def get_ai_planning_status(
     return AIEconomyService.get_usage_status(db, current_user.id)
 
 @router.post("/plan", response_model=AIPlanResponse)
+@serialize_same_user_ai_plan
 def generate_ai_plan(
     request: AIPlanRequest,
     current_user: User = Depends(get_current_user),

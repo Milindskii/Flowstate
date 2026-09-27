@@ -128,9 +128,9 @@ async def test_compound_natural_language_parsing_with_provenance(auth_headers):
         assert c1["difficulty"] == "high"
         assert c1["priority"] in ("high", "medium")
         assert c1["field_provenance"]["priority"]["source"] in ("unspecified", "inferred")
-        assert c1["deadline_at"] is not None
+        assert c1["deadline_at"] is None
+        assert c1["temporal"]["target_date"] is not None
         assert c1["confidence"] >= 0.7
-        assert c1["field_provenance"]["deadline"]["source"] == "explicit"
         assert c1["field_provenance"]["task_type"]["source"] == "inferred"
 
         # Candidate 2: "study DBMS for one hour"

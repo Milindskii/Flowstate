@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/task_item.dart';
@@ -72,8 +73,9 @@ class AppStateProvider extends ChangeNotifier {
   TaskItem? _activeFocusTask;
   bool _onboardingComplete = false;
   VoidCallback? onTaskCompletedForFlow;
+  final Map<String, Completer<TaskItem>> _pendingTaskCreations = {};
 
-  AppStateProvider({ApiService? customApi}) {
+  AppStateProvider({ApiService? customApi, AuthUser? initialUser}) {
     apiService = customApi ?? ApiService();
     authService = AuthService(api: apiService);
     taskService = TaskService(api: apiService);
@@ -84,11 +86,13 @@ class AppStateProvider extends ChangeNotifier {
     healthService = HealthService(api: apiService);
     todayService = TodayService(api: apiService);
 
-    // Check if session is already restored from Supabase client
-    _currentUser = authService.currentUser;
+    // Check if session is already restored from Supabase client or provided explicitly
+    _currentUser = initialUser ?? authService.currentUser;
     if (_currentUser != null) {
       _isDemoMode = false;
       _tasks = [];
+      _schedule = [];
+      _readiness = ReadinessModel.uncalibrated();
       loadUserTasks();
       refreshTodayData();
     } else {
@@ -128,6 +132,7 @@ class AppStateProvider extends ChangeNotifier {
 
   String get greetingName => _currentUser?.name ?? 'Friend';
   bool get onboardingComplete => _onboardingComplete;
+  bool get isAuthenticated => _currentUser != null || authService.isAuthenticated;
 
   // Dynamic time-of-day greeting (no hardcoded time)
   String get timeOfDayGreeting {
@@ -325,6 +330,11 @@ class AppStateProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setCurrentUserForTesting(AuthUser? user) {
+    _currentUser = user;
+    notifyListeners();
+  }
+
   void setCalibratedStateForTesting() {
     _tasks = [
       const TaskItem(
@@ -437,15 +447,18 @@ class AppStateProvider extends ChangeNotifier {
           energyFeeling: 'Energized',
         );
         _learningEngine.recordSessionFeedback(feedback);
+
+        // Immediate optimistic quest update
+        onTaskCompletedForFlow?.call();
+
         if (!_isDemoMode) {
           feedbackService.submitFeedback(feedback).catchError((_) {});
-          taskService
-              .completeTask(task.id, actualMinutes: task.durationMinutes, perceivedFocusScore: 5)
-              .then((_) {
-            onTaskCompletedForFlow?.call();
-          }).catchError((_) {});
-        } else {
-          onTaskCompletedForFlow?.call();
+          if (_pendingTaskCreations.containsKey(task.id)) {
+            // Task creation is still in-flight; will be completed once created
+            debugPrint('Task ${task.id} creation in-flight; backend completion queued.');
+          } else {
+            _sendCompleteToBackend(task);
+          }
         }
         _recalculateReadiness();
       }
@@ -454,16 +467,28 @@ class AppStateProvider extends ChangeNotifier {
     }
   }
 
-  void addTask({
+  void _sendCompleteToBackend(TaskItem task) {
+    taskService
+        .completeTask(task.id, actualMinutes: task.durationMinutes, perceivedFocusScore: 5)
+        .then((_) {
+      // Authoritative sync after backend confirms quest & task persistence
+      onTaskCompletedForFlow?.call();
+    }).catchError((e) {
+      debugPrint('Error completing task on backend: $e');
+    });
+  }
+
+  Future<TaskItem> addTask({
     required String title,
     required int durationMinutes,
     required TaskDifficulty difficulty,
     required String deadline,
     required String category,
     bool isPriority = false,
-  }) {
+  }) async {
+    final tempId = 'task-${DateTime.now().millisecondsSinceEpoch}';
     final newTask = TaskItem(
-      id: 'task-${DateTime.now().millisecondsSinceEpoch}',
+      id: tempId,
       title: title,
       durationMinutes: durationMinutes,
       difficulty: difficulty,
@@ -473,13 +498,36 @@ class AppStateProvider extends ChangeNotifier {
     );
 
     _tasks.insert(0, newTask);
-    if (!_isDemoMode) {
-      taskService.createTask(newTask).catchError((_) => newTask);
-    }
-
     _recalculateReadiness();
     _recalculateSchedule();
     notifyListeners();
+
+    if (!_isDemoMode) {
+      final completer = Completer<TaskItem>();
+      _pendingTaskCreations[tempId] = completer;
+
+      try {
+        final persisted = await taskService.createTask(newTask);
+        final idx = _tasks.indexWhere((t) => t.id == tempId);
+        if (idx != -1) {
+          final wasCompleted = _tasks[idx].isCompleted;
+          _tasks[idx] = persisted.copyWith(isCompleted: wasCompleted);
+          if (wasCompleted) {
+            _sendCompleteToBackend(_tasks[idx]);
+          }
+          notifyListeners();
+        }
+        completer.complete(persisted);
+        _pendingTaskCreations.remove(tempId);
+        return persisted;
+      } catch (e) {
+        debugPrint('Error creating task in backend: $e');
+        completer.complete(newTask);
+        _pendingTaskCreations.remove(tempId);
+      }
+    }
+
+    return newTask;
   }
 
   void updateTask(TaskItem task) {

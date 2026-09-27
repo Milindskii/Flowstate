@@ -7,6 +7,7 @@ import '../theme/flow_radii.dart';
 import '../theme/flow_spacing.dart';
 import '../theme/flow_typography.dart';
 import '../components/primary_button.dart';
+import 'brain_dump_sheet.dart';
 
 /// Screen 6: Add Task Modal with AI Inferred Attributes
 class AddTaskSheet extends StatefulWidget {
@@ -136,7 +137,98 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
                 prefixIcon: Icon(Icons.bolt_rounded, color: FlowColors.cyanLight),
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 12),
+
+            // ✨ Build with AI Discovery Card
+            InkWell(
+              key: const Key('add_task_build_with_ai_button'),
+              borderRadius: BorderRadius.circular(FlowRadii.card),
+              onTap: () {
+                final currentText = _titleController.text.trim();
+                Navigator.pop(context);
+                showBrainDumpSheet(
+                  context,
+                  initialText: currentText.isNotEmpty ? currentText : null,
+                );
+              },
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: FlowColors.accentCyan.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(FlowRadii.card),
+                  border: Border.all(
+                    color: FlowColors.accentCyan.withValues(alpha: 0.35),
+                    width: 1.0,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: FlowColors.accentCyan.withValues(alpha: 0.16),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.auto_awesome_rounded,
+                        color: FlowColors.accentCyan,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                '✨ Build with AI',
+                                style: FlowTypography.titleSmall(color: FlowColors.accentCyan).copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                decoration: BoxDecoration(
+                                  color: FlowColors.accentCyan.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(FlowRadii.pill),
+                                ),
+                                child: Text(
+                                  'SMART',
+                                  style: FlowTypography.badgeText(color: FlowColors.accentCyan).copyWith(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Describe what you need to get done in your own words',
+                            style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      size: 13,
+                      color: FlowColors.accentCyan,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
 
             // AI dynamic tags header
             Row(

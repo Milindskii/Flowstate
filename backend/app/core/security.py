@@ -44,6 +44,10 @@ def verify_security_environment():
             "CRITICAL SECURITY VIOLATION: DEV_BYPASS_AUTH is enabled while ENVIRONMENT='production'! "
             "Execution refused to protect user data."
         )
+    if env_clean == "production" and settings.SUPABASE_JWT_SECRET == "flowstate-local-dev-secret-replace-in-production":
+        raise RuntimeError(
+            "CRITICAL SECURITY VIOLATION: the development Supabase JWT secret is configured in production."
+        )
 
 ALLOWED_ALGORITHMS = ["RS256", "ES256", "HS256"]
 

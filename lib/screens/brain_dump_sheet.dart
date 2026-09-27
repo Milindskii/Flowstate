@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../components/ai_economy_sheets.dart';
 import '../components/noya_companion_view.dart';
 import '../engines/scheduling_engine.dart';
+import '../models/ai_plan_models.dart';
 import '../models/schedule_item.dart';
 import '../models/task_item.dart';
 import '../providers/app_state_provider.dart';
@@ -14,6 +15,7 @@ import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
+import 'auth_screen.dart';
 
 enum _BrainDumpViewMode { input, preview, edit }
 
@@ -27,7 +29,26 @@ enum _BrainDumpViewMode { input, preview, edit }
 /// 5. Flowstate deterministic scheduler builds the plan.
 /// 6. Shows Plan Preview with Noya companion header and pinned [ Add & Schedule ] action.
 /// 7. Editing allows fine-tuning structured candidates without losing data or returning to raw input.
-void showBrainDumpSheet(BuildContext context) {
+void showBrainDumpSheet(BuildContext context, {String? initialText}) {
+  final appState = Provider.of<AppStateProvider>(context, listen: false);
+  if (!appState.isAuthenticated) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AuthScreen(
+          returnToBuildMyDay: true,
+          onAuthenticated: () {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (context.mounted) {
+                showBrainDumpSheet(context, initialText: initialText);
+              }
+            });
+          },
+        ),
+      ),
+    );
+    return;
+  }
+
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
@@ -35,12 +56,13 @@ void showBrainDumpSheet(BuildContext context) {
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
-    builder: (ctx) => const _BrainDumpSheet(),
+    builder: (ctx) => _BrainDumpSheet(initialText: initialText),
   );
 }
 
 class _BrainDumpSheet extends StatefulWidget {
-  const _BrainDumpSheet();
+  final String? initialText;
+  const _BrainDumpSheet({this.initialText});
   @override
   State<_BrainDumpSheet> createState() => _BrainDumpSheetState();
 }
@@ -53,6 +75,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
   String? _errorMessage;
   String? _fallbackNotice;
   String? _planSource;
+  AIUsageStatus? _usageStatus;
 
   _BrainDumpViewMode _viewMode = _BrainDumpViewMode.input;
   List<TaskItem> _planCandidates = [];
@@ -71,10 +94,26 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialText != null && widget.initialText!.isNotEmpty) {
+      _ctrl.text = widget.initialText!;
+      _isValid = true;
+    }
     _ctrl.addListener(() {
       final v = _ctrl.text.trim().isNotEmpty;
       if (v != _isValid) setState(() => _isValid = v);
     });
+    _fetchUsageStatus();
+  }
+
+  Future<void> _fetchUsageStatus() async {
+    try {
+      final provider = Provider.of<AppStateProvider>(context, listen: false);
+      final aiService = AIPlanService(api: provider.apiService);
+      final status = await aiService.getUsageStatus();
+      if (mounted) {
+        setState(() => _usageStatus = status);
+      }
+    } catch (_) {}
   }
 
   @override
@@ -435,52 +474,71 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     final companion = flowProvider?.companion;
     final name = companion?.name ?? 'Noya';
 
+    String noyaTitle;
     String noyaMessage;
+    NoyaState noyaState;
+
     if (_isLoading) {
-      noyaMessage = '$name is structuring your plan...';
+      noyaTitle = '$name is thinking...';
+      noyaMessage = 'Structuring tasks & finding where each fits';
+      noyaState = NoyaState.thinking;
     } else if (_viewMode == _BrainDumpViewMode.preview) {
-      noyaMessage = '$name arranged your focus flow.';
+      noyaTitle = '$name organized your plan';
+      noyaMessage = 'Tap any task card to edit or reschedule';
+      noyaState = NoyaState.proud;
     } else if (_viewMode == _BrainDumpViewMode.edit) {
-      noyaMessage = 'Fine-tune with $name.';
+      noyaTitle = 'Fine-tune with $name';
+      noyaMessage = '$name will adapt the schedule to your edits';
+      noyaState = NoyaState.focusing;
     } else {
-      noyaMessage = '$name is ready to organize your day.';
+      noyaTitle = 'Build My Day with $name';
+      noyaMessage = 'Tell Flowstate everything you need to do, and it figures out when each thing fits.';
+      noyaState = _isValid ? NoyaState.encouraging : NoyaState.idle;
     }
+
+    final hasKeyboard = MediaQuery.of(context).viewInsets.bottom > 0;
+    final noyaSize = hasKeyboard ? 40.0 : 72.0;
+    final verticalPad = hasKeyboard ? 6.0 : 10.0;
 
     return Container(
       key: const Key('noya_companion_header'),
-      margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 2),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      margin: EdgeInsets.symmetric(horizontal: 24, vertical: hasKeyboard ? 2 : 4),
+      padding: EdgeInsets.symmetric(horizontal: 14, vertical: verticalPad),
       decoration: BoxDecoration(
         color: FlowColors.surfaceElevated(context),
         borderRadius: FlowRadii.cardRadius,
         border: Border.all(color: FlowColors.border(context)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           NoyaCompanionView(
-            state: _isLoading
-                ? NoyaState.thinking
-                : (_viewMode == _BrainDumpViewMode.preview ? NoyaState.proud : NoyaState.thinking),
-            size: NoyaSize.small,
+            state: noyaState,
+            size: noyaSize,
+            showAmbientGlow: !hasKeyboard,
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  name,
-                  style: FlowTypography.labelMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
+                  noyaTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: FlowTypography.labelLarge(color: FlowColors.textPrimaryOf(context)).copyWith(
                     fontWeight: FontWeight.w700,
                   ),
                 ),
+                const SizedBox(height: 3),
                 Text(
                   noyaMessage,
+                  maxLines: hasKeyboard ? 2 : null,
+                  overflow: hasKeyboard ? TextOverflow.ellipsis : null,
                   style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
-                    fontSize: 11,
+                    height: 1.3,
                   ),
-                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
@@ -490,10 +548,144 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     );
   }
 
+  Widget _buildAiAndShieldsBanner() {
+    final status = _usageStatus;
+    final isPro = status?.isPro ?? false;
+    final freeAvailable = status?.freeUseAvailable ?? true;
+    final shields = status?.shieldsAvailable ?? 0;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: FlowColors.surfaceContainer(context),
+        borderRadius: FlowRadii.cardRadius,
+        border: Border.all(color: FlowColors.border(context)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              Text(
+                '✨ AI planning',
+                style: FlowTypography.labelMedium(color: FlowColors.accentCyan).copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              if (isPro)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: FlowColors.accentMint.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.bolt_rounded, size: 13, color: FlowColors.accentMint),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Pro Unlimited',
+                        style: FlowTypography.labelSmall(color: FlowColors.accentMint).copyWith(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    // Shields badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: FlowColors.accentCyan.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: FlowColors.accentCyan.withValues(alpha: 0.3)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.shield_outlined, size: 13, color: FlowColors.accentCyan),
+                          const SizedBox(width: 4),
+                          Text(
+                            status != null ? '$shields Shield${shields == 1 ? '' : 's'}' : '... Shields',
+                            style: FlowTypography.labelSmall(color: FlowColors.accentCyan).copyWith(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Free planning badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: (freeAvailable ? FlowColors.accentMint : FlowColors.textMutedOf(context))
+                            .withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        status != null
+                            ? (freeAvailable ? '1 free plan available' : 'Free plan used')
+                            : 'Checking...',
+                        style: FlowTypography.labelSmall(
+                          color: freeAvailable ? FlowColors.accentMint : FlowColors.textMutedOf(context),
+                        ).copyWith(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Flowstate understands messy brain dumps and turns them into separate tasks, then finds where they fit in your day. You remain in complete control to edit or reschedule.',
+            style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
+              fontSize: 11,
+              height: 1.35,
+            ),
+          ),
+          if (!isPro && !freeAvailable && shields > 0) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Icon(Icons.info_outline_rounded, size: 12, color: FlowColors.accentCyan),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    'Free plan used today. Next AI plan will ask to consume 1 Shield.',
+                    style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
+                      fontSize: 10.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildInputContent() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        _buildAiAndShieldsBanner(),
         Text(
           'What else is on your plate?',
           style: FlowTypography.titleMedium().copyWith(fontWeight: FontWeight.w700),

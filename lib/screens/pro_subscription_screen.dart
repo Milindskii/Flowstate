@@ -65,7 +65,7 @@ class _ProSubscriptionScreenState extends State<ProSubscriptionScreen> {
     final cardBg = FlowColors.surface(context);
     final borderColor = FlowColors.border(context);
 
-    final plans = ProPlanConfig.defaultPlans;
+    const plans = ProPlanConfig.defaultPlans;
 
     return Scaffold(
       backgroundColor: FlowColors.background(context),

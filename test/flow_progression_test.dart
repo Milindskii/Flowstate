@@ -295,9 +295,9 @@ void main() {
       addTearDown(() => tester.view.reset());
 
       final provider = FlowProvider();
-      final customOverview = FlowOverview(
-        companion: const FlowCompanion(id: 'c1', name: 'Noya', species: 'fox', level: 2, companionXp: 150),
-        profile: const FlowProfile(userId: 'u1', currentStreak: 3, longestStreak: 5, flowBalance: 400),
+      const customOverview = FlowOverview(
+        companion: FlowCompanion(id: 'c1', name: 'Noya', species: 'fox', level: 2, companionXp: 150),
+        profile: FlowProfile(userId: 'u1', currentStreak: 3, longestStreak: 5, flowBalance: 400),
         personalBestFocusMinutes: 45,
         bestFocusDayMinutes: 75,
         totalFocusMinutes: 120,
@@ -365,12 +365,12 @@ void main() {
       });
       expect(noyaImageFinder, findsWidgets);
 
-      // Verify companion name, level, XP, and focus callout
+      // Verify companion name, level, XP, and Open Hub action
       expect(find.textContaining('Noya · L1 · 0 XP'), findsOneWidget);
-      expect(find.text('25 min · Focus with Noya'), findsOneWidget);
+      expect(find.text('Open Hub'), findsOneWidget);
 
-      // Verify Start Flow button is fully visible
-      expect(find.widgetWithText(ElevatedButton, 'Start Flow'), findsOneWidget);
+      // Objective 8: Verify duplicate Start Flow button is removed from Today card
+      expect(find.widgetWithText(ElevatedButton, 'Start Flow'), findsNothing);
 
       // Verify zero RenderFlex overflow on 320px
       final error = tester.takeException();

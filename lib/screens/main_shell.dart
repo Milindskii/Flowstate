@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../components/flow_ambient_background.dart';
 import '../components/flow_bottom_nav.dart';
 import '../providers/app_state_provider.dart';
+import '../providers/flow_provider.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_motion.dart';
 import 'today_dashboard_tab.dart';
@@ -60,6 +61,14 @@ class MainShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = Provider.of<AppStateProvider>(context);
     final navIndex = state.currentNavIndex;
+
+    try {
+      final flow = Provider.of<FlowProvider>(context, listen: false);
+      state.onTaskCompletedForFlow ??= () {
+        flow.recordTaskCompletionLocally();
+        flow.loadOverview();
+      };
+    } catch (_) {}
 
     return Scaffold(
       backgroundColor: FlowColors.background(context),

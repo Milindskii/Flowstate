@@ -102,14 +102,12 @@ void main() {
 
     // Verify Empty State callouts
     expect(find.text("What's on your plate?"), findsOneWidget);
-    expect(find.text("Add everything you need to get done and we'll organize it."), findsOneWidget);
+    expect(find.text('Tell Flowstate everything you need to do, and it figures out when each thing fits.'), findsOneWidget);
     expect(find.text('Build my day'), findsOneWidget);
     expect(find.text('+ Add one task'), findsOneWidget);
-    expect(find.text('Dump everything at once or add tasks individually.'), findsOneWidget);
-    expect(find.text('✦ FLOW'), findsOneWidget);
-    expect(find.text('Lock in with Noya.'), findsOneWidget);
-    expect(find.text('25 minutes. One thing. No distractions.'), findsOneWidget);
-    expect(find.text('Start Flow'), findsOneWidget);
+    expect(find.textContaining('Dump everything at once or add tasks individually'), findsOneWidget);
+    // Objective 8: Duplicate Start Flow removed from Today empty state
+    expect(find.text('Start Flow'), findsNothing);
 
     // Verify removed clutter is not present
     expect(find.text('Your day is empty'), findsNothing);
@@ -417,8 +415,8 @@ void main() {
     expect(find.text("What's on your plate?"), findsOneWidget);
     expect(find.text('Build my day'), findsOneWidget);
     expect(find.text('+ Add one task'), findsOneWidget);
-    expect(find.text('✦ FLOW'), findsOneWidget);
-    expect(find.text('Start Flow'), findsOneWidget);
+    // Objective 8: Duplicate Start Flow removed from Today empty state
+    expect(find.text('Start Flow'), findsNothing);
 
     // Verify tapping "+ Add one task" opens normal task creation sheet
     await tester.tap(find.text('+ Add one task'));

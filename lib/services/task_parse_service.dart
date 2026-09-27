@@ -52,23 +52,44 @@ class TaskParseService {
 
   /// Checks whether an input contains complex or ambiguous natural language
   /// that cannot be confidently and safely structured by deterministic rules alone.
+  ///
+  /// CRITICAL: A multi-sentence paragraph brain dump (even if the deterministic
+  /// parser returns non-empty results) MUST be routed to Gemini, because the
+  /// deterministic clause splitter collapses multi-sentence paragraphs into a
+  /// single task blob — producing "Physical · 90 min" for a 9-task brain dump.
   static bool requiresAiEnrichment(String text) {
     final lower = text.toLowerCase().trim();
     if (lower.isEmpty) return false;
 
-    // Vague references or complex relative dependencies without clear timestamps
+    // 1. Vague references or complex relative dependencies without clear timestamps
     final ambiguousPatterns = [
       RegExp(r'\b(?:project\s+thing|stuff\s+i\s+told\s+you|the\s+thing\s+we\s+talked\s+about|whatever\s+we\s+discussed)\b'),
       RegExp(r'\b(?:sometime\s+before\s+(?:that|the|my)?\s*meeting|before\s+the\s+call\s+with|after\s+my\s+sync)\b'),
       RegExp(r'\b(?:help\s+me\s+figure\s+out|not\s+sure\s+(?:when|exactly|how\s+long)|whenever\s+you\s+can|sometime\s+this\s+week)\b'),
     ];
-
     for (final pattern in ambiguousPatterns) {
       if (pattern.hasMatch(lower)) return true;
     }
 
+    // 2. Multi-sentence paragraph brain dump — deterministic splitter cannot segment
+    // these correctly. Sentence count >= 3 is the primary signal.
+    final sentences = text.trim().split(RegExp(r'[.!?]+')).where((s) => s.trim().length > 4).toList();
+    if (sentences.length >= 3) return true;
+
+    // 3. High word count with multiple distinct task-action verbs targeting different
+    // objects (e.g. "finish X ... call Y ... clean Z") — strong multi-task signal.
+    final words = lower.split(RegExp(r'\s+'));
+    if (words.length > 40) {
+      // Count distinct action verb occurrences targeting distinct objects
+      final actionVerbPattern = RegExp(
+        r'\b(?:finish|fix|call|clean|review|study|email|submit|buy|pay|meet|run|gym|workout|prep|read|write|do|complete|reply|send|check|update|prepare|schedule|go\s+to)\b',
+      );
+      final matches = actionVerbPattern.allMatches(lower);
+      if (matches.length >= 3) return true;
+    }
+
+    // 4. If text was substantial but local parser found no tasks, AI is needed
     final localTasks = deterministicFallbackParse(text);
-    // If text was substantial but local parser found no tasks, AI is needed
     if (localTasks.isEmpty && text.trim().length >= 12) {
       return true;
     }
@@ -153,7 +174,7 @@ class TaskParseService {
       // Scheduled time extraction (never invent a fixed time if not stated)
       String? scheduledTimeStr;
       DateTime? scheduledStart;
-      final timeRegex = RegExp(r'\b(?:at|around)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b', caseSensitive: false);
+      final timeRegex = RegExp(r'\b(?:at|around|by)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b', caseSensitive: false);
       final timeMatch = timeRegex.firstMatch(lower);
       if (timeMatch != null) {
         final hourRaw = int.tryParse(timeMatch.group(1) ?? '9') ?? 9;
@@ -288,8 +309,10 @@ class TaskParseService {
     t = t.replaceAll(RegExp(r'\s+(?:to\s+do|todo|task)$', caseSensitive: false), '').trim();
     // Strip filler like 'my' or 'the' after action verbs (e.g. 'finish my assignment' -> 'Finish assignment')
     t = t.replaceAll(RegExp(r'\b(?:my|the)\s+(?=assignment|project|lab|homework|thesis|work|task|exam|quiz|session|workout)\b', caseSensitive: false), '');
-    // Strip leading filler words ("and", "to", "go to", "also", "then", "the", "my")
-    t = t.replaceAll(RegExp(r'^(?:and\s+|then\s+|also\s+|go\s+to\s+|to\s+|the\s+|my\s+)', caseSensitive: false), '').trim();
+    // Strip leading filler words ("and", "to", "go to", "also", "then", "the", "my", "maybe", "perhaps")
+    t = t.replaceAll(RegExp(r'^(?:and\s+|then\s+|also\s+|maybe\s+|perhaps\s+|go\s+to\s+|to\s+|the\s+|my\s+)', caseSensitive: false), '').trim();
+    // Strip trailing temporal filler ("later", "soon")
+    t = t.replaceAll(RegExp(r'\s+(?:later|soon)$', caseSensitive: false), '').trim();
     // Strip extra whitespace
     t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
     // Capitalize first letter
@@ -336,21 +359,21 @@ class TaskParseService {
             .where((s) => s.isNotEmpty)
             .toList();
         if (listParts.length > 1 && listParts.every((p) => p.length > 1)) {
-          clauses.addAll(listParts.map(sanitizeTitle));
+          clauses.addAll(listParts);
           continue;
         }
       }
 
       final parts = chunk
           .split(RegExp(
-            r'(?:,\s*(?:and|then|and then)\s+|\s+(?:and then|then)\s+|,\s*(?=' + actionVerbs + r'\b)|\s+and\s+(?=' + actionVerbs + r'\b(?!\s+(?:it|them)\b))|,\s*(?=[a-zA-Z0-9_\-\s]+\b(?:at|by|for)\s+\d+))',
+            r'(?:,\s*(?:and|then|and then|also|later|maybe|perhaps)\s+|\s+(?:and then|then)\s+|,\s*(?:(?:maybe|perhaps|also|later)\s+)?(?=' + actionVerbs + r'\b)|\s+and\s+(?=' + actionVerbs + r'\b(?!\s+(?:it|them)\b))|,\s*(?=[a-zA-Z0-9_\-\s]+\b(?:at|by|for)\s+\d+))',
             caseSensitive: false,
           ))
           .map((s) => s.trim())
           .where((s) => s.isNotEmpty);
-      clauses.addAll(parts.map(sanitizeTitle));
+      clauses.addAll(parts);
     }
 
-    return clauses.isEmpty ? [sanitizeTitle(text)] : clauses;
+    return clauses.isEmpty ? [text.trim()] : clauses;
   }
 }

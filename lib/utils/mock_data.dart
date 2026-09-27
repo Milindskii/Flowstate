@@ -12,6 +12,7 @@ class MockData {
         energyDipTime: '2:30 PM',
         physicalActivityMinutes: 45,
         primaryGoal: 'College',
+        bedtime: '23:15',
       );
 
   static List<TaskItem> get initialTasks => [

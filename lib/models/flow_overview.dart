@@ -348,4 +348,48 @@ class FlowOverview {
       if (notification != null) 'notification': notification,
     };
   }
+
+  FlowOverview copyWith({
+    FlowCompanion? companion,
+    FlowProfile? profile,
+    FlowChallenge? activeChallenge,
+    List<FlowDailyQuest>? dailyQuests,
+    List<FlowAchievement>? achievements,
+    FlowWeeklyProgress? weeklyProgress,
+    String? leagueTier,
+    int? weeklyFlowPoints,
+    String? leagueStatusMessage,
+    int? personalBestFocusMinutes,
+    int? weeklyFocusSessions,
+    int? weeklyFocusMinutes,
+    int? totalFocusMinutes,
+    int? totalSessionsCompleted,
+    int? bestFocusDayMinutes,
+    String? consistencyScore,
+    String? rhythmAcknowledgement,
+    String? activeSessionId,
+    String? notification,
+  }) {
+    return FlowOverview(
+      companion: companion ?? this.companion,
+      profile: profile ?? this.profile,
+      activeChallenge: activeChallenge ?? this.activeChallenge,
+      dailyQuests: dailyQuests ?? this.dailyQuests,
+      achievements: achievements ?? this.achievements,
+      weeklyProgress: weeklyProgress ?? this.weeklyProgress,
+      leagueTier: leagueTier ?? this.leagueTier,
+      weeklyFlowPoints: weeklyFlowPoints ?? this.weeklyFlowPoints,
+      leagueStatusMessage: leagueStatusMessage ?? this.leagueStatusMessage,
+      personalBestFocusMinutes: personalBestFocusMinutes ?? this.personalBestFocusMinutes,
+      weeklyFocusSessions: weeklyFocusSessions ?? this.weeklyFocusSessions,
+      weeklyFocusMinutes: weeklyFocusMinutes ?? this.weeklyFocusMinutes,
+      totalFocusMinutes: totalFocusMinutes ?? this.totalFocusMinutes,
+      totalSessionsCompleted: totalSessionsCompleted ?? this.totalSessionsCompleted,
+      bestFocusDayMinutes: bestFocusDayMinutes ?? this.bestFocusDayMinutes,
+      consistencyScore: consistencyScore ?? this.consistencyScore,
+      rhythmAcknowledgement: rhythmAcknowledgement ?? this.rhythmAcknowledgement,
+      activeSessionId: activeSessionId ?? this.activeSessionId,
+      notification: notification ?? this.notification,
+    );
+  }
 }

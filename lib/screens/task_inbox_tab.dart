@@ -101,8 +101,18 @@ class _TaskInboxTabState extends State<TaskInboxTab> {
     final allTasks = state.selectedCategory == 'All'
         ? state.tasks
         : state.tasks.where((t) => t.category == state.selectedCategory).toList();
-    final highPriority = allTasks.where((t) => t.isPriority && !t.isCompleted).toList();
-    final later = allTasks.where((t) => !t.isPriority && !t.isCompleted).toList();
+    final highPriority = allTasks
+        .where((t) =>
+            t.isPriorityExplicit &&
+            (t.priority == TaskPriority.high || t.priority == TaskPriority.urgent) &&
+            !t.isCompleted)
+        .toList();
+    final later = allTasks
+        .where((t) =>
+            !(t.isPriorityExplicit &&
+                (t.priority == TaskPriority.high || t.priority == TaskPriority.urgent)) &&
+            !t.isCompleted)
+        .toList();
     final completed = allTasks.where((t) => t.isCompleted).toList();
 
     return Scaffold(

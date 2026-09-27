@@ -231,6 +231,16 @@ async def test_non_pro_user_cannot_spoof_pro_status():
         )
         assert spoof_res.status_code in [400, 402]
 
+        unverified_res = await ac.post(
+            "/api/v1/subscription/verify",
+            headers=headers,
+            json={
+                "purchase_token": "opaque-client-token-without-google-proof",
+                "product_id": "flowstate_pro_monthly",
+            },
+        )
+        assert unverified_res.status_code == 503
+
         # User is strictly NOT Pro
         st_res = await ac.get("/api/v1/ai/status", headers=headers)
         assert st_res.json()["is_pro"] is False

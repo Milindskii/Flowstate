@@ -70,13 +70,15 @@ class TaskCard extends StatelessWidget {
                         style: FlowTypography.titleMedium().copyWith(
                           fontWeight: FontWeight.w700,
                           decoration: task.isCompleted ? TextDecoration.lineThrough : null,
-                          color: task.isCompleted ? FlowColors.textMuted : FlowColors.textPrimary,
+                          color: task.isCompleted
+                              ? FlowColors.textMutedOf(context)
+                              : FlowColors.textPrimaryOf(context),
                         ),
                       ),
                     ),
-                    const Icon(
+                    Icon(
                       Icons.more_horiz_rounded,
-                      color: FlowColors.textMuted,
+                      color: FlowColors.textMutedOf(context),
                       size: 22,
                     ),
                   ],
@@ -85,33 +87,67 @@ class TaskCard extends StatelessWidget {
 
                 // Middle: Attribute pills
                 Wrap(
-                  spacing: 12,
+                  spacing: 8,
                   runSpacing: 8,
                   children: [
                     // Difficulty tag
                     _buildMetaChip(
+                      context,
                       icon: Icons.bolt_rounded,
                       label: task.difficulty.label,
-                      iconColor: FlowColors.cyanLight,
-                      bgColor: FlowColors.tagDeepWorkBg,
-                      textColor: FlowColors.cyanLight,
+                      iconColor: FlowColors.accentCyan,
+                      bgColor: FlowColors.accentCyan.withValues(alpha: 0.12),
+                      textColor: FlowColors.accentCyan,
                     ),
                     // Duration
                     _buildMetaChip(
+                      context,
                       icon: Icons.access_time_rounded,
-                      label: '${task.durationMinutes} min',
-                      iconColor: FlowColors.textSecondary,
-                      bgColor: FlowColors.darkSurface,
-                      textColor: FlowColors.textSecondary,
+                      label: task.isDurationExplicit ? '${task.durationMinutes} min' : 'Est. ${task.durationMinutes} min',
+                      iconColor: FlowColors.textSecondaryOf(context),
+                      bgColor: FlowColors.surfaceContainer(context),
+                      textColor: FlowColors.textSecondaryOf(context),
                     ),
+                    // Priority tag (Objective 10)
+                    if (task.isPriorityExplicit && task.priority != null)
+                      _buildMetaChip(
+                        context,
+                        icon: Icons.flag_rounded,
+                        label: '${task.priority!.value.toUpperCase()} PRIORITY',
+                        iconColor: (task.priority == TaskPriority.high || task.priority == TaskPriority.urgent)
+                            ? FlowColors.accentCyan
+                            : FlowColors.textSecondaryOf(context),
+                        bgColor: FlowColors.surfaceContainer(context),
+                        textColor: FlowColors.textSecondaryOf(context),
+                      )
+                    else if (task.isPriorityInferred && task.priority != null)
+                      _buildMetaChip(
+                        context,
+                        icon: Icons.auto_awesome_rounded,
+                        label: 'Suggested ${task.priority!.value}',
+                        iconColor: FlowColors.warning,
+                        bgColor: FlowColors.warning.withValues(alpha: 0.12),
+                        textColor: FlowColors.warning,
+                      )
+                    else
+                      _buildMetaChip(
+                        context,
+                        icon: Icons.outlined_flag_rounded,
+                        label: 'Priority not specified',
+                        iconColor: FlowColors.textMutedOf(context),
+                        bgColor: FlowColors.surfaceContainer(context),
+                        textColor: FlowColors.textMutedOf(context),
+                      ),
                     // Deadline
-                    _buildMetaChip(
-                      icon: Icons.calendar_today_rounded,
-                      label: task.deadline,
-                      iconColor: FlowColors.textSecondary,
-                      bgColor: FlowColors.darkSurface,
-                      textColor: FlowColors.textSecondary,
-                    ),
+                    if (task.deadline.isNotEmpty && task.deadline != 'Today')
+                      _buildMetaChip(
+                        context,
+                        icon: Icons.calendar_today_rounded,
+                        label: task.deadline,
+                        iconColor: FlowColors.textSecondaryOf(context),
+                        bgColor: FlowColors.surfaceContainer(context),
+                        textColor: FlowColors.textSecondaryOf(context),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 18),
@@ -122,14 +158,14 @@ class TaskCard extends StatelessWidget {
                   children: [
                     Text(
                       task.category,
-                      style: FlowTypography.bodyMedium(color: FlowColors.textMuted),
+                      style: FlowTypography.bodyMedium(color: FlowColors.textMutedOf(context)),
                     ),
                     Row(
                       children: [
                         // Reschedule / repeat button
                         IconButton(
                           icon: const Icon(Icons.refresh_rounded, size: 20),
-                          color: FlowColors.textMuted,
+                          color: FlowColors.textMutedOf(context),
                           splashRadius: 22,
                           onPressed: () {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -178,7 +214,8 @@ class TaskCard extends StatelessWidget {
     );
   }
 
-  Widget _buildMetaChip({
+  Widget _buildMetaChip(
+    BuildContext context, {
     required IconData icon,
     required String label,
     required Color iconColor,
@@ -190,7 +227,7 @@ class TaskCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: bgColor,
         borderRadius: FlowRadii.pillRadius,
-        border: Border.all(color: FlowColors.darkBorder.withValues(alpha: 0.5), width: 0.8),
+        border: Border.all(color: FlowColors.border(context).withValues(alpha: 0.5), width: 0.8),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
