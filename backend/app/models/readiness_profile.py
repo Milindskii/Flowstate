@@ -27,9 +27,14 @@ class ReadinessProfile(Base):
     typical_sleep_minutes = Column(Integer, default=480, nullable=False)
     weekday_wake_time = Column(String, default="07:00", nullable=False)
     weekend_wake_time = Column(String, default="08:30", nullable=False)
+    bedtime = Column(String, default="23:00", nullable=False)
     wake_variability = Column(Float, default=1.5, nullable=False) # hours diff
     sleep_inertia_minutes = Column(Integer, default=30, nullable=False)
     preferred_session_minutes = Column(Integer, default=45, nullable=False)
+
+    draining_work_types = Column(String, default="coding,studying", nullable=True) # comma-separated
+    fatigue_symptom = Column(String, default="distracted", nullable=True)
+    routine_shift_preference = Column(String, default="quick_recovery", nullable=True)
 
     energy_predictability = Column(String, default="mostly_predictable", nullable=False)
     optimization_goal = Column(String, default="start_difficult_work", nullable=False)

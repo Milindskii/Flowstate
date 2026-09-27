@@ -738,4 +738,86 @@ async def test_personal_records_data_integrity():
         assert p1["total_sessions_completed"] == 1
         assert p1["consistency_score"] in ["Calibrating", "Steady"]
 
+@pytest.mark.asyncio
+async def test_priority_task_updates_quest_and_weekly_challenge():
+    """
+    Completing an eligible priority task must:
+    1. Increment daily quest 'finish_2_tasks'
+    2. Increment weekly challenge 'Complete 5 priority tasks' from 0/5 to 1/5
+    3. Update weekly progress priority_tasks_completed
+    4. Persist to database so subsequent overview requests reflect current state
+    """
+    user_id = unique_user("task-progression")
+    headers = make_auth_header(user_id)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # Create user in DB and a priority task
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                user = User(id=user_id, email=f"{user_id}@flowstate.local")
+                db.add(user)
+                db.commit()
+
+            task = Task(
+                id=f"prio-{uuid.uuid4().hex[:8]}",
+                user_id=user_id,
+                title="Crucial Priority Feature",
+                estimated_minutes=30,
+                priority="high",
+                status="todo",
+            )
+            db.add(task)
+            db.commit()
+            task_id = task.id
+        finally:
+            db.close()
+
+        # Initial overview: challenge should be 0/5
+        ov0 = await ac.get("/api/v1/flow", headers=headers)
+        assert ov0.status_code == 200
+        assert ov0.json()["active_challenge"]["current_count"] == 0
+        assert ov0.json()["active_challenge"]["target_count"] == 5
+
+        # Complete the priority task via task complete endpoint
+        complete_res = await ac.post(f"/api/v1/tasks/{task_id}/complete", headers=headers, json={})
+        assert complete_res.status_code == 200
+        assert complete_res.json()["status"] == "completed"
+
+        # Overview should now show challenge progressed to 1/5
+        ov1 = await ac.get("/api/v1/flow/overview", headers=headers)
+        assert ov1.status_code == 200
+        data1 = ov1.json()
+        assert data1["active_challenge"]["current_count"] == 1
+        assert data1["active_challenge"]["target_count"] == 5
+
+        # Daily quest 'finish_2_tasks' should also have current_count == 1
+        finish_task_quest = next((q for q in data1["daily_quests"] if q["quest_key"] == "finish_2_tasks"), None)
+        assert finish_task_quest is not None
+        assert finish_task_quest["current_count"] == 1
+
+@pytest.mark.asyncio
+async def test_authoritative_flow_overview_endpoint():
+    """
+    Verifies that GET /api/v1/flow/overview is an authoritative single endpoint
+    returning level, xp, flow_points, streak, shields, Noya, quests, challenge, personal records.
+    """
+    user_id = unique_user("auth-overview")
+    headers = make_auth_header(user_id)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/flow/overview", headers=headers)
+        assert res.status_code == 200
+        d = res.json()
+        assert d["companion"]["name"] == "Noya"
+        assert d["companion"]["species"] == "fox"
+        assert "level" in d["companion"]
+        assert "companion_xp" in d["companion"]
+        assert "xp_to_next_level" in d["companion"]
+        assert "flow_balance" in d["profile"]
+        assert "current_streak" in d["profile"]
+        assert "shields_available" in d["profile"]
+        assert "daily_quests" in d
+        assert "active_challenge" in d
+        assert "personal_progress" in d
+
 

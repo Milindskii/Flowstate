@@ -24,7 +24,7 @@ FLOW_REWARD_WEEKLY_CHALLENGE: int = 100
 # Anti-Farming & Frequency Caps
 MAX_PRIORITY_REWARDS_PER_DAY: int = 3
 MIN_TASKS_FOR_DAILY_PLAN: int = 3
-MIN_QUALIFYING_FOCUS_MINUTES: int = 5  # Server requires min 5 mins of focus for rewards
+MIN_QUALIFYING_FOCUS_MINUTES: int = 1  # Server requires min 1 min of focus for rewards
 MIN_QUALIFYING_FOCUS_MINUTES_TEST: int = 1  # For test runs
 MAX_FOCUS_MINUTES: int = 180  # Max 3 hours per session to prevent runaway timers
 

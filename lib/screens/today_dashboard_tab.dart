@@ -3,6 +3,8 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../components/break_session_card.dart';
 import '../components/companion/companion_graphic.dart';
+import '../components/companion/flow_companion_view.dart';
+import '../models/flow_companion.dart';
 import '../components/compact_readiness_card.dart';
 import '../components/right_now_task_card.dart';
 import '../components/timeline_current_time_marker.dart';
@@ -47,6 +49,21 @@ class TodayDashboardTab extends StatefulWidget {
 class _TodayDashboardTabState extends State<TodayDashboardTab> {
   bool _showFullDay = false;
 
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        final appState = Provider.of<AppStateProvider>(context, listen: false);
+        final flowProvider = Provider.of<FlowProvider>(context, listen: false);
+        appState.onTaskCompletedForFlow = () {
+          flowProvider.loadOverview();
+        };
+      } catch (_) {}
+    });
+  }
+
   void _openAddTaskSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -77,12 +94,16 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
       accent = Provider.of<ThemeProvider>(context).accentColor;
     } catch (_) {}
 
+    FlowProvider? flowProvider;
+    try {
+      flowProvider = Provider.of<FlowProvider>(context);
+    } catch (_) {}
+    final companion = flowProvider?.companion;
+
     // 1. Loading State: Shimmer Skeleton
     if (state.isLoading) {
       return const TodayDashboardSkeleton();
     }
-
-
 
     final recommended = state.recommendedTask;
     final bool isCurrentRunning =
@@ -137,7 +158,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                             const SizedBox(width: 6),
                             Text(
                               'What now?',
-                              style: FlowTypography.labelSmall(color: FlowColors.textSecondary).copyWith(
+                              style: FlowTypography.labelSmall(color: FlowColors.textSecondaryOf(context)).copyWith(
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -195,7 +216,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                       children: [
                         Text(
                           'YOUR RHYTHM',
-                          style: FlowTypography.badgeText(color: FlowColors.textSecondary).copyWith(
+                          style: FlowTypography.badgeText(color: FlowColors.textSecondaryOf(context)).copyWith(
                             fontWeight: FontWeight.w800,
                             letterSpacing: 0.8,
                             fontSize: 11,
@@ -224,6 +245,47 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                     ),
                     const SizedBox(height: 28),
                   ] else if (recommended != null) ...[
+                    // Case A: User completed at least 1 task, and pending tasks remain
+                    if (state.tasks.where((t) => t.isCompleted).isNotEmpty) ...[
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 14),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: FlowColors.surface(context),
+                          borderRadius: BorderRadius.circular(FlowRadii.card),
+                          border: Border.all(color: FlowColors.mint.withValues(alpha: 0.35)),
+                        ),
+                        child: Row(
+                          children: [
+                            CompanionGraphic(
+                              species: companion?.species ?? 'fox',
+                              size: 36,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Nice work today 🦊',
+                                    style: FlowTypography.labelMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${state.tasks.where((t) => t.isCompleted).length} ${state.tasks.where((t) => t.isCompleted).length == 1 ? 'task' : 'tasks'} completed · Up next',
+                                    style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)).copyWith(
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     FramerMotionFadeSlide(
                       delay: const Duration(milliseconds: 120),
                       translateY: 12,
@@ -469,14 +531,14 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
               children: [
                 CompanionGraphic(
                   species: companion?.species ?? 'fox',
-                  size: 16,
+                  size: 32,
                 ),
-                const SizedBox(width: 5),
+                const SizedBox(width: 6),
                 Text(
                   '$name · L$level',
                   style: FlowTypography.labelSmall(color: FlowColors.textPrimaryOf(context)).copyWith(
                     fontWeight: FontWeight.w700,
-                    fontSize: 11,
+                    fontSize: 12,
                   ),
                 ),
                 if (streak > 0) ...[
@@ -487,7 +549,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                     '${streak}d',
                     style: FlowTypography.labelSmall(color: FlowColors.mint).copyWith(
                       fontWeight: FontWeight.w800,
-                      fontSize: 11,
+                      fontSize: 12,
                     ),
                   ),
                 ],
@@ -507,7 +569,6 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
 
     final companion = flowProvider?.companion;
     final companionName = companion?.name ?? 'Noya';
-    final species = companion?.species ?? 'fox';
     final isDark = FlowColors.isDark(context);
 
     return Column(
@@ -705,19 +766,25 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                 ],
               ),
               const SizedBox(height: 12),
-              // Companion + Text Row (NO circle aura, winking fox sits directly on card)
+              // Companion + Text Row (Canonical FlowCompanionView)
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Image.asset(
-                    'assets/images/companions/fox_winking.png',
-                    width: 72,
-                    height: 72,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => CompanionGraphic(
-                      species: species,
-                      size: 64,
-                    ),
+                  FlowCompanionView(
+                    companion: companion ??
+                        const FlowCompanion(
+                          id: 'default',
+                          species: 'fox',
+                          name: 'Noya',
+                          level: 1,
+                          stage: 'Baby',
+                          companionXp: 0,
+                          xpToNextLevel: 60,
+                        ),
+                    size: 68,
+                    showStageBadge: false,
+                    showStatusText: false,
+                    frameless: true,
                   ),
                   const SizedBox(width: 14),
                   Expanded(
@@ -873,26 +940,9 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                 SizedBox(
                   width: 44,
                   height: 44,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: Image.asset(
-                      (companion?.species ?? 'fox').toLowerCase().trim() == 'otter' || (companion?.species ?? '').toLowerCase().trim() == 'ludo'
-                          ? 'assets/images/companions/otter.png'
-                          : ((companion?.species ?? '').toLowerCase().trim() == 'owl' || (companion?.species ?? '').toLowerCase().trim() == 'aria'
-                              ? 'assets/images/companions/owl.png'
-                              : ((companion?.species ?? '').toLowerCase().trim() == 'capybara' || (companion?.species ?? '').toLowerCase().trim() == 'boba'
-                                  ? 'assets/images/companions/capybara.png'
-                                  : ((companion?.species ?? '').toLowerCase().trim() == 'cat' || (companion?.species ?? '').toLowerCase().trim() == 'mochi'
-                                      ? 'assets/images/companions/cat.png'
-                                      : 'assets/images/companions/fox_winking.png'))),
-                      width: 44,
-                      height: 44,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => CompanionGraphic(
-                        species: companion?.species ?? 'fox',
-                        size: 44,
-                      ),
-                    ),
+                  child: CompanionGraphic(
+                    species: companion?.species ?? 'fox',
+                    size: 44,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -961,12 +1011,62 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
     final completedCount = state.todaySnapshot?.completedCount ??
         state.tasks.where((t) => t.isCompleted).length;
     final focusMinutes = completedCount * 25;
+    final now = DateTime.now();
+    final isLate = (now.hour >= 20 && now.minute >= 30) || now.hour >= 21;
 
     FlowProvider? flowProvider;
     try {
       flowProvider = Provider.of<FlowProvider>(context, listen: false);
     } catch (_) {}
     final companion = flowProvider?.companion;
+
+    final String headline;
+    final String subtitle;
+    final String primaryButtonLabel;
+    final VoidCallback primaryButtonAction;
+    final String? secondaryButtonLabel;
+    final VoidCallback? secondaryButtonAction;
+
+    if (isLate) {
+      // CASE D: Late night completion — wind down
+      headline = "You're all done for today. 🦊";
+      subtitle = "Nice work. Time to wind down.";
+      primaryButtonLabel = 'Plan tomorrow';
+      primaryButtonAction = () {
+        FlowHaptics.lightTap();
+        _openAddTaskSheet(context);
+      };
+      secondaryButtonLabel = null;
+      secondaryButtonAction = null;
+    } else if (completedCount == 1) {
+      // CASE B: User completed their only planned task
+      headline = 'One win in the bag. 🦊';
+      subtitle = "You're clear for today.";
+      primaryButtonLabel = '+ Add another task';
+      primaryButtonAction = () {
+        FlowHaptics.selection();
+        _openAddTaskSheet(context);
+      };
+      secondaryButtonLabel = 'Plan tomorrow';
+      secondaryButtonAction = () {
+        FlowHaptics.lightTap();
+        _openAddTaskSheet(context);
+      };
+    } else {
+      // CASE C: User completed all planned tasks
+      headline = "You're clear for today. 🦊";
+      subtitle = "Nice work. Your plan is complete.";
+      primaryButtonLabel = '+ Add something';
+      primaryButtonAction = () {
+        FlowHaptics.selection();
+        _openAddTaskSheet(context);
+      };
+      secondaryButtonLabel = 'Plan tomorrow';
+      secondaryButtonAction = () {
+        FlowHaptics.lightTap();
+        _openAddTaskSheet(context);
+      };
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -991,83 +1091,92 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Text(
-                    'Nice work today',
-                    style: FlowTypography.headlineMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 22,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
                   CompanionGraphic(
                     species: companion?.species ?? 'fox',
-                    size: 24,
+                    size: 44,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          headline,
+                          style: FlowTypography.headlineMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 20,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          subtitle,
+                          style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              Text(
-                '$completedCount ${completedCount == 1 ? 'task' : 'tasks'} completed'
-                '${focusMinutes > 0 ? ' · $focusMinutes min focused' : ''}',
-                style: FlowTypography.titleSmall(color: FlowColors.textSecondaryOf(context)).copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'You kept your Flow going.',
-                style: FlowTypography.bodyMedium(color: FlowColors.textMutedOf(context)),
-              ),
-              const SizedBox(height: 20),
-              // Tomorrow section
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: FlowColors.surfaceElevated(context),
-                  borderRadius: FlowRadii.inputRadius,
-                  border: Border.all(color: FlowColors.border(context)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Tomorrow',
-                      style: FlowTypography.badgeText(color: FlowColors.accentCyan).copyWith(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 10,
-                      ),
+              if (completedCount > 0) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: FlowColors.surfaceElevated(context),
+                    borderRadius: BorderRadius.circular(FlowRadii.pill),
+                    border: Border.all(color: FlowColors.border(context)),
+                  ),
+                  child: Text(
+                    '$completedCount ${completedCount == 1 ? 'task' : 'tasks'} completed'
+                    '${focusMinutes > 0 ? ' · $focusMinutes min focused' : ''}',
+                    style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
+                      fontWeight: FontWeight.w600,
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Prepare for your next focus session',
-                      style: FlowTypography.bodyMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
+              ],
+              const SizedBox(height: 18),
               SizedBox(
                 width: double.infinity,
                 height: 46,
                 child: ElevatedButton.icon(
-                  onPressed: () {
-                    FlowHaptics.lightTap();
-                    _openAddTaskSheet(context);
-                  },
+                  onPressed: primaryButtonAction,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: accent,
                     foregroundColor: FlowColors.textInverse,
                     elevation: 0,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(FlowRadii.button)),
                   ),
-                  icon: const Icon(Icons.add_rounded, size: 18),
-                  label: const Text('Plan tomorrow'),
+                  icon: Icon(
+                    primaryButtonLabel.contains('Add') ? Icons.add_rounded : Icons.calendar_today_rounded,
+                    size: 18,
+                  ),
+                  label: Text(
+                    primaryButtonLabel,
+                    style: FlowTypography.labelMedium(color: FlowColors.textInverse).copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
               ),
+              if (secondaryButtonLabel != null) ...[
+                const SizedBox(height: 8),
+                Center(
+                  child: TextButton(
+                    onPressed: secondaryButtonAction,
+                    child: Text(
+                      secondaryButtonLabel,
+                      style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -1268,12 +1377,18 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
     }).toList();
 
     if (filteredSchedule.isEmpty) {
+      FlowProvider? flowProvider;
+      try {
+        flowProvider = Provider.of<FlowProvider>(context, listen: false);
+      } catch (_) {}
+      final companion = flowProvider?.companion;
+
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             'UP NEXT',
-            style: FlowTypography.badgeText(color: FlowColors.textSecondary).copyWith(
+            style: FlowTypography.badgeText(color: FlowColors.textSecondaryOf(context)).copyWith(
               fontWeight: FontWeight.w800,
               letterSpacing: 0.8,
               fontSize: 11,
@@ -1285,12 +1400,49 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: FlowColors.surface(context),
-              borderRadius: BorderRadius.circular(FlowRadii.card),
+              borderRadius: BorderRadius.circular(FlowRadii.cardLarge),
               border: Border.all(color: FlowColors.border(context)),
             ),
-            child: Text(
-              'Nothing else planned today.',
-              style: FlowTypography.bodyMedium(color: FlowColors.textMutedOf(context)),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                CompanionGraphic(
+                  species: companion?.species ?? 'fox',
+                  size: 40,
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "You're clear for today.",
+                        style: FlowTypography.titleSmall(color: FlowColors.textPrimaryOf(context)).copyWith(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Your planned tasks are done.',
+                        style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)),
+                      ),
+                    ],
+                  ),
+                ),
+                TextButton(
+                  onPressed: () {
+                    FlowHaptics.selection();
+                    _openAddTaskSheet(context);
+                  },
+                  child: Text(
+                    '+ Add a task',
+                    style: FlowTypography.labelMedium(color: accent).copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],

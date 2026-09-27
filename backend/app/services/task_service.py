@@ -144,7 +144,13 @@ class TaskService:
             "status": TaskStatus.completed,
             "completed_at": completion_time,
         }
-        return self.task_repo.update(db, task, update_data)
+        updated_task = self.task_repo.update(db, task, update_data)
+        try:
+            from .flow_service import FlowService
+            FlowService().on_task_completed(db, user_id, updated_task)
+        except Exception:
+            pass
+        return updated_task
 
     def delete_task(self, db: Session, task_id: str, user_id: str, permanent: bool = False) -> Task:
         """

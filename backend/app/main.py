@@ -45,6 +45,20 @@ if not is_production and settings.DATABASE_URL.startswith("sqlite"):
                         logger.info(f"Adding missing column to SQLite users table: {col_name}")
                         conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_def}"))
                 conn.commit()
+
+            if "readiness_profiles" in inspector.get_table_names():
+                rp_cols = {c["name"] for c in inspector.get_columns("readiness_profiles")}
+                rp_missing = [
+                    ("bedtime", "VARCHAR DEFAULT '23:00'"),
+                    ("draining_work_types", "VARCHAR DEFAULT 'coding,studying'"),
+                    ("fatigue_symptom", "VARCHAR DEFAULT 'distracted'"),
+                    ("routine_shift_preference", "VARCHAR DEFAULT 'quick_recovery'"),
+                ]
+                for col_name, col_def in rp_missing:
+                    if col_name not in rp_cols:
+                        logger.info(f"Adding missing column to SQLite readiness_profiles table: {col_name}")
+                        conn.execute(text(f"ALTER TABLE readiness_profiles ADD COLUMN {col_name} {col_def}"))
+                conn.commit()
     except Exception as e:
         logger.error(f"Development schema safety check failed: {e}")
         raise

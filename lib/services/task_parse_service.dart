@@ -58,9 +58,9 @@ class TaskParseService {
 
     // Vague references or complex relative dependencies without clear timestamps
     final ambiguousPatterns = [
-      RegExp(r'\b(?:that\s+project\s+thing|stuff\s+i\s+told\s+you|the\s+thing\s+we\s+talked\s+about|whatever\s+we\s+discussed)\b'),
-      RegExp(r'\b(?:sometime\s+before\s+my\s+meeting|before\s+the\s+call\s+with|after\s+my\s+sync)\b'),
-      RegExp(r'\b(?:help\s+me\s+figure\s+out|not\s+sure\s+when|whenever\s+you\s+can|sometime\s+this\s+week)\b'),
+      RegExp(r'\b(?:project\s+thing|stuff\s+i\s+told\s+you|the\s+thing\s+we\s+talked\s+about|whatever\s+we\s+discussed)\b'),
+      RegExp(r'\b(?:sometime\s+before\s+(?:that|the|my)?\s*meeting|before\s+the\s+call\s+with|after\s+my\s+sync)\b'),
+      RegExp(r'\b(?:help\s+me\s+figure\s+out|not\s+sure\s+(?:when|exactly|how\s+long)|whenever\s+you\s+can|sometime\s+this\s+week)\b'),
     ];
 
     for (final pattern in ambiguousPatterns) {
@@ -94,7 +94,7 @@ class TaskParseService {
       final List<String> ambiguities = [];
 
       // Priority extraction (explicit user words always win)
-      TaskPriority priority = TaskPriority.medium;
+      TaskPriority? priority;
       String prioritySource = 'unspecified';
       if (RegExp(r'\b(?:urgent|critical|p0|asap)\b', caseSensitive: false).hasMatch(lower)) {
         priority = TaskPriority.urgent;
@@ -119,6 +119,7 @@ class TaskParseService {
 
       // Duration extraction
       int? durationMinutes;
+      bool durationFound = false;
       final durationRegex = RegExp(r'\b(?:for\s+)?(\d+(?:\.\d+)?)\s*(mins?|minutes?|m|hrs?|hours?|h)\b', caseSensitive: false);
       final durMatch = durationRegex.firstMatch(lower);
       if (durMatch != null) {
@@ -129,13 +130,24 @@ class TaskParseService {
         } else {
           durationMinutes = val.clamp(5, 480).toInt();
         }
+        durationFound = true;
         title = title.replaceAll(RegExp(durMatch.group(0)!, caseSensitive: false), '').trim();
       } else if (lower.contains('one hour') || lower.contains('an hour')) {
         durationMinutes = 60;
+        durationFound = true;
         title = title.replaceAll(RegExp(r'\b(?:for\s+)?(?:one hour|an hour)\b', caseSensitive: false), '').trim();
       } else if (lower.contains('half an hour')) {
         durationMinutes = 30;
+        durationFound = true;
         title = title.replaceAll(RegExp(r'\b(?:for\s+)?half an hour\b', caseSensitive: false), '').trim();
+      }
+
+      final List<String> missingFields = [];
+      if (!durationFound) {
+        missingFields.add('duration');
+      }
+      if (prioritySource == 'unspecified') {
+        missingFields.add('priority');
       }
 
       // Scheduled time extraction (never invent a fixed time if not stated)
@@ -196,36 +208,45 @@ class TaskParseService {
         }
       }
 
-      // Category and Type categorization with sensible defaults
-      TaskType taskType = TaskType.deepWork;
-      TaskDifficulty difficulty = TaskDifficulty.medium;
-      String category = 'General';
-
-      if (RegExp(r'\b(gym|workout|exercise|run|leg day|yoga|cardio)\b', caseSensitive: false).hasMatch(lower)) {
-        taskType = TaskType.physical;
-        difficulty = TaskDifficulty.physical;
-        category = 'Fitness';
-        durationMinutes ??= 60;
-      } else if (RegExp(r'\b(assignment|study|dbms|ml|code|coding|thesis|math|algorithm|homework|lab|arrays)\b', caseSensitive: false).hasMatch(lower)) {
-        taskType = TaskType.study;
-        difficulty = TaskDifficulty.high;
-        category = 'Study';
-        durationMinutes ??= 45;
-      } else if (RegExp(r'\b(work|client|meeting|sync|email|call|schedule|buy|pay|clean|admin|errand|dentist|doctor)\b', caseSensitive: false).hasMatch(lower)) {
-        taskType = RegExp(r'\b(work|client)\b', caseSensitive: false).hasMatch(lower)
-            ? TaskType.deepWork
-            : TaskType.admin;
-        difficulty = TaskDifficulty.light;
-        category = 'Admin';
-        durationMinutes ??= 30;
-      } else {
-        durationMinutes ??= 45;
+      if (deadlineAt == null && scheduledStart == null) {
+        missingFields.add('deadline');
       }
 
       // Clean, concise, user-faithful task title
       title = sanitizeTitle(title);
       if (title.isEmpty) {
         title = sanitizeTitle(clause);
+      }
+      final cleanLower = title.toLowerCase();
+
+      // Category and Type categorization with sensible defaults
+      TaskType taskType = TaskType.deepWork;
+      TaskDifficulty difficulty = TaskDifficulty.medium;
+      String category = 'General';
+
+      if (RegExp(r'\b(gym|workout|exercise|run|leg day|yoga|cardio)\b', caseSensitive: false).hasMatch(cleanLower)) {
+        taskType = TaskType.physical;
+        difficulty = TaskDifficulty.physical;
+        category = 'Fitness';
+        durationMinutes ??= 60;
+      } else if (RegExp(r'\b(assignment|assignments|study|dbms|ml|code|coding|thesis|math|algorithm|homework|lab|arrays)\b', caseSensitive: false).hasMatch(cleanLower)) {
+        taskType = RegExp(r'\b(thesis|ml|algorithm|code|coding)\b', caseSensitive: false).hasMatch(cleanLower)
+            ? TaskType.deepWork
+            : TaskType.study;
+        difficulty = TaskDifficulty.high;
+        category = 'College';
+        durationMinutes ??= 45;
+      } else if (RegExp(r'\b(work|client|meeting|sync|email|call|schedule|buy|pay|clean|admin|errand|dentist|doctor)\b', caseSensitive: false).hasMatch(cleanLower)) {
+        taskType = RegExp(r'\b(work|client|project)\b', caseSensitive: false).hasMatch(cleanLower)
+            ? TaskType.deepWork
+            : TaskType.admin;
+        difficulty = TaskDifficulty.medium;
+        category = RegExp(r'\b(work|client|project)\b', caseSensitive: false).hasMatch(cleanLower)
+            ? 'Work'
+            : 'Personal';
+        durationMinutes ??= 45;
+      } else {
+        durationMinutes ??= 45;
       }
 
       results.add(
@@ -243,6 +264,7 @@ class TaskParseService {
           prioritySource: prioritySource,
           category: category,
           isPriority: priority == TaskPriority.high || priority == TaskPriority.urgent,
+          missingFields: missingFields,
           ambiguities: ambiguities,
         ),
       );
@@ -252,20 +274,22 @@ class TaskParseService {
   }
 
   /// Ensures task titles are concise, natural, and user-faithful.
-  /// Removes bloated filler ('to do', 'task for', 'task', redundant 'my'/'the').
+  /// Removes bloated filler ('to do', 'task for', 'task', redundant 'my'/'the', conversational openers).
   static String sanitizeTitle(String rawTitle) {
     if (rawTitle.trim().isEmpty) return 'Task';
     String t = rawTitle.trim();
     // Strip leading/trailing punctuation or bullet marks
     t = t.replaceAll(RegExp(r'^[,\s\-•*:]+|[,\s\-•*:]+$'), '').trim();
+    // Strip conversational openers
+    t = t.replaceAll(RegExp(r"^(?:i have|i've got|i need to do|i need to|i have to|on my plate:?|my tasks are:?|plan for today:?|today i have|today:?)\s+", caseSensitive: false), '').trim();
     // Strip prefixes like "task for ", "task: ", "to do: "
     t = t.replaceAll(RegExp(r'^(?:task\s+for|task\s*:|to\s*do\s*:)\s*', caseSensitive: false), '').trim();
     // Strip suffixes like " to do", " todo", " task"
     t = t.replaceAll(RegExp(r'\s+(?:to\s+do|todo|task)$', caseSensitive: false), '').trim();
     // Strip filler like 'my' or 'the' after action verbs (e.g. 'finish my assignment' -> 'Finish assignment')
     t = t.replaceAll(RegExp(r'\b(?:my|the)\s+(?=assignment|project|lab|homework|thesis|work|task|exam|quiz|session|workout)\b', caseSensitive: false), '');
-    // Strip leading filler words ("and", "to", "go to", "also", "then")
-    t = t.replaceAll(RegExp(r'^(?:and\s+|then\s+|also\s+|go\s+to\s+|to\s+)', caseSensitive: false), '').trim();
+    // Strip leading filler words ("and", "to", "go to", "also", "then", "the", "my")
+    t = t.replaceAll(RegExp(r'^(?:and\s+|then\s+|also\s+|go\s+to\s+|to\s+|the\s+|my\s+)', caseSensitive: false), '').trim();
     // Strip extra whitespace
     t = t.replaceAll(RegExp(r'\s+'), ' ').trim();
     // Capitalize first letter
@@ -278,37 +302,41 @@ class TaskParseService {
   }
 
   static List<String> _splitClauses(String text) {
-    // 1. Primary delimiters: newlines, semicolons, bullets
-    final primaryChunks = text.split(RegExp(r'[\n;•\*\-]+')).map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+    // Strip conversational openers
+    final clean = text.trim().replaceAll(RegExp(r"^(?:i have|i've got|i need to do|i need to|i have to|on my plate:?|my tasks are:?|plan for today:?|today i have|today:?)\s+", caseSensitive: false), '').trim();
+    final primaryChunks = clean.split(RegExp(r'[\n;•\*\-]+')).map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
     final List<String> clauses = [];
-    const actionVerbs = r'(?:finish|study|go to|gym|workout|review|call|email|buy|read|write|prep|pay|meet|clean|submit|update|complete|dentist|doctor|appointment|sync|class|lecture|groceries|errands?|pick up|drop off|walk|exercise|run)';
+    const actWords = r'(?:gym|workout|work|assignments?|homework|dentist|doctor|groceries|meeting|emails?)';
+    const actionVerbs = r'(?:finish|study|go to|gym|workout|review|call|email|buy|read|write|prep|pay|meet|clean|submit|update|complete|dentist|doctor|appointment|sync|class|lecture|groceries|errands?|pick up|drop off|walk|exercise|run|work)';
 
     for (final chunk in primaryChunks) {
       final lower = chunk.toLowerCase().trim();
 
       // Task Segmentation: independently executable activities
+      // e.g. "I have gym work and assignments" -> ["Gym", "Work", "Assignments"]
       // e.g. "gym work assignment" -> ["Gym", "Work", "Assignment"]
+      // e.g. "gym, work, assignment" -> ["Gym", "Work", "Assignment"]
       // Preserves single outcome phrases like "finish my work assignment" or "finish my python assignment and submit it"
-      final isSingleTransitiveAction = RegExp(r'^(?:finish|complete|submit|do|start|review|write|read)\b', caseSensitive: false).hasMatch(lower);
-      final hasPronounReference = RegExp(r'\b(?:and\s+submit\s+it|and\s+send\s+it|and\s+file\s+it)\b', caseSensitive: false).hasMatch(lower);
+      final isSingleTransitiveAction = RegExp(r'^(?:finish|complete|submit|do|start|review|write|read|work on)\b', caseSensitive: false).hasMatch(lower);
+      final hasPronounReference = RegExp(r'\b(?:and\s+(?:then\s+)?(?:submit|send|review|file)\s+it)\b', caseSensitive: false).hasMatch(lower);
 
       if (!isSingleTransitiveAction && !hasPronounReference) {
-        final seg3 = RegExp(r'^(gym|workout|exercise|run)\s+(work|meeting|emails?)\s+(assignment|study|homework|thesis)$', caseSensitive: false).firstMatch(lower);
-        if (seg3 != null) {
-          clauses.addAll([
-            sanitizeTitle(seg3.group(1)!),
-            sanitizeTitle(seg3.group(2)!),
-            sanitizeTitle(seg3.group(3)!),
-          ]);
-          continue;
+        // Insert comma between adjacent standalone activities, e.g. "gym work assignment" -> "gym, work, assignment"
+        var normChunk = chunk;
+        for (int r = 0; r < 3; r++) {
+          normChunk = normChunk.replaceAllMapped(
+            RegExp(r'\b(' + actWords + r')\s+(' + actWords + r')\b', caseSensitive: false),
+            (m) => '${m[1]}, ${m[2]}',
+          );
         }
 
-        final seg2 = RegExp(r'^(gym|workout|exercise|run)\s+(work|meeting|emails?|assignment|study|homework|thesis|dentist|groceries)$', caseSensitive: false).firstMatch(lower);
-        if (seg2 != null) {
-          clauses.addAll([
-            sanitizeTitle(seg2.group(1)!),
-            sanitizeTitle(seg2.group(2)!),
-          ]);
+        final listParts = normChunk
+            .split(RegExp(r'(?:,\s*(?:and\s+)?|\s+and\s+)', caseSensitive: false))
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
+        if (listParts.length > 1 && listParts.every((p) => p.length > 1)) {
+          clauses.addAll(listParts.map(sanitizeTitle));
           continue;
         }
       }
@@ -320,9 +348,9 @@ class TaskParseService {
           ))
           .map((s) => s.trim())
           .where((s) => s.isNotEmpty);
-      clauses.addAll(parts);
+      clauses.addAll(parts.map(sanitizeTitle));
     }
 
-    return clauses.isEmpty ? [text.trim()] : clauses;
+    return clauses.isEmpty ? [sanitizeTitle(text)] : clauses;
   }
 }

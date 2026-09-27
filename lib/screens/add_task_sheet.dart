@@ -7,7 +7,6 @@ import '../theme/flow_radii.dart';
 import '../theme/flow_spacing.dart';
 import '../theme/flow_typography.dart';
 import '../components/primary_button.dart';
-import '../components/secondary_button.dart';
 
 /// Screen 6: Add Task Modal with AI Inferred Attributes
 class AddTaskSheet extends StatefulWidget {
@@ -25,6 +24,7 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
   String _selectedDeadline = 'Due Tomorrow';
   String _selectedCategory = 'College';
   bool _isPriority = true;
+  bool _isSubmitting = false;
 
   // Auto-inferred suggestion as user types
   void _onTitleChanged(String val) {
@@ -50,9 +50,12 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
     });
   }
 
-  void _saveTask({bool autoSchedule = false}) {
+  void _saveTask() {
+    if (_isSubmitting) return;
     final title = _titleController.text.trim();
     if (title.isEmpty) return;
+
+    setState(() => _isSubmitting = true);
 
     final provider = Provider.of<AppStateProvider>(context, listen: false);
     provider.addTask(
@@ -64,20 +67,14 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
       isPriority: _isPriority,
     );
 
-    if (autoSchedule) {
-      provider.optimizeSchedule();
-    }
+    provider.optimizeSchedule();
 
     Navigator.pop(context);
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          autoSchedule
-              ? 'Task added and placed in your peak focus window!'
-              : 'Task saved to inbox.',
-        ),
-        duration: const Duration(seconds: 2),
+      const SnackBar(
+        content: Text('Task added and scheduled!'),
+        duration: Duration(seconds: 2),
       ),
     );
   }
@@ -91,11 +88,11 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: const BoxDecoration(
-        color: FlowColors.darkCard,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(FlowRadii.cardLarge)),
+      decoration: BoxDecoration(
+        color: FlowColors.surfaceElevated(context),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(FlowRadii.cardLarge)),
         border: Border(
-          top: BorderSide(color: FlowColors.darkBorder, width: 1.0),
+          top: BorderSide(color: FlowColors.border(context), width: 1.0),
         ),
       ),
       padding: EdgeInsets.only(
@@ -115,7 +112,7 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
                 width: 44,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: FlowColors.darkBorder,
+                  color: FlowColors.border(context),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -148,14 +145,14 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
                 const SizedBox(width: 6),
                 Text(
                   'Energy & Schedule Attributes',
-                  style: FlowTypography.labelMedium(color: FlowColors.textSecondary),
+                  style: FlowTypography.labelMedium(color: FlowColors.textSecondaryOf(context)),
                 ),
               ],
             ),
             const SizedBox(height: 14),
 
             // Duration Selector
-            Text('Estimated Duration', style: FlowTypography.labelSmall(color: FlowColors.textMuted)),
+            Text('Estimated Duration', style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context))),
             const SizedBox(height: 8),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -173,7 +170,7 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
             const SizedBox(height: 16),
 
             // Difficulty / Focus Requirement
-            Text('Focus Requirement', style: FlowTypography.labelSmall(color: FlowColors.textMuted)),
+            Text('Focus Requirement', style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context))),
             const SizedBox(height: 8),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -191,7 +188,7 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
             const SizedBox(height: 16),
 
             // Deadline
-            Text('Deadline', style: FlowTypography.labelSmall(color: FlowColors.textMuted)),
+            Text('Deadline', style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context))),
             const SizedBox(height: 8),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -222,23 +219,14 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
             ),
             const SizedBox(height: 24),
 
-            // Buttons: Add Task & Add & Schedule
-            Row(
-              children: [
-                Expanded(
-                  child: SecondaryButton(
-                    label: 'Add Task',
-                    onPressed: () => _saveTask(autoSchedule: false),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: PrimaryButton(
-                    label: 'Add & Schedule',
-                    onPressed: () => _saveTask(autoSchedule: true),
-                  ),
-                ),
-              ],
+            // Single CTA: Add & Schedule
+            SizedBox(
+              width: double.infinity,
+              child: PrimaryButton(
+                label: 'Add & Schedule',
+                isLoading: _isSubmitting,
+                onPressed: _isSubmitting ? null : _saveTask,
+              ),
             ),
           ],
         ),
@@ -251,6 +239,7 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
     required bool isSelected,
     required VoidCallback onTap,
   }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       margin: const EdgeInsets.only(right: 8),
       child: InkWell(
@@ -259,17 +248,19 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
-            color: isSelected ? FlowColors.cyan : FlowColors.darkSurface,
+            color: isSelected
+                ? FlowColors.cyan
+                : (isDark ? FlowColors.surfaceContainerDark : FlowColors.surfaceContainerLight),
             borderRadius: FlowRadii.pillRadius,
             border: Border.all(
-              color: isSelected ? FlowColors.cyan : FlowColors.darkBorder,
+              color: isSelected ? FlowColors.cyan : FlowColors.border(context),
               width: 1.0,
             ),
           ),
           child: Text(
             label,
             style: FlowTypography.labelSmall(
-              color: isSelected ? FlowColors.textInverse : FlowColors.textPrimary,
+              color: isSelected ? FlowColors.textInverse : FlowColors.textPrimaryOf(context),
             ).copyWith(fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500),
           ),
         ),

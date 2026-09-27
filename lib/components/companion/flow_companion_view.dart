@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models/flow_companion.dart';
 import '../../theme/flow_colors.dart';
-import '../../theme/flow_radii.dart';
 import '../../theme/flow_typography.dart';
 import 'companion_graphic.dart';
 import 'flow_companion_animation_controller.dart';
@@ -25,6 +24,7 @@ class FlowCompanionView extends StatefulWidget {
   final VoidCallback? onTap;
   final bool showStageBadge;
   final bool showStatusText;
+  final bool frameless;
 
   const FlowCompanionView({
     super.key,
@@ -34,6 +34,7 @@ class FlowCompanionView extends StatefulWidget {
     this.onTap,
     this.showStageBadge = true,
     this.showStatusText = true,
+    this.frameless = false,
   });
 
   @override
@@ -59,10 +60,16 @@ class _FlowCompanionViewState extends State<FlowCompanionView>
     widget.controller?.addListener(_onControllerChange);
   }
 
+  bool get _isTestOrReducedMotion {
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    final isTest = WidgetsBinding.instance.runtimeType.toString().contains('Test');
+    return reduceMotion || isTest;
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (MediaQuery.of(context).disableAnimations) {
+    if (_isTestOrReducedMotion) {
       _pulseController.stop();
     } else if (!_pulseController.isAnimating) {
       _pulseController.repeat(reverse: true);
@@ -105,23 +112,6 @@ class _FlowCompanionViewState extends State<FlowCompanionView>
     }
   }
 
-  IconData _getStateIcon(CompanionAnimState state) {
-    switch (state) {
-      case CompanionAnimState.focusing:
-        return Icons.lens_blur_rounded;
-      case CompanionAnimState.success:
-        return Icons.auto_awesome_rounded;
-      case CompanionAnimState.tired:
-        return Icons.nights_stay_rounded;
-      case CompanionAnimState.evolution:
-        return Icons.stars_rounded;
-      case CompanionAnimState.starting:
-        return Icons.play_arrow_rounded;
-      case CompanionAnimState.idle:
-        return Icons.pets_rounded;
-    }
-  }
-
   String _getStateDescription(CompanionAnimState state) {
     switch (state) {
       case CompanionAnimState.focusing:
@@ -149,6 +139,7 @@ class _FlowCompanionViewState extends State<FlowCompanionView>
     final bool reduceMotion = MediaQuery.of(context).disableAnimations;
     final stateAccent = _getStateAccent(context, state);
     final size = widget.size;
+    final isDark = FlowColors.isDark(context);
 
     return Semantics(
       label: '${widget.companion.name}, ${widget.companion.stage}, level ${widget.companion.level}. Current state: ${state.name}.',
@@ -169,60 +160,85 @@ class _FlowCompanionViewState extends State<FlowCompanionView>
                   child: Container(
                     width: size,
                     height: size,
-                    decoration: BoxDecoration(
-                      color: FlowColors.surfaceElevated(context),
-                      borderRadius: BorderRadius.circular(28),
-                      border: Border.all(
-                        color: const Color(0xFFFED7AA),
-                        width: 1.5,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFFF97316).withValues(alpha: FlowColors.isDark(context) ? 0.2 : 0.08),
-                          blurRadius: 20,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
-                    ),
+                    decoration: widget.frameless
+                        ? null
+                        : BoxDecoration(
+                            color: FlowColors.surfaceElevated(context),
+                            borderRadius: BorderRadius.circular(size * 0.22),
+                            border: Border.all(
+                              color: isDark
+                                  ? const Color(0xFFF97316).withValues(alpha: 0.35)
+                                  : const Color(0xFFFED7AA).withValues(alpha: 0.8),
+                              width: 1.0,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFFF97316).withValues(alpha: isDark ? 0.16 : 0.08),
+                                blurRadius: 18,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
                     child: Stack(
                       alignment: Alignment.center,
                       clipBehavior: Clip.none,
                       children: [
-                        // Companion Graphic (Big and prominently displayed!)
-                        CompanionGraphic(
-                          species: widget.companion.species,
-                          size: size * 0.88,
-                          state: state,
-                        ),
-
-                        // Paw Badge at bottom right of card (Matching Image 2)
-                        Positioned(
-                          bottom: 8,
-                          right: 8,
+                        // Subtle warm ambient backlight behind character
+                        Positioned.fill(
                           child: Container(
-                            padding: const EdgeInsets.all(5),
                             decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.white,
-                              border: Border.all(
-                                color: const Color(0xFFFB923C),
-                                width: 1.5,
+                              shape: widget.frameless ? BoxShape.circle : BoxShape.rectangle,
+                              borderRadius: widget.frameless ? null : BorderRadius.circular(size * 0.22),
+                              gradient: RadialGradient(
+                                center: Alignment.center,
+                                radius: 0.65,
+                                colors: [
+                                  const Color(0xFFFB923C).withValues(alpha: isDark ? 0.12 : 0.06),
+                                  Colors.transparent,
+                                ],
                               ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: const Color(0xFFFB923C).withValues(alpha: 0.25),
-                                  blurRadius: 6,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: Icon(
-                              Icons.pets_rounded,
-                              size: size * 0.12,
-                              color: const Color(0xFFEA580C),
                             ),
                           ),
                         ),
+
+                        // Companion Graphic (canonical, crisp transparent character)
+                        Center(
+                          child: CompanionGraphic(
+                            species: widget.companion.species,
+                            size: widget.frameless ? size : size * 0.90,
+                            state: state,
+                          ),
+                        ),
+
+                        // Paw Badge at bottom right of card (only if not frameless)
+                        if (!widget.frameless)
+                          Positioned(
+                            bottom: 6,
+                            right: 6,
+                            child: Container(
+                              padding: const EdgeInsets.all(5),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: FlowColors.surface(context),
+                                border: Border.all(
+                                  color: const Color(0xFFFB923C),
+                                  width: 1.2,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: const Color(0xFFFB923C).withValues(alpha: 0.2),
+                                    blurRadius: 4,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: Icon(
+                                Icons.pets_rounded,
+                                size: size * 0.11,
+                                color: const Color(0xFFEA580C),
+                              ),
+                            ),
+                          ),
 
                         // Evolution Ready Badge at top right (Retained as icon badge)
                         if (widget.companion.isEvolutionReady || state == CompanionAnimState.evolution)

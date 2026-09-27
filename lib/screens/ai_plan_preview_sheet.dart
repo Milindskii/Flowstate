@@ -35,7 +35,7 @@ void showAIPlanPreviewSheet(
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
-    backgroundColor: FlowColors.darkSurface,
+    backgroundColor: FlowColors.surface(context),
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
@@ -57,9 +57,9 @@ class _AIPlanPreviewSheet extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(
         '${candidates.length} task${candidates.length == 1 ? '' : 's'} added to your day',
-        style: FlowTypography.bodySmall(color: FlowColors.textPrimary),
+        style: FlowTypography.bodySmall(color: FlowColors.textPrimaryOf(context)),
       ),
-      backgroundColor: FlowColors.darkCardElevated,
+      backgroundColor: FlowColors.surfaceElevated(context),
       duration: const Duration(seconds: 2),
       behavior: SnackBarBehavior.floating,
     ));
@@ -98,8 +98,8 @@ class _AIPlanPreviewSheet extends StatelessWidget {
               child: Container(
                 width: 36,
                 height: 4,
-                decoration: const BoxDecoration(
-                  color: FlowColors.darkBorder,
+                decoration: BoxDecoration(
+                  color: FlowColors.border(context),
                   borderRadius: FlowRadii.pillRadius,
                 ),
               ),
@@ -121,18 +121,18 @@ class _AIPlanPreviewSheet extends StatelessWidget {
                   key: const Key('noya_companion_header'),
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: FlowColors.darkCardElevated,
+                    color: FlowColors.surfaceElevated(context),
                     borderRadius: FlowRadii.cardRadius,
-                    border: Border.all(color: FlowColors.darkBorder),
+                    border: Border.all(color: FlowColors.border(context)),
                   ),
                   child: Row(
                     children: [
-                      CompanionGraphic(species: species, size: 24),
-                      const SizedBox(width: 8),
+                      CompanionGraphic(species: species, size: 40),
+                      const SizedBox(width: 10),
                       Expanded(
                         child: Text(
                           '$name arranged your candidate tasks.',
-                          style: FlowTypography.bodySmall(color: FlowColors.textSecondary).copyWith(
+                          style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
                           ),
@@ -169,7 +169,7 @@ class _AIPlanPreviewSheet extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 'Is this correct?',
-                style: FlowTypography.bodySmall(color: FlowColors.textMuted),
+                style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)),
               ),
             ] else ...[
               Row(
@@ -205,7 +205,7 @@ class _AIPlanPreviewSheet extends StatelessWidget {
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
                 itemBuilder: (ctx, i) {
                   final task = planResult.tasks[i];
-                  return _buildTaskCard(task, accent, needsConfirmation);
+                  return _buildTaskCard(context, task, accent, needsConfirmation);
                 },
               ),
             ),
@@ -220,14 +220,14 @@ class _AIPlanPreviewSheet extends StatelessWidget {
                     key: const Key('edit_button'),
                     onPressed: () => _onEdit(context, candidates),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: FlowColors.textPrimary,
-                      side: const BorderSide(color: FlowColors.darkBorder),
+                      foregroundColor: FlowColors.textPrimaryOf(context),
+                      side: BorderSide(color: FlowColors.border(context)),
                       shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
                     child: Text(
                       'Edit',
-                      style: FlowTypography.labelLarge(color: FlowColors.textPrimary)
+                      style: FlowTypography.labelLarge(color: FlowColors.textPrimaryOf(context))
                           .copyWith(fontWeight: FontWeight.w600),
                     ),
                   ),
@@ -260,19 +260,19 @@ class _AIPlanPreviewSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildTaskCard(ExtractedTaskItem task, Color accent, bool showInferredHighlight) {
+  Widget _buildTaskCard(BuildContext context, ExtractedTaskItem task, Color accent, bool showInferredHighlight) {
     final typeFormatted = _formatType(task.type);
     final isPriorityInferred = task.prioritySource == 'inferred';
 
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: FlowColors.darkCard,
+        color: FlowColors.surfaceElevated(context),
         borderRadius: FlowRadii.cardRadius,
         border: Border.all(
           color: (showInferredHighlight && (task.needsConfirmation || isPriorityInferred))
               ? FlowColors.warning.withValues(alpha: 0.6)
-              : FlowColors.darkBorder,
+              : FlowColors.border(context),
         ),
       ),
       child: Column(
@@ -301,7 +301,7 @@ class _AIPlanPreviewSheet extends StatelessWidget {
                       const SizedBox(width: 4),
                       Text(
                         _formatFixedStart(task.fixedStart!),
-                        style: FlowTypography.labelSmall(color: FlowColors.textPrimary)
+                        style: FlowTypography.labelSmall(color: FlowColors.textPrimaryOf(context))
                             .copyWith(fontWeight: FontWeight.w600),
                       ),
                     ],
@@ -317,10 +317,10 @@ class _AIPlanPreviewSheet extends StatelessWidget {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text(
-                '$typeFormatted · ${task.estimatedMinutes} min',
-                style: FlowTypography.bodySmall(color: FlowColors.textSecondary),
+                '$typeFormatted · ${task.isDurationExplicit ? '${task.estimatedMinutes} min' : 'Estimated ${task.estimatedMinutes} min'}',
+                style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
               ),
-              Text('•', style: FlowTypography.bodySmall(color: FlowColors.textMuted)),
+              Text('•', style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context))),
               Text(
                 task.isPriorityUnspecified || task.priority == null
                     ? 'Priority not specified'
@@ -330,14 +330,14 @@ class _AIPlanPreviewSheet extends StatelessWidget {
                 style: FlowTypography.bodySmall(
                   color: isPriorityInferred
                       ? FlowColors.warning
-                      : (task.isPriorityUnspecified ? FlowColors.textMuted : FlowColors.textSecondary),
+                      : (task.isPriorityUnspecified ? FlowColors.textMutedOf(context) : FlowColors.textSecondaryOf(context)),
                 ).copyWith(fontWeight: isPriorityInferred ? FontWeight.w600 : FontWeight.normal),
               ),
               if (task.deadline != null && task.deadline!.isNotEmpty) ...[
-                Text('•', style: FlowTypography.bodySmall(color: FlowColors.textMuted)),
+                Text('•', style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context))),
                 Text(
                   'Due ${_capitalize(task.deadline!)}',
-                  style: FlowTypography.bodySmall(color: FlowColors.textSecondary),
+                  style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
                 ),
               ],
             ],
@@ -351,7 +351,7 @@ class _AIPlanPreviewSheet extends StatelessWidget {
               children: [
                 Text(
                   'Recommended: ',
-                  style: FlowTypography.bodySmall(color: FlowColors.textMuted).copyWith(
+                  style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)).copyWith(
                     fontWeight: FontWeight.w600,
                     fontSize: 12,
                   ),
@@ -371,16 +371,16 @@ class _AIPlanPreviewSheet extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: FlowColors.darkCardElevated,
+                color: FlowColors.surface(context),
                 borderRadius: FlowRadii.cardRadius,
-                border: Border.all(color: FlowColors.darkBorder.withValues(alpha: 0.6)),
+                border: Border.all(color: FlowColors.border(context).withValues(alpha: 0.6)),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     'Why: ',
-                    style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(
+                    style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
                       fontWeight: FontWeight.w700,
                       fontSize: 11,
                     ),
@@ -388,7 +388,7 @@ class _AIPlanPreviewSheet extends StatelessWidget {
                   Expanded(
                     child: Text(
                       task.schedulingExplanation!,
-                      style: FlowTypography.bodySmall(color: FlowColors.textSecondary).copyWith(
+                      style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
                         fontSize: 11,
                         height: 1.3,
                       ),

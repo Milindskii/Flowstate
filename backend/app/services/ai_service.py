@@ -11,19 +11,23 @@ from ..core.config import settings
 def sanitize_task_title(title: str) -> str:
     """
     Ensures task titles are concise, natural, and user-faithful.
-    Strips awkward filler ('to do', 'task for', 'task', 'my ...', 'the ...', 'go to').
+    Strips awkward filler ('to do', 'task for', 'task', 'my ...', 'the ...', 'go to', conversational openers).
     """
     if not title:
         return "Task"
     t = title.strip()
     # Strip leading/trailing punctuation or bullet marks
     t = re.sub(r'^[,\s\-•*:]+|[,\s\-•*:]+$', '', t).strip()
+    # Strip conversational openers
+    t = re.sub(r'^(?:i have|i\'ve got|i need to do|i need to|i have to|on my plate:?|my tasks are:?|plan for today:?|today i have|today:?)\s+', '', t, flags=re.IGNORECASE).strip()
     # Strip prefixes like "task for ", "task: ", "to do: "
     t = re.sub(r'^(?:task\s+for|task\s*:|to\s*do\s*:)\s*', '', t, flags=re.IGNORECASE).strip()
     # Strip suffixes like " to do", " todo", " task"
     t = re.sub(r'\s+(?:to\s+do|todo|task)$', '', t, flags=re.IGNORECASE).strip()
     # Strip filler like 'my' or 'the' after action verbs (e.g. 'finish my assignment' -> 'Finish assignment')
     t = re.sub(r'\b(?:my|the)\s+(?=assignment|project|lab|homework|thesis|work|task|exam|quiz|session|workout)\b', '', t, flags=re.IGNORECASE)
+    # Strip leading filler words ("and", "to", "go to", "also", "then", "the", "my")
+    t = re.sub(r'^(?:and\s+|then\s+|also\s+|go\s+to\s+|to\s+|the\s+|my\s+)', '', t, flags=re.IGNORECASE).strip()
     # Strip extra whitespace
     t = re.sub(r'\s+', ' ', t).strip()
     # Capitalize first letter
@@ -43,27 +47,45 @@ class AIService:
 
     @staticmethod
     def _split_clauses(text: str) -> List[str]:
+        # Strip conversational openers
+        clean = text.strip()
+        clean = re.sub(
+            r'^(?:i have|i\'ve got|i need to do|i need to|i have to|on my plate:?|my tasks are:?|plan for today:?|today i have|today:?)\s+',
+            '',
+            clean,
+            flags=re.IGNORECASE,
+        ).strip()
+
         # 1. Primary delimiters: newlines, semicolons, bullets
-        primary_chunks = [c.strip() for c in re.split(r'[\n;•\*\-]+', text) if c.strip()]
+        primary_chunks = [c.strip() for c in re.split(r'[\n;•\*\-]+', clean) if c.strip()]
         clauses: List[str] = []
 
-        action_verbs = r'(?:finish|study|go to|gym|workout|review|call|email|buy|read|write|prep|pay|meet|clean|submit|update|complete|walk|exercise|run|dentist|doctor)'
+        # Known standalone activity words / nouns
+        act_words = r'(?:gym|workout|work|assignments?|homework|dentist|doctor|groceries|meeting|emails?)'
+        action_verbs = r'(?:finish|study|go to|gym|workout|review|call|email|buy|read|write|prep|pay|meet|clean|submit|update|complete|walk|exercise|run|dentist|doctor|work)'
 
         for chunk in primary_chunks:
             lower = chunk.strip().lower()
 
             # Task Segmentation: independently executable activities
+            # e.g. "I have gym work and assignments" -> ["Gym", "Work", "Assignments"]
             # e.g. "gym work assignment" -> ["Gym", "Work", "Assignment"]
+            # e.g. "gym, work, assignment" -> ["Gym", "Work", "Assignment"]
             # Preserves single outcome phrases like "finish my work assignment" or "finish my python assignment and submit it"
-            if not re.match(r'^(?:finish|complete|submit|do|start|review|write|read)\b', lower) and not re.search(r'\b(?:and\s+submit\s+it|and\s+send\s+it)\b', lower):
-                seg_match3 = re.match(r'^(gym|workout|exercise|run)\s+(work|meeting|emails?)\s+(assignment|study|homework|thesis)$', lower)
-                if seg_match3:
-                    clauses.extend([seg_match3.group(1).capitalize(), seg_match3.group(2).capitalize(), seg_match3.group(3).capitalize()])
-                    continue
+            is_single_transitive = bool(re.match(r'^(?:finish|complete|submit|review|write|read|work on)\b', lower))
+            has_pronoun_ref = bool(re.search(r'\b(?:and\s+(?:then\s+)?(?:submit|send|review|file)\s+it)\b', lower))
 
-                seg_match2 = re.match(r'^(gym|workout|exercise|run)\s+(work|meeting|emails?|assignment|study|homework|thesis|dentist|groceries)$', lower)
-                if seg_match2:
-                    clauses.extend([seg_match2.group(1).capitalize(), seg_match2.group(2).capitalize()])
+            if not is_single_transitive and not has_pronoun_ref:
+                # Insert comma between adjacent standalone activities, e.g. "gym work assignment" -> "gym, work, assignment"
+                norm_chunk = chunk
+                for _ in range(3):
+                    norm_chunk = re.sub(rf'\b({act_words})\s+({act_words})\b', r'\1, \2', norm_chunk, flags=re.IGNORECASE)
+
+                # Check for comma / 'and' separated list of activities
+                list_match = re.split(r'(?:,\s*(?:and\s+)?|\s+and\s+)', norm_chunk, flags=re.IGNORECASE)
+                valid_list = [p.strip() for p in list_match if p.strip()]
+                if len(valid_list) > 1 and all(len(p) > 1 for p in valid_list):
+                    clauses.extend(valid_list)
                     continue
 
             # Split on compound sentence dividers:
@@ -74,7 +96,43 @@ class AIService:
             parts = [p.strip() for p in re.split(pattern, chunk, flags=re.IGNORECASE) if p.strip()]
             clauses.extend(parts)
 
-        return clauses or [text.strip()]
+        return clauses or [clean.strip() or text.strip()]
+
+    @classmethod
+    def validate_and_segment_candidates(
+        cls,
+        candidates: List[TaskCandidateResponse],
+        now_local: datetime,
+        tz: ZoneInfo,
+    ) -> List[TaskCandidateResponse]:
+        """
+        Enforce task segmentation outside the prompt.
+        Checks if any candidate contains multiple independent activities,
+        and splits them into separate valid candidates before scheduling.
+        """
+        valid_candidates: List[TaskCandidateResponse] = []
+        for c in candidates:
+            # Check for multiple activities combined in title
+            lower_title = c.title.lower()
+            is_single_transitive = bool(re.match(r'^(?:finish|complete|submit|review|write|read|work on)\b', lower_title))
+            has_pronoun_ref = bool(re.search(r'\b(?:and\s+(?:then\s+)?(?:submit|send|review|file)\s+it)\b', lower_title))
+
+            act_words = r'(?:gym|workout|work|assignments?|homework|dentist|doctor|groceries|meeting|emails?)'
+            has_multi = bool(re.search(rf'\b{act_words}\b.*?\b(?:and\s+)?{act_words}\b', lower_title))
+
+            if not is_single_transitive and not has_pronoun_ref and has_multi:
+                # Sub-split this candidate
+                sub_clauses = cls._split_clauses(c.title)
+                if len(sub_clauses) > 1:
+                    for sc in sub_clauses:
+                        sub_cand = cls._parse_single_clause(sc, now_local, tz)
+                        if sub_cand:
+                            valid_candidates.append(sub_cand)
+                    continue
+
+            valid_candidates.append(c)
+
+        return valid_candidates
 
     @classmethod
     def parse_task_dump(
@@ -104,7 +162,7 @@ class AIService:
         if force_ai and settings.GEMINI_API_KEY:
             gemini_candidates = cls._try_gemini_fallback(raw_text, now_local, tz)
             if gemini_candidates:
-                return gemini_candidates
+                return cls.validate_and_segment_candidates(gemini_candidates, now_local, tz)
 
         clauses = cls._split_clauses(raw_text)
         candidates: List[TaskCandidateResponse] = []
@@ -114,30 +172,32 @@ class AIService:
             if candidate:
                 candidates.append(candidate)
 
+        candidates = cls.validate_and_segment_candidates(candidates, now_local, tz)
+
         # Scoped Fallback: ONLY when deterministic parsing yielded 0 candidates from non-empty text
         if not candidates and len(raw_text.strip()) > 2:
             # 1. Google Gemini Cloud API
             if settings.GEMINI_API_KEY:
                 gemini_candidates = cls._try_gemini_fallback(raw_text, now_local, tz)
                 if gemini_candidates:
-                    return gemini_candidates
+                    return cls.validate_and_segment_candidates(gemini_candidates, now_local, tz)
 
             # 2. Local Ollama Fallback
             llm_candidates = cls._try_ollama_fallback(raw_text, now_local, tz)
             if llm_candidates:
-                return llm_candidates
+                return cls.validate_and_segment_candidates(llm_candidates, now_local, tz)
 
             # Final resilient fallback if Ollama is offline
             return [
                 TaskCandidateResponse(
-                    title=raw_text.strip()[:100],
+                    title=sanitize_task_title(raw_text.strip()[:100]),
                     estimated_minutes=45,
                     task_type=TaskType.deep_work,
                     difficulty=TaskDifficulty.medium,
                     priority=TaskPriority.medium,
                     category="General",
                     confidence=0.40,
-                    missing_fields=["duration", "deadline"],
+                    missing_fields=["duration", "deadline", "priority"],
                     ambiguities=[],
                     source=TaskSource.ai_parsed,
                 )
@@ -273,56 +333,51 @@ class AIService:
         # 5. Classification Priors (Starting Priors, NOT rigid ground truth)
         task_type = TaskType.deep_work
         difficulty = TaskDifficulty.medium
+        # Priority default is ONLY for internal scheduler scoring weight, NEVER displayed as user choice
         priority = explicit_priority or TaskPriority.medium
         category = "General"
 
-        if any(w in lower for w in ["assignment", "code", "coding", "paper", "research", "build", "design", "ml", "math", "develop", "thesis", "algorithm"]):
-            task_type = TaskType.deep_work
-            difficulty = TaskDifficulty.high
-            if explicit_priority is None:
-                priority = TaskPriority.high
-            category = "College"
-            provenance["task_type"] = FieldProvenance(source="inferred", confidence=0.88)
-        elif any(w in lower for w in ["study", "review", "read", "reading", "notes", "quiz", "prep", "exam", "dbms", "lecture"]):
-            task_type = TaskType.study
-            difficulty = TaskDifficulty.medium
-            if explicit_priority is None:
-                priority = TaskPriority.medium
-            category = "College"
-            provenance["task_type"] = FieldProvenance(source="inferred", confidence=0.85)
-        elif any(w in lower for w in ["gym", "workout", "run", "lift", "stretch", "walk", "exercise", "training"]):
+        # 6. Title Cleanup & Normalization: Concise and User-Faithful
+        title = re.sub(r'^(?:and\s+|then\s+|also\s+|go\s+to\s+|to\s+)', '', title, flags=re.IGNORECASE).strip()
+        title = sanitize_task_title(title)
+        lower_title = title.lower()
+
+        if any(w in lower_title for w in ["gym", "workout", "run", "lift", "stretch", "walk", "exercise", "training"]):
             task_type = TaskType.physical
             difficulty = TaskDifficulty.physical
-            if explicit_priority is None:
-                priority = TaskPriority.low
             category = "Fitness"
             provenance["task_type"] = FieldProvenance(source="inferred", confidence=0.92)
-        elif any(w in lower for w in ["email", "reply", "pay", "submit", "file", "call", "sync", "organize", "grocery", "groceries", "buy", "dentist", "doctor"]):
+        elif any(w in lower_title for w in ["assignment", "assignments", "code", "coding", "paper", "research", "build", "design", "ml", "math", "develop", "thesis", "algorithm", "work", "meeting", "sync", "project"]):
+            task_type = TaskType.deep_work
+            difficulty = TaskDifficulty.high if any(w in lower_title for w in ["assignment", "thesis", "ml", "algorithm"]) else TaskDifficulty.medium
+            category = "College" if any(w in lower_title for w in ["assignment", "assignments", "thesis"]) else "Work"
+            provenance["task_type"] = FieldProvenance(source="inferred", confidence=0.88)
+        elif any(w in lower_title for w in ["study", "review", "read", "reading", "notes", "quiz", "prep", "exam", "dbms", "lecture", "homework"]):
+            task_type = TaskType.study
+            difficulty = TaskDifficulty.medium
+            category = "College"
+            provenance["task_type"] = FieldProvenance(source="inferred", confidence=0.85)
+        elif any(w in lower_title for w in ["email", "reply", "pay", "submit", "file", "call", "organize", "grocery", "groceries", "buy", "dentist", "doctor"]):
             task_type = TaskType.admin
             difficulty = TaskDifficulty.light
-            if explicit_priority is None:
-                priority = TaskPriority.low
             category = "Personal"
             provenance["task_type"] = FieldProvenance(source="inferred", confidence=0.85)
         else:
             provenance["task_type"] = FieldProvenance(source="default", confidence=0.50)
 
-        # Track priority provenance
+        # Track priority provenance: user explicit vs unspecified
         if explicit_priority is not None:
             provenance["priority"] = FieldProvenance(source="explicit", confidence=1.0)
         else:
-            # Priority was inferred from context or default
-            provenance["priority"] = FieldProvenance(source="inferred", confidence=0.80)
-
-        # 6. Title Cleanup & Normalization: Concise and User-Faithful
-        title = re.sub(r'^(?:and\s+|then\s+|also\s+|go\s+to\s+|to\s+)', '', title, flags=re.IGNORECASE).strip()
-        title = sanitize_task_title(title)
+            # User did NOT specify priority; must display 'Priority not specified'
+            missing_fields.append("priority")
+            provenance["priority"] = FieldProvenance(source="unspecified", confidence=0.0)
 
         if not title:
             return None
 
         # 6. Overall Confidence Calculation
-        conf_scores = [p.confidence for p in provenance.values()]
+        conf_scores = [p.confidence for p in provenance.values() if p.source != "unspecified"]
         avg_conf = sum(conf_scores) / len(conf_scores) if conf_scores else 0.80
         if ambiguities:
             avg_conf *= 0.88

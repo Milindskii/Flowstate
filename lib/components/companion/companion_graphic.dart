@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../theme/flow_colors.dart';
+import '../noya_companion_view.dart';
 import 'flow_companion_animation_controller.dart';
 
 /// High-fidelity custom vector graphic for Flowstate animal companions.
@@ -24,36 +25,15 @@ class CompanionGraphic extends StatelessWidget {
   Widget build(BuildContext context) {
     final normSpecies = species.toLowerCase().trim();
 
+    if (normSpecies == 'fox' || normSpecies.isEmpty || normSpecies == 'noya') {
+      return NoyaCompanionView.fromAnimState(
+        animState: state,
+        size: size,
+      );
+    }
+
     String assetPath;
-    if (normSpecies == 'fox' || normSpecies.isEmpty || normSpecies == 'nova' || normSpecies == 'noya') {
-      switch (state) {
-        case CompanionAnimState.focusing:
-          // User requested old design style: fox is sleeping peacefully while you focus
-          assetPath = 'assets/images/companions/noya_sleeping.png';
-          break;
-        case CompanionAnimState.success:
-          // Noya celebrating with paws up, gold sparkles
-          assetPath = 'assets/images/companions/noya_success.png';
-          break;
-        case CompanionAnimState.tired:
-          // Noya sleeping peacefully with ZZZs
-          assetPath = 'assets/images/companions/noya_sleeping.png';
-          break;
-        case CompanionAnimState.evolution:
-          // Noya celebrating — reuse success art for now
-          assetPath = 'assets/images/companions/noya_success.png';
-          break;
-        case CompanionAnimState.starting:
-          // Noya alert and ready — use the winking idle art
-          assetPath = 'assets/images/companions/noya.png';
-          break;
-        case CompanionAnimState.idle:
-        default:
-          // Noya sleeping when idle ("waiting for you to start")
-          assetPath = 'assets/images/companions/noya_sleeping.png';
-          break;
-      }
-    } else if (normSpecies == 'otter' || normSpecies == 'ludo' || normSpecies == 'bear' || normSpecies == 'bruno') {
+    if (normSpecies == 'otter' || normSpecies == 'ludo' || normSpecies == 'bear' || normSpecies == 'bruno') {
       assetPath = 'assets/images/companions/otter.png';
     } else if (normSpecies == 'owl' || normSpecies == 'aria') {
       assetPath = 'assets/images/companions/owl.png';
@@ -126,7 +106,7 @@ class _CompanionVectorPainter extends CustomPainter {
   }
 
   // ---------------------------------------------------------------------------
-  // 1. NOVA THE FOX (Swift Sprinter - Orange / Amber / White)
+  // 1. NOYA THE FOX (Swift Sprinter - Orange / Amber / White)
   // ---------------------------------------------------------------------------
   void _paintFox(Canvas canvas) {
     const whiteCream = Color(0xFFFFFBEB);

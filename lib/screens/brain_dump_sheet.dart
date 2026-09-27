@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../components/ai_economy_sheets.dart';
-import '../components/companion/companion_graphic.dart';
-import '../components/companion/flow_companion_animation_controller.dart';
+import '../components/noya_companion_view.dart';
 import '../engines/scheduling_engine.dart';
 import '../models/schedule_item.dart';
 import '../models/task_item.dart';
@@ -33,7 +31,7 @@ void showBrainDumpSheet(BuildContext context) {
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
-    backgroundColor: FlowColors.darkSurface,
+    backgroundColor: FlowColors.surface(context),
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
@@ -234,7 +232,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       _editTitleCtrl.text = task.title;
       _editType = task.taskType;
       _editDuration = task.durationMinutes;
-      _editPriority = task.priority;
+      _editPriority = task.priority ?? TaskPriority.medium;
       _editPrioritySource = task.prioritySource ?? (task.isPriorityExplicit ? 'explicit' : 'unspecified');
       _editDeadline = task.deadline;
       _editFixedTime = task.scheduledTime;
@@ -252,7 +250,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       _editTitleCtrl.text = task.title;
       _editType = task.taskType;
       _editDuration = task.durationMinutes;
-      _editPriority = task.priority;
+      _editPriority = task.priority ?? TaskPriority.medium;
       _editPrioritySource = task.prioritySource ?? (task.isPriorityExplicit ? 'explicit' : 'unspecified');
       _editDeadline = task.deadline;
       _editFixedTime = task.scheduledTime;
@@ -362,9 +360,9 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(
         '${finalizedTasks.length} task${finalizedTasks.length == 1 ? '' : 's'} added to your day',
-        style: FlowTypography.bodySmall(color: FlowColors.textPrimary),
+        style: FlowTypography.bodySmall(color: FlowColors.textPrimaryOf(context)),
       ),
-      backgroundColor: FlowColors.darkCardElevated,
+      backgroundColor: FlowColors.surfaceElevated(context),
       duration: const Duration(seconds: 2),
       behavior: SnackBarBehavior.floating,
     ));
@@ -395,8 +393,8 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                 child: Container(
                   width: 36,
                   height: 4,
-                  decoration: const BoxDecoration(
-                    color: FlowColors.darkBorder,
+                  decoration: BoxDecoration(
+                    color: FlowColors.border(context),
                     borderRadius: FlowRadii.pillRadius,
                   ),
                 ),
@@ -435,7 +433,6 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     } catch (_) {}
 
     final companion = flowProvider?.companion;
-    final species = companion?.species ?? 'fox';
     final name = companion?.name ?? 'Noya';
 
     String noyaMessage;
@@ -454,16 +451,17 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 2),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: FlowColors.darkCardElevated,
+        color: FlowColors.surfaceElevated(context),
         borderRadius: FlowRadii.cardRadius,
-        border: Border.all(color: FlowColors.darkBorder),
+        border: Border.all(color: FlowColors.border(context)),
       ),
       child: Row(
         children: [
-          CompanionGraphic(
-            species: species,
-            size: 26,
-            state: _isLoading ? CompanionAnimState.focusing : CompanionAnimState.idle,
+          NoyaCompanionView(
+            state: _isLoading
+                ? NoyaState.thinking
+                : (_viewMode == _BrainDumpViewMode.preview ? NoyaState.proud : NoyaState.thinking),
+            size: NoyaSize.small,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -473,14 +471,13 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
               children: [
                 Text(
                   name,
-                  style: FlowTypography.labelMedium().copyWith(
+                  style: FlowTypography.labelMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
                     fontWeight: FontWeight.w700,
-                    color: FlowColors.textPrimary,
                   ),
                 ),
                 Text(
                   noyaMessage,
-                  style: FlowTypography.bodySmall(color: FlowColors.textSecondary).copyWith(
+                  style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
                     fontSize: 11,
                   ),
                   overflow: TextOverflow.ellipsis,
@@ -504,17 +501,17 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         const SizedBox(height: 6),
         Text(
           'Just write it out.',
-          style: FlowTypography.bodySmall(color: FlowColors.textMuted),
+          style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)),
         ),
         const SizedBox(height: 16),
 
         // Text input container
         Container(
           decoration: BoxDecoration(
-            color: FlowColors.darkCard,
+            color: FlowColors.surfaceContainer(context),
             borderRadius: FlowRadii.cardRadius,
             border: Border.all(
-              color: _errorMessage != null ? FlowColors.warning : FlowColors.darkBorder,
+              color: _errorMessage != null ? FlowColors.warning : FlowColors.border(context),
             ),
           ),
           child: TextField(
@@ -526,7 +523,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
             style: FlowTypography.bodyMedium(),
             decoration: InputDecoration(
               hintText: 'e.g. Finish Python lab tomorrow, study arrays, call the dentist at 4, gym at 6...',
-              hintStyle: FlowTypography.bodySmall(color: FlowColors.textMuted),
+              hintStyle: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)),
               border: InputBorder.none,
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,
@@ -586,7 +583,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         const SizedBox(height: 6),
         Text(
           'Here is your optimized execution schedule.',
-          style: FlowTypography.bodySmall(color: FlowColors.textMuted),
+          style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)),
         ),
 
         if (_fallbackNotice != null) ...[
@@ -594,9 +591,9 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: FlowColors.darkCardElevated,
+              color: FlowColors.surfaceElevated(context),
               borderRadius: FlowRadii.cardRadius,
-              border: Border.all(color: FlowColors.darkBorder),
+              border: Border.all(color: FlowColors.border(context)),
             ),
             child: Row(
               children: [
@@ -605,7 +602,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                 Expanded(
                   child: Text(
                     _fallbackNotice!,
-                    style: FlowTypography.bodySmall(color: FlowColors.textSecondary).copyWith(fontSize: 12),
+                    style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(fontSize: 12),
                   ),
                 ),
               ],
@@ -650,10 +647,10 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: FlowColors.darkCard,
+        color: FlowColors.surfaceElevated(context),
         borderRadius: FlowRadii.cardRadius,
         border: Border.all(
-          color: isInferred ? FlowColors.warning.withValues(alpha: 0.35) : FlowColors.darkBorder,
+          color: isInferred ? FlowColors.warning.withValues(alpha: 0.35) : FlowColors.border(context),
         ),
       ),
       child: Column(
@@ -669,7 +666,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                   style: FlowTypography.titleSmall().copyWith(
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0.2,
-                    color: FlowColors.textPrimary,
+                    color: FlowColors.textPrimaryOf(context),
                   ),
                 ),
               ),
@@ -680,11 +677,11 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.edit_outlined, size: 14, color: FlowColors.textMuted),
+                      Icon(Icons.edit_outlined, size: 14, color: FlowColors.textMutedOf(context)),
                       const SizedBox(width: 4),
                       Text(
                         'Edit',
-                        style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(
+                        style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                         ),
@@ -699,20 +696,20 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
 
           // TYPE · DURATION
           Text(
-            '${task.taskType.label} · ${task.durationMinutes} min',
-            style: FlowTypography.bodySmall(color: FlowColors.textSecondary).copyWith(
+            '${task.taskType.label} · ${task.isDurationExplicit ? '${task.durationMinutes} min' : 'Estimated ${task.durationMinutes} min'}',
+            style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
               fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 4),
 
           // PRIORITY
-          if (isExplicit)
+          if (isExplicit && task.priority != null)
             Text(
-              '${_capitalize(task.priority.value)} priority',
-              style: FlowTypography.bodySmall(color: FlowColors.textSecondary),
+              '${_capitalize(task.priority!.value)} priority',
+              style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
             )
-          else if (isInferred)
+          else if (isInferred && task.priority != null)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
@@ -720,7 +717,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                 borderRadius: FlowRadii.pillRadius,
               ),
               child: Text(
-                'Suggested priority: ${_capitalize(task.priority.value)}',
+                'Suggested priority: ${_capitalize(task.priority!.value)}',
                 style: FlowTypography.bodySmall(color: FlowColors.warning).copyWith(
                   fontWeight: FontWeight.w600,
                   fontSize: 11,
@@ -730,26 +727,26 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
           else
             Text(
               'Priority not specified',
-              style: FlowTypography.bodySmall(color: FlowColors.textMuted).copyWith(
+              style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)).copyWith(
                 fontStyle: FontStyle.italic,
               ),
             ),
           const SizedBox(height: 4),
 
-          // TIME / DEADLINE
-          if (timeDisplay != null)
+          // TIME / DEADLINE (Only explicit user constraint)
+          if (isFixedTime)
             Text(
-              isFixedTime ? '$timeDisplay · Fixed time' : timeDisplay,
+              '$timeDisplay · Fixed time',
               style: FlowTypography.bodySmall(
-                color: isFixedTime ? FlowColors.accentCyan : FlowColors.textSecondary,
+                color: FlowColors.accentCyan,
               ).copyWith(
-                fontWeight: isFixedTime ? FontWeight.w600 : FontWeight.normal,
+                fontWeight: FontWeight.w600,
               ),
             )
           else if (task.deadline.isNotEmpty && task.deadline != 'Today')
             Text(
-              task.deadline,
-              style: FlowTypography.bodySmall(color: FlowColors.textSecondary),
+              'Due ${task.deadline}',
+              style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
             ),
 
           // RECOMMENDED TIME
@@ -760,14 +757,14 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
             runSpacing: 4,
             children: [
               Text(
-                'Recommended: ',
-                style: FlowTypography.bodySmall(color: FlowColors.textMuted).copyWith(
+                isFixedTime ? 'Scheduled: ' : 'Recommended: ',
+                style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)).copyWith(
                   fontWeight: FontWeight.w600,
                   fontSize: 12,
                 ),
               ),
               Text(
-                task.recommendedSlotDisplay ?? timeDisplay ?? 'Upcoming',
+                task.recommendedSlotDisplay ?? (isFixedTime ? timeDisplay! : 'Upcoming'),
                 style: FlowTypography.bodySmall(
                   color: isFixedTime ? FlowColors.accentCyan : FlowColors.accentMint,
                 ).copyWith(
@@ -799,16 +796,16 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: FlowColors.darkCardElevated,
+                color: FlowColors.surfaceContainer(context),
                 borderRadius: FlowRadii.cardRadius,
-                border: Border.all(color: FlowColors.darkBorder.withValues(alpha: 0.6)),
+                border: Border.all(color: FlowColors.border(context).withValues(alpha: 0.6)),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     'Why: ',
-                    style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(
+                    style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
                       fontWeight: FontWeight.w700,
                       fontSize: 11,
                     ),
@@ -816,7 +813,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                   Expanded(
                     child: Text(
                       task.schedulingExplanation!,
-                      style: FlowTypography.bodySmall(color: FlowColors.textSecondary).copyWith(
+                      style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
                         fontSize: 11,
                         height: 1.3,
                       ),
@@ -853,7 +850,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
               ),
               Text(
                 '${_editingIndex + 1} of ${_planCandidates.length}',
-                style: FlowTypography.labelSmall(color: FlowColors.textMuted),
+                style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)),
               ),
             ],
           ),
@@ -872,16 +869,16 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                       margin: const EdgeInsets.only(right: 8),
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
-                        color: isSelected ? accent.withValues(alpha: 0.15) : FlowColors.darkCard,
+                        color: isSelected ? accent.withValues(alpha: 0.15) : FlowColors.surfaceElevated(context),
                         borderRadius: FlowRadii.pillRadius,
                         border: Border.all(
-                          color: isSelected ? accent : FlowColors.darkBorder,
+                          color: isSelected ? accent : FlowColors.border(context),
                         ),
                       ),
                       child: Text(
                         _planCandidates[i].title,
                         style: FlowTypography.labelSmall(
-                          color: isSelected ? accent : FlowColors.textSecondary,
+                          color: isSelected ? accent : FlowColors.textSecondaryOf(context),
                         ).copyWith(fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500),
                       ),
                     ),
@@ -893,13 +890,13 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
           ],
 
           // Title
-          Text('TASK TITLE', style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(letterSpacing: 0.5)),
+          Text('TASK TITLE', style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(letterSpacing: 0.5)),
           const SizedBox(height: 6),
           Container(
             decoration: BoxDecoration(
-              color: FlowColors.darkCard,
+              color: FlowColors.surfaceElevated(context),
               borderRadius: FlowRadii.cardRadius,
-              border: Border.all(color: FlowColors.darkBorder),
+              border: Border.all(color: FlowColors.border(context)),
             ),
             child: TextField(
               key: const Key('edit_task_title_field'),
@@ -914,7 +911,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
           const SizedBox(height: 14),
 
           // Type
-          Text('TASK TYPE', style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(letterSpacing: 0.5)),
+          Text('TASK TYPE', style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(letterSpacing: 0.5)),
           const SizedBox(height: 6),
           Wrap(
             spacing: 8,
@@ -937,14 +934,14 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
-                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.darkCard,
+                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.surfaceElevated(context),
                     borderRadius: FlowRadii.pillRadius,
-                    border: Border.all(color: isSel ? accent : FlowColors.darkBorder),
+                    border: Border.all(color: isSel ? accent : FlowColors.border(context)),
                   ),
                   child: Text(
                     t.label,
                     style: FlowTypography.labelSmall(
-                      color: isSel ? accent : FlowColors.textSecondary,
+                      color: isSel ? accent : FlowColors.textSecondaryOf(context),
                     ).copyWith(fontWeight: isSel ? FontWeight.w700 : FontWeight.w500),
                   ),
                 ),
@@ -954,7 +951,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
           const SizedBox(height: 14),
 
           // Estimated Duration
-          Text('ESTIMATED DURATION', style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(letterSpacing: 0.5)),
+          Text('ESTIMATED DURATION', style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(letterSpacing: 0.5)),
           const SizedBox(height: 6),
           Wrap(
             spacing: 8,
@@ -970,14 +967,14 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
-                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.darkCard,
+                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.surfaceElevated(context),
                     borderRadius: FlowRadii.pillRadius,
-                    border: Border.all(color: isSel ? accent : FlowColors.darkBorder),
+                    border: Border.all(color: isSel ? accent : FlowColors.border(context)),
                   ),
                   child: Text(
                     '$m min',
                     style: FlowTypography.labelSmall(
-                      color: isSel ? accent : FlowColors.textSecondary,
+                      color: isSel ? accent : FlowColors.textSecondaryOf(context),
                     ).copyWith(fontWeight: isSel ? FontWeight.w700 : FontWeight.w500),
                   ),
                 ),
@@ -987,7 +984,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
           const SizedBox(height: 14),
 
           // Priority
-          Text('PRIORITY', style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(letterSpacing: 0.5)),
+          Text('PRIORITY', style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(letterSpacing: 0.5)),
           const SizedBox(height: 6),
           Wrap(
             spacing: 8,
@@ -1014,14 +1011,14 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
-                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.darkCard,
+                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.surfaceElevated(context),
                     borderRadius: FlowRadii.pillRadius,
-                    border: Border.all(color: isSel ? accent : FlowColors.darkBorder),
+                    border: Border.all(color: isSel ? accent : FlowColors.border(context)),
                   ),
                   child: Text(
                     item.label,
                     style: FlowTypography.labelSmall(
-                      color: isSel ? accent : FlowColors.textSecondary,
+                      color: isSel ? accent : FlowColors.textSecondaryOf(context),
                     ).copyWith(fontWeight: isSel ? FontWeight.w700 : FontWeight.w500),
                   ),
                 ),
@@ -1031,7 +1028,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
           const SizedBox(height: 14),
 
           // Deadline
-          Text('DEADLINE', style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(letterSpacing: 0.5)),
+          Text('DEADLINE', style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(letterSpacing: 0.5)),
           const SizedBox(height: 6),
           Wrap(
             spacing: 8,
@@ -1047,14 +1044,14 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
-                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.darkCard,
+                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.surfaceElevated(context),
                     borderRadius: FlowRadii.pillRadius,
-                    border: Border.all(color: isSel ? accent : FlowColors.darkBorder),
+                    border: Border.all(color: isSel ? accent : FlowColors.border(context)),
                   ),
                   child: Text(
                     d,
                     style: FlowTypography.labelSmall(
-                      color: isSel ? accent : FlowColors.textSecondary,
+                      color: isSel ? accent : FlowColors.textSecondaryOf(context),
                     ).copyWith(fontWeight: isSel ? FontWeight.w700 : FontWeight.w500),
                   ),
                 ),
@@ -1064,7 +1061,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
           const SizedBox(height: 14),
 
           // Fixed Time
-          Text('FIXED TIME', style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(letterSpacing: 0.5)),
+          Text('FIXED TIME', style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(letterSpacing: 0.5)),
           const SizedBox(height: 6),
           Wrap(
             spacing: 8,
@@ -1080,14 +1077,14 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
-                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.darkCard,
+                    color: isSel ? accent.withValues(alpha: 0.15) : FlowColors.surfaceElevated(context),
                     borderRadius: FlowRadii.pillRadius,
-                    border: Border.all(color: isSel ? accent : FlowColors.darkBorder),
+                    border: Border.all(color: isSel ? accent : FlowColors.border(context)),
                   ),
                   child: Text(
                     t ?? 'No fixed time',
                     style: FlowTypography.labelSmall(
-                      color: isSel ? accent : FlowColors.textSecondary,
+                      color: isSel ? accent : FlowColors.textSecondaryOf(context),
                     ).copyWith(fontWeight: isSel ? FontWeight.w700 : FontWeight.w500),
                   ),
                 ),
@@ -1105,9 +1102,9 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     final horizontalPad = screenWidth < 360 ? 16.0 : 24.0;
 
     return Container(
-      decoration: const BoxDecoration(
-        color: FlowColors.darkSurface,
-        border: Border(top: BorderSide(color: FlowColors.darkBorder, width: 0.8)),
+      decoration: BoxDecoration(
+        color: FlowColors.surface(context),
+        border: Border(top: BorderSide(color: FlowColors.border(context), width: 0.8)),
       ),
       padding: EdgeInsets.fromLTRB(horizontalPad, 14, horizontalPad, 16),
       child: switch (_viewMode) {
@@ -1118,8 +1115,8 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
               key: const Key('brain_dump_build_button'),
               onPressed: _isValid && !_isLoading ? _buildPlan : null,
               style: ElevatedButton.styleFrom(
-                backgroundColor: _isValid ? accent : FlowColors.darkBorder,
-                foregroundColor: _isValid ? FlowColors.textInverse : FlowColors.textMuted,
+                backgroundColor: _isValid ? accent : FlowColors.border(context),
+                foregroundColor: _isValid ? FlowColors.textInverse : FlowColors.textMutedOf(context),
                 elevation: 0,
                 shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
               ),
@@ -1135,7 +1132,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                   : Text(
                       'Build my day',
                       style: FlowTypography.labelLarge(
-                        color: _isValid ? FlowColors.textInverse : FlowColors.textMuted,
+                        color: _isValid ? FlowColors.textInverse : FlowColors.textMutedOf(context),
                       ).copyWith(fontWeight: FontWeight.w700),
                     ),
             ),
@@ -1147,14 +1144,14 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                   key: const Key('edit_button'),
                   onPressed: () => _openEditMode(0),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: FlowColors.textPrimary,
-                    side: const BorderSide(color: FlowColors.darkBorder),
+                    foregroundColor: FlowColors.textPrimaryOf(context),
+                    side: BorderSide(color: FlowColors.border(context)),
                     shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                   child: Text(
                     'Edit',
-                    style: FlowTypography.labelLarge(color: FlowColors.textPrimary)
+                    style: FlowTypography.labelLarge(color: FlowColors.textPrimaryOf(context))
                         .copyWith(fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -1197,14 +1194,14 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                   key: const Key('edit_cancel_button'),
                   onPressed: _cancelEdit,
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: FlowColors.textPrimary,
-                    side: const BorderSide(color: FlowColors.darkBorder),
+                    foregroundColor: FlowColors.textPrimaryOf(context),
+                    side: BorderSide(color: FlowColors.border(context)),
                     shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                   child: Text(
                     'Cancel',
-                    style: FlowTypography.labelLarge(color: FlowColors.textPrimary)
+                    style: FlowTypography.labelLarge(color: FlowColors.textPrimaryOf(context))
                         .copyWith(fontWeight: FontWeight.w600),
                   ),
                 ),

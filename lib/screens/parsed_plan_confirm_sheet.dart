@@ -19,7 +19,7 @@ void showParsedPlanConfirmSheet(
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
-    backgroundColor: FlowColors.darkSurface,
+    backgroundColor: FlowColors.surface(context),
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
@@ -56,9 +56,9 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(
         '${_tasks.length} task${_tasks.length == 1 ? '' : 's'} added to your plan',
-        style: FlowTypography.bodySmall(color: FlowColors.textPrimary),
+        style: FlowTypography.bodySmall(color: FlowColors.textPrimaryOf(context)),
       ),
-      backgroundColor: FlowColors.darkCardElevated,
+      backgroundColor: FlowColors.surfaceElevated(context),
       duration: const Duration(seconds: 2),
       behavior: SnackBarBehavior.floating,
     ));
@@ -117,8 +117,8 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
               child: Container(
                 width: 36,
                 height: 4,
-                decoration: const BoxDecoration(
-                  color: FlowColors.darkBorder,
+                decoration: BoxDecoration(
+                  color: FlowColors.border(context),
                   borderRadius: FlowRadii.pillRadius,
                 ),
               ),
@@ -140,18 +140,18 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
                   key: const Key('noya_companion_header'),
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: FlowColors.darkCardElevated,
+                    color: FlowColors.surfaceElevated(context),
                     borderRadius: FlowRadii.cardRadius,
-                    border: Border.all(color: FlowColors.darkBorder),
+                    border: Border.all(color: FlowColors.border(context)),
                   ),
                   child: Row(
                     children: [
-                      CompanionGraphic(species: species, size: 24),
-                      const SizedBox(width: 8),
+                      CompanionGraphic(species: species, size: 40),
+                      const SizedBox(width: 10),
                       Expanded(
                         child: Text(
                           '$name reviewed your parsed tasks.',
-                          style: FlowTypography.bodySmall(color: FlowColors.textSecondary).copyWith(
+                          style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
                           ),
@@ -177,7 +177,7 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
                     const SizedBox(height: 4),
                     Text(
                       'Quick confirm or tap pills to adjust',
-                      style: FlowTypography.bodySmall(color: FlowColors.textMuted),
+                      style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)),
                     ),
                   ],
                 ),
@@ -215,7 +215,7 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
                 key: const Key('add_and_schedule_button'),
                 onPressed: (_tasks.isEmpty || _isSubmitting) ? null : _confirm,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: _tasks.isEmpty ? FlowColors.darkBorder : accent,
+                  backgroundColor: _tasks.isEmpty ? FlowColors.border(context) : accent,
                   foregroundColor: FlowColors.textInverse,
                   elevation: 0,
                   shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
@@ -248,10 +248,10 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: FlowColors.darkCard,
+        color: FlowColors.surfaceElevated(context),
         borderRadius: FlowRadii.cardRadius,
         border: Border.all(
-          color: editing ? accent : FlowColors.darkBorder,
+          color: editing ? accent : FlowColors.border(context),
           width: editing ? 1.5 : 1.0,
         ),
       ),
@@ -277,9 +277,9 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
                     _editingIndex = null;
                   });
                 },
-                child: const Padding(
-                  padding: EdgeInsets.all(2.0),
-                  child: Icon(Icons.close_rounded, size: 18, color: FlowColors.textMuted),
+                child: Padding(
+                  padding: const EdgeInsets.all(2.0),
+                  child: Icon(Icons.close_rounded, size: 18, color: FlowColors.textMutedOf(context)),
                 ),
               ),
             ],
@@ -300,10 +300,10 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
                   decoration: BoxDecoration(
                     color: isMissingDuration
                         ? FlowColors.warning.withValues(alpha: 0.12)
-                        : FlowColors.darkCardElevated,
+                        : FlowColors.surface(context),
                     borderRadius: FlowRadii.pillRadius,
                     border: Border.all(
-                      color: isMissingDuration ? FlowColors.warning : FlowColors.darkBorder,
+                      color: isMissingDuration ? FlowColors.warning : FlowColors.border(context),
                     ),
                   ),
                   child: Row(
@@ -312,20 +312,20 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
                       Icon(
                         Icons.timer_outlined,
                         size: 13,
-                        color: isMissingDuration ? FlowColors.warning : FlowColors.textSecondary,
+                        color: isMissingDuration ? FlowColors.warning : FlowColors.textSecondaryOf(context),
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        isMissingDuration ? '${task.durationMinutes}m (default)' : '${task.durationMinutes} min',
+                        isMissingDuration ? 'Estimated ${task.durationMinutes} min' : '${task.durationMinutes} min',
                         style: FlowTypography.labelSmall(
-                          color: isMissingDuration ? FlowColors.warning : FlowColors.textSecondary,
+                          color: isMissingDuration ? FlowColors.warning : FlowColors.textSecondaryOf(context),
                         ).copyWith(fontWeight: FontWeight.w600),
                       ),
                       const SizedBox(width: 2),
                       Icon(
                         editing ? Icons.arrow_drop_up_rounded : Icons.arrow_drop_down_rounded,
                         size: 14,
-                        color: FlowColors.textMuted,
+                        color: FlowColors.textMutedOf(context),
                       ),
                     ],
                   ),
@@ -341,10 +341,10 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
                     decoration: BoxDecoration(
                       color: isAmbiguousTime
                           ? FlowColors.accentCyan.withValues(alpha: 0.14)
-                          : FlowColors.darkCardElevated,
+                          : FlowColors.surface(context),
                       borderRadius: FlowRadii.pillRadius,
                       border: Border.all(
-                        color: isAmbiguousTime ? FlowColors.accentCyan : FlowColors.darkBorder,
+                        color: isAmbiguousTime ? FlowColors.accentCyan : FlowColors.border(context),
                       ),
                     ),
                     child: Row(
@@ -354,7 +354,7 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
                         const SizedBox(width: 4),
                         Text(
                           isAmbiguousTime ? '${task.scheduledTime} ⇄' : task.scheduledTime!,
-                          style: FlowTypography.labelSmall(color: FlowColors.textPrimary).copyWith(
+                          style: FlowTypography.labelSmall(color: FlowColors.textPrimaryOf(context)).copyWith(
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -368,18 +368,18 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                   decoration: BoxDecoration(
-                    color: FlowColors.darkCardElevated,
+                    color: FlowColors.surface(context),
                     borderRadius: FlowRadii.pillRadius,
-                    border: Border.all(color: FlowColors.darkBorder),
+                    border: Border.all(color: FlowColors.border(context)),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.calendar_today_outlined, size: 12, color: FlowColors.textMuted),
+                      Icon(Icons.calendar_today_outlined, size: 12, color: FlowColors.textMutedOf(context)),
                       const SizedBox(width: 4),
                       Text(
                         task.deadline,
-                        style: FlowTypography.labelSmall(color: FlowColors.textSecondary),
+                        style: FlowTypography.labelSmall(color: FlowColors.textSecondaryOf(context)),
                       ),
                     ],
                   ),
@@ -408,13 +408,13 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: FlowColors.darkCardElevated,
+                color: FlowColors.surface(context),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Select duration:', style: FlowTypography.labelSmall(color: FlowColors.textMuted)),
+                  Text('Select duration:', style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context))),
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
@@ -435,14 +435,14 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                           decoration: BoxDecoration(
-                            color: sel ? accent.withValues(alpha: 0.18) : FlowColors.darkCard,
+                            color: sel ? accent.withValues(alpha: 0.18) : FlowColors.surfaceElevated(context),
                             borderRadius: FlowRadii.pillRadius,
-                            border: Border.all(color: sel ? accent : FlowColors.darkBorder),
+                            border: Border.all(color: sel ? accent : FlowColors.border(context)),
                           ),
                           child: Text(
                             '$m min',
                             style: FlowTypography.labelSmall(
-                              color: sel ? accent : FlowColors.textSecondary,
+                              color: sel ? accent : FlowColors.textSecondaryOf(context),
                             ).copyWith(fontWeight: sel ? FontWeight.w700 : FontWeight.w500),
                           ),
                         ),

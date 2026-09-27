@@ -983,12 +983,12 @@ class _WhatShouldIDoScreenState extends State<WhatShouldIDoScreen> {
                                         return Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            CompanionGraphic(species: flow.companion.species, size: 14),
-                                            const SizedBox(width: 5),
+                                            CompanionGraphic(species: flow.companion.species, size: 26),
+                                            const SizedBox(width: 6),
                                             Text(
                                               '${flow.companion.name} is focusing · +${_elapsedSeconds ~/ 60} XP',
                                               style: FlowTypography.bodySmall(color: FlowColors.mint).copyWith(
-                                                fontSize: 11,
+                                                fontSize: 12,
                                                 fontWeight: FontWeight.w600,
                                               ),
                                             ),

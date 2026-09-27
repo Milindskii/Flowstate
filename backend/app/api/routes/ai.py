@@ -103,6 +103,9 @@ def generate_ai_plan(
         tz_obj = ZoneInfo(user_tz) if user_tz else timezone.utc
         now_local = datetime.now(tz_obj)
 
+        # Enforce segmentation outside the prompt: split multi-activity candidates before scheduling
+        candidates = AIService.validate_and_segment_candidates(candidates, now_local, tz_obj)
+
         busy_intervals = []
         for et in existing_tasks:
             if et.scheduled_start and et.scheduled_end:

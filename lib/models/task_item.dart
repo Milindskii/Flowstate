@@ -165,8 +165,9 @@ enum TaskPriority {
   high,
   urgent;
 
-  static TaskPriority fromString(String? val) {
-    switch (val?.toLowerCase()) {
+  static TaskPriority? tryFromString(String? val) {
+    if (val == null || val.isEmpty || val == 'unspecified') return null;
+    switch (val.toLowerCase()) {
       case 'low':
         return TaskPriority.low;
       case 'high':
@@ -174,9 +175,14 @@ enum TaskPriority {
       case 'urgent':
         return TaskPriority.urgent;
       case 'medium':
-      default:
         return TaskPriority.medium;
+      default:
+        return null;
     }
+  }
+
+  static TaskPriority fromString(String? val) {
+    return tryFromString(val) ?? TaskPriority.medium;
   }
 
   String get value {
@@ -242,7 +248,7 @@ class TaskItem {
   final String? scheduledTime; // e.g. "9:30 AM"
   final bool isPriority;
   final TaskType taskType;
-  final TaskPriority priority;
+  final TaskPriority? priority;
   final TaskStatus status;
   final TaskSource source;
   final DateTime? deadlineAt;
@@ -258,6 +264,8 @@ class TaskItem {
   final String? recommendedSlotDisplay;
   final Map<String, dynamic>? schedulingReasons;
 
+  TaskPriority get effectivePriority => priority ?? TaskPriority.medium;
+
   bool get isPriorityExplicit => prioritySource == 'explicit';
   bool get isPriorityInferred => prioritySource == 'inferred' || ambiguities.contains('inferred_priority');
   bool get isPriorityUnspecified =>
@@ -265,8 +273,9 @@ class TaskItem {
       ambiguities.contains('priority_unspecified') ||
       (!isPriorityExplicit && !isPriorityInferred);
 
+  bool get isDurationExplicit => !missingFields.contains('duration');
   String get type => taskType == TaskType.deepWork ? 'deep_work' : taskType.name;
-  String? get priorityValue => isPriorityUnspecified ? null : priority.name;
+  String? get priorityValue => isPriorityUnspecified ? null : (priority?.name ?? 'medium');
 
   const TaskItem({
     required this.id,
@@ -280,7 +289,7 @@ class TaskItem {
     this.scheduledTime,
     this.isPriority = false,
     this.taskType = TaskType.deepWork,
-    this.priority = TaskPriority.medium,
+    this.priority,
     this.status = TaskStatus.todo,
     this.source = TaskSource.manual,
     this.deadlineAt,
@@ -310,6 +319,7 @@ class TaskItem {
     bool? isPriority,
     TaskType? taskType,
     TaskPriority? priority,
+    bool clearPriority = false,
     TaskStatus? status,
     TaskSource? source,
     DateTime? deadlineAt,
@@ -337,7 +347,7 @@ class TaskItem {
       scheduledTime: scheduledTime ?? this.scheduledTime,
       isPriority: isPriority ?? this.isPriority,
       taskType: taskType ?? this.taskType,
-      priority: priority ?? this.priority,
+      priority: clearPriority ? null : (priority ?? this.priority),
       status: status ?? this.status,
       source: source ?? this.source,
       deadlineAt: deadlineAt ?? this.deadlineAt,
@@ -369,7 +379,9 @@ class TaskItem {
     final parsedStatus = TaskStatus.fromString(json['status'] as String?);
     final isDone = (json['is_completed'] as bool?) ?? (parsedStatus == TaskStatus.completed);
 
-    final parsedPriority = TaskPriority.fromString(json['priority'] as String?);
+    final parsedPriority = (json['priority_source'] == 'unspecified' || json['priority'] == null)
+        ? null
+        : TaskPriority.tryFromString(json['priority'] as String?);
     final isHighPri = (json['is_priority'] as bool?) ??
         (parsedPriority == TaskPriority.high || parsedPriority == TaskPriority.urgent);
 
@@ -463,7 +475,7 @@ class TaskItem {
         'scheduled_time': scheduledTime,
         'is_priority': isPriority,
         'task_type': taskType.value,
-        'priority': priority.value,
+        if (priority != null) 'priority': priority!.value,
         'status': status.value,
         'source': source.value,
         'deadline_at': deadlineAt?.toUtc().toIso8601String(),
@@ -490,7 +502,10 @@ class TaskItem {
   }
 
   String get importanceLabel {
-    switch (priority) {
+    if (isPriorityUnspecified || priority == null) {
+      return 'Not specified';
+    }
+    switch (priority!) {
       case TaskPriority.urgent:
       case TaskPriority.high:
         return 'High';

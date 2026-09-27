@@ -4,6 +4,7 @@ import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
+import 'noya_companion_view.dart';
 
 /// Screen 5 Task Card matching mobile layout
 class TaskCard extends StatelessWidget {
@@ -51,11 +52,18 @@ class TaskCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Top: Title and Menu
+                // Top: Noya Companion Avatar + Title and Menu
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Small contextual Noya reinforcing state (38px, aspect-ratio preserved)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2.0, right: 12.0),
+                      child: NoyaCompanionView.fromTask(
+                        task: task,
+                        size: NoyaSize.small,
+                      ),
+                    ),
                     Expanded(
                       child: Text(
                         task.title,
@@ -133,24 +141,28 @@ class TaskCard extends StatelessWidget {
                           },
                         ),
                         // Complete Checkbox Button (48px tap target)
-                        InkWell(
-                          onTap: () {
-                            if (!task.isCompleted) {
-                              FlowHaptics.success();
-                            } else {
-                              FlowHaptics.lightTap();
-                            }
-                            onToggleComplete();
-                          },
-                          borderRadius: BorderRadius.circular(24),
-                          child: Padding(
-                            padding: const EdgeInsets.all(6.0),
-                            child: Icon(
-                              task.isCompleted
-                                  ? Icons.check_circle_rounded
-                                  : Icons.check_circle_outline_rounded,
-                              color: task.isCompleted ? FlowColors.successOf(context) : FlowColors.textMutedOf(context),
-                              size: 26,
+                        Semantics(
+                          label: task.isCompleted ? 'Task completed [✓]' : 'Mark task complete',
+                          button: true,
+                          child: InkWell(
+                            onTap: () {
+                              if (!task.isCompleted) {
+                                FlowHaptics.success();
+                              } else {
+                                FlowHaptics.lightTap();
+                              }
+                              onToggleComplete();
+                            },
+                            borderRadius: BorderRadius.circular(24),
+                            child: Padding(
+                              padding: const EdgeInsets.all(6.0),
+                              child: Icon(
+                                task.isCompleted
+                                    ? Icons.check_circle_rounded
+                                    : Icons.check_circle_outline_rounded,
+                                color: task.isCompleted ? FlowColors.successOf(context) : FlowColors.textMutedOf(context),
+                                size: 26,
+                              ),
                             ),
                           ),
                         ),

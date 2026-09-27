@@ -25,6 +25,31 @@ class SchedulingSlotEvaluation {
   });
 }
 
+/// User Cognitive & Scheduling Planning Profile (Dart Client Mirror)
+class PlanningProfile {
+  final double wakeTime; // e.g. 7.0 (7:00 AM)
+  final double weekendWakeTime; // e.g. 8.5 (8:30 AM)
+  final double bedtime; // e.g. 23.0 (11:00 PM)
+  final double peakWindowStart; // e.g. 8.5 (8:30 AM)
+  final double peakWindowEnd; // e.g. 12.0 (12:00 PM)
+  final int warmupMinutes; // e.g. 30, 60
+  final List<String> highEnergyTaskTypes;
+  final String tiredBehavior; // 'distracted', 'procrastinate', 'slower', 'mistakes'
+  final String routineShiftPreference; // 'quick_recovery', 'slower_tempo', 'lighter_work'
+
+  const PlanningProfile({
+    this.wakeTime = 7.0,
+    this.weekendWakeTime = 8.5,
+    this.bedtime = 23.0,
+    this.peakWindowStart = 9.5,
+    this.peakWindowEnd = 11.75,
+    this.warmupMinutes = 30,
+    this.highEnergyTaskTypes = const ['coding', 'problem_solving', 'study', 'deep_work'],
+    this.tiredBehavior = 'distracted',
+    this.routineShiftPreference = 'quick_recovery',
+  });
+}
+
 /// Scheduling Engine
 /// Matches user tasks against cognitive readiness windows, deadlines, and hard constraints.
 /// Acts as the single calendar scheduling authority. Strictly schedules REAL user tasks.
@@ -36,6 +61,7 @@ class SchedulingEngine {
     List<TaskItem> candidates, {
     List<TaskItem> existingTasks = const [],
     DateTime? nowLocal,
+    PlanningProfile profile = const PlanningProfile(),
   }) {
     final now = nowLocal ?? DateTime.now();
     final List<TaskItem> enriched = [];
@@ -53,6 +79,7 @@ class SchedulingEngine {
         task,
         existingBusy: busy,
         nowLocal: now,
+        profile: profile,
       );
 
       // Add allocated slot with buffer to busy intervals for subsequent tasks
@@ -61,9 +88,9 @@ class SchedulingEngine {
 
       enriched.add(
         task.copyWith(
-          scheduledStart: task.scheduledStart ?? eval.slotStart,
-          scheduledEnd: task.scheduledEnd ?? eval.slotEnd,
-          scheduledTime: task.scheduledTime ?? eval.slotDisplay,
+          scheduledStart: task.scheduledStart,
+          scheduledEnd: task.scheduledEnd,
+          scheduledTime: task.scheduledTime,
           recommendedSlotDisplay: eval.slotDisplay,
           schedulingExplanation: eval.explanation,
           schedulingReasons: {
@@ -82,6 +109,7 @@ class SchedulingEngine {
     TaskItem task, {
     List<MapEntry<DateTime, DateTime>> existingBusy = const [],
     DateTime? nowLocal,
+    PlanningProfile profile = const PlanningProfile(),
   }) {
     final now = nowLocal ?? DateTime.now();
     final dur = task.durationMinutes > 0 ? task.durationMinutes : 45;
@@ -103,25 +131,38 @@ class SchedulingEngine {
       );
     }
 
-    // Baseline cognitive windows (default profile)
-    const peakStartHour = 9.5; // 9:30 AM
-    const peakEndHour = 11.75; // 11:45 AM
-    const dipStartHour = 14.0; // 2:00 PM
-    const dipEndHour = 15.5; // 3:30 PM
-    const bedtimeHour = 23; // 11:00 PM
+    // Cognitive profile parameters
+    final peakStartHour = profile.peakWindowStart;
+    final peakEndHour = profile.peakWindowEnd;
+    final bedtimeHour = profile.bedtime;
+    final wakeHour = now.weekday >= 6 ? profile.weekendWakeTime : profile.wakeTime;
+    final warmupEndHour = wakeHour + (profile.warmupMinutes / 60.0);
 
     final nowHour = now.hour + now.minute / 60.0;
     final isPastTodayPeak = nowHour > peakEndHour;
+    final isNearBedtime = nowHour >= (bedtimeHour - 1.25); // within 1h15m of bedtime
+    final isLateEvening = isNearBedtime || nowHour >= 20.0;
     final deadline = task.deadlineAt;
 
-    // Check if task has an imminent deadline (e.g. tomorrow before 10 AM or tonight)
-    bool deadlineRequiresToday = false;
+    final lowerTitle = task.title.toLowerCase();
+    final isCognitive = task.taskType == TaskType.deepWork ||
+        task.taskType == TaskType.study ||
+        profile.highEnergyTaskTypes.any((k) => lowerTitle.contains(k)) ||
+        lowerTitle.contains('coding') ||
+        lowerTitle.contains('code') ||
+        lowerTitle.contains('problem solving') ||
+        lowerTitle.contains('assignment');
+
+    // Check if deadline requires completion tonight
+    bool requiresTonightForDeadline = false;
     if (deadline != null) {
       final hoursUntil = deadline.difference(now).inMinutes / 60.0;
-      if (hoursUntil <= 16) {
-        deadlineRequiresToday = true;
+      final isTomorrowMorning = deadline.day == now.day + 1 && deadline.hour <= 10;
+      if (hoursUntil <= 14 && (deadline.day == now.day || isTomorrowMorning)) {
+        requiresTonightForDeadline = true;
       }
     }
+    final deadlineRequiresToday = requiresTonightForDeadline;
 
     // Determine target day and slot
     DateTime targetStart;
@@ -130,68 +171,116 @@ class SchedulingEngine {
     final List<String> secondaryReasons = [];
     String explanation;
 
-    // Rule: If past preferred window today and no urgent deadline, recommend Tomorrow morning!
-    // But if urgent deadline (e.g. due tomorrow morning at 8:00 AM), deadline overrides peak window -> schedule Today!
-    if (isPastTodayPeak && !deadlineRequiresToday && (task.taskType == TaskType.deepWork || task.taskType == TaskType.study)) {
-      dayOffset = 1;
-      final tmw = now.add(const Duration(days: 1));
-      targetStart = DateTime(tmw.year, tmw.month, tmw.day, 9, 30);
-      primaryReason = 'peak_window';
-      secondaryReasons.addAll(['strong_focus_window', 'fresh_start_tomorrow']);
-      explanation = "Tomorrow at 9:30 AM — That's one of your strongest focus windows with a clear uninterrupted block.";
-    } else if (deadlineRequiresToday) {
-      // Must be scheduled today to beat the deadline!
-      dayOffset = 0;
+    if (requiresTonightForDeadline) {
+      // Must be scheduled tonight before bedtime to protect deadline!
       var cur = now.minute % 15 == 0 ? now : now.add(Duration(minutes: 15 - (now.minute % 15)));
       targetStart = cur;
       primaryReason = 'deadline_imminent';
-      secondaryReasons.addAll(['imminent_deadline', 'protects_deadline']);
+      secondaryReasons.addAll(['deadline_safety_overrides_sleep', 'protects_deadline']);
       final timeStr = DateFormat('h:mm a').format(targetStart);
-      explanation = 'Today at $timeStr — Prioritized today to protect your upcoming deadline.';
-    } else if (task.taskType == TaskType.admin || task.taskType == TaskType.shallowWork) {
-      // Admin / light work fits dip window or afternoon
-      final dipDt = DateTime(now.year, now.month, now.day, 14, 0);
-      if (dipDt.isAfter(now)) {
-        targetStart = dipDt;
-        dayOffset = 0;
-        primaryReason = 'dip_window';
-        secondaryReasons.add('light_work_dip');
-        explanation = 'Today at 2:00 PM — Fits your afternoon window to maintain momentum without cognitive strain.';
+      explanation = 'Today at $timeStr — Prioritized tonight to protect your upcoming deadline before your bedtime.';
+    } else if (isNearBedtime) {
+      // SLEEP PROTECTION: Ordinary / no-deadline tasks are moved to tomorrow!
+      final tmw = now.add(const Duration(days: 1));
+      final tmwWake = tmw.weekday >= 6 ? profile.weekendWakeTime : profile.wakeTime;
+      final tmwWarmupEnd = tmwWake + (profile.warmupMinutes / 60.0);
+
+      if (isCognitive) {
+        final startH = peakStartHour > tmwWarmupEnd ? peakStartHour : tmwWarmupEnd;
+        final h = startH.toInt();
+        final m = ((startH % 1) * 60).round();
+        targetStart = DateTime(tmw.year, tmw.month, tmw.day, h, m);
+        dayOffset = 1;
+        primaryReason = 'peak_window';
+        secondaryReasons.addAll(['protects_sleep_schedule', 'strong_focus_window']);
+        explanation = "Tomorrow at ${DateFormat('h:mm a').format(targetStart)} — That's one of your strongest focus windows with a clear uninterrupted block (protects your sleep schedule).";
+      } else if (task.taskType == TaskType.physical) {
+        targetStart = DateTime(tmw.year, tmw.month, tmw.day, 16, 30);
+        dayOffset = 1;
+        primaryReason = 'physical_window';
+        secondaryReasons.addAll(['protects_sleep_schedule', 'optimal_workout_window']);
+        explanation = 'Tomorrow at 4:30 PM — Moved to tomorrow to protect your sleep schedule and workout recovery.';
       } else {
-        var cur = now.minute % 15 == 0 ? now : now.add(Duration(minutes: 15 - (now.minute % 15)));
-        targetStart = cur;
-        dayOffset = 0;
-        explanation = 'Today at ${DateFormat('h:mm a').format(targetStart)} — Fits your afternoon availability.';
+        targetStart = DateTime(tmw.year, tmw.month, tmw.day, 14, 0);
+        dayOffset = 1;
+        primaryReason = 'dip_window';
+        secondaryReasons.addAll(['protects_sleep_schedule', 'light_work_dip']);
+        explanation = 'Tomorrow at 2:00 PM — Moved to tomorrow to protect your sleep schedule and wind-down window.';
       }
     } else if (task.taskType == TaskType.physical) {
-      // Physical fits early morning or late afternoon
-      final pmDt = DateTime(now.year, now.month, now.day, 16, 30);
-      if (pmDt.isAfter(now)) {
-        targetStart = pmDt;
+      if (nowHour < 16.5) {
+        targetStart = DateTime(now.year, now.month, now.day, 16, 30);
         dayOffset = 0;
         primaryReason = 'physical_window';
         secondaryReasons.add('optimal_workout_window');
         explanation = 'Today at 4:30 PM — Ideal physical session window with post-workout recovery space.';
-      } else {
+      } else if (nowHour < 18.5) {
         var cur = now.minute % 15 == 0 ? now : now.add(Duration(minutes: 15 - (now.minute % 15)));
         targetStart = cur;
         dayOffset = 0;
-        explanation = 'Today at ${DateFormat('h:mm a').format(targetStart)} — Ideal workout slot.';
+        primaryReason = 'physical_window';
+        secondaryReasons.add('evening_workout_window');
+        explanation = 'Today at ${DateFormat('h:mm a').format(targetStart)} — Fits your evening workout window.';
+      } else {
+        // Late evening: schedule for tomorrow late afternoon
+        final tmw = now.add(const Duration(days: 1));
+        targetStart = DateTime(tmw.year, tmw.month, tmw.day, 16, 30);
+        dayOffset = 1;
+        primaryReason = 'physical_window';
+        secondaryReasons.addAll(['optimal_workout_window', 'scheduled_tomorrow']);
+        explanation = 'Tomorrow at 4:30 PM — Ideal late-afternoon workout slot.';
+      }
+    } else if (task.taskType == TaskType.admin || task.taskType == TaskType.shallowWork) {
+      if (nowHour < 14.0) {
+        targetStart = DateTime(now.year, now.month, now.day, 14, 0);
+        dayOffset = 0;
+        primaryReason = 'dip_window';
+        secondaryReasons.add('light_work_dip');
+        explanation = 'Today at 2:00 PM — Fits your afternoon window to maintain momentum without cognitive strain.';
+      } else if (!isLateEvening) {
+        var cur = now.minute % 15 == 0 ? now : now.add(Duration(minutes: 15 - (now.minute % 15)));
+        targetStart = cur;
+        dayOffset = 0;
+        primaryReason = 'dip_window';
+        secondaryReasons.add('afternoon_admin_window');
+        explanation = 'Today at ${DateFormat('h:mm a').format(targetStart)} — Fits your afternoon availability.';
+      } else {
+        // Late evening: schedule for tomorrow 2:00 PM
+        final tmw = now.add(const Duration(days: 1));
+        targetStart = DateTime(tmw.year, tmw.month, tmw.day, 14, 0);
+        dayOffset = 1;
+        primaryReason = 'dip_window';
+        secondaryReasons.addAll(['light_work_dip', 'fresh_start_tomorrow']);
+        explanation = 'Tomorrow at 2:00 PM — Fits your afternoon window to maintain momentum without cognitive strain.';
       }
     } else {
-      // Normal flexible deep work / task
+      // Deep work, study, creative, or general tasks
       if (!isPastTodayPeak) {
-        final peakDt = DateTime(now.year, now.month, now.day, 9, 30);
+        final startH = peakStartHour > warmupEndHour ? peakStartHour : warmupEndHour;
+        final peakDt = DateTime(now.year, now.month, now.day, startH.toInt(), ((startH % 1) * 60).round());
         targetStart = peakDt.isAfter(now) ? peakDt : now;
         dayOffset = 0;
         primaryReason = 'peak_window';
         secondaryReasons.add('strong_focus_window');
         explanation = 'Today at ${DateFormat('h:mm a').format(targetStart)} — Strong focus window with clear continuity.';
-      } else {
+      } else if (!isLateEvening && nowHour < 18.0) {
         var cur = now.minute % 15 == 0 ? now : now.add(Duration(minutes: 15 - (now.minute % 15)));
         targetStart = cur;
         dayOffset = 0;
-        explanation = 'Today at ${DateFormat('h:mm a').format(targetStart)} — Feasible working slot.';
+        primaryReason = 'available_slot';
+        secondaryReasons.add('afternoon_focus');
+        explanation = 'Today at ${DateFormat('h:mm a').format(targetStart)} — Feasible working slot for focus.';
+      } else {
+        // Past peak or late evening: schedule for tomorrow morning in peak window
+        final tmw = now.add(const Duration(days: 1));
+        final tmwWake = tmw.weekday >= 6 ? profile.weekendWakeTime : profile.wakeTime;
+        final tmwWarmupEnd = tmwWake + (profile.warmupMinutes / 60.0);
+        final startH = peakStartHour > tmwWarmupEnd ? peakStartHour : tmwWarmupEnd;
+        targetStart = DateTime(tmw.year, tmw.month, tmw.day, startH.toInt(), ((startH % 1) * 60).round());
+        dayOffset = 1;
+        primaryReason = 'peak_window';
+        secondaryReasons.addAll(['strong_focus_window', 'fresh_start_tomorrow']);
+        explanation = "Tomorrow at ${DateFormat('h:mm a').format(targetStart)} — That's one of your strongest focus windows with a clear uninterrupted block.";
       }
     }
 
@@ -199,6 +288,20 @@ class SchedulingEngine {
     DateTime resolvedStart = targetStart;
     bool foundFree = false;
     while (!foundFree) {
+      // If conflict resolution pushes a non-urgent task past bedtime (22:00), roll over to tomorrow!
+      if (!deadlineRequiresToday && resolvedStart.day == now.day && resolvedStart.hour >= bedtimeHour) {
+        final tmw = now.add(const Duration(days: 1));
+        final nextStartHour = (task.taskType == TaskType.physical)
+            ? 16
+            : (task.taskType == TaskType.admin || task.taskType == TaskType.shallowWork ? 14 : 9);
+        final nextStartMin = (task.taskType == TaskType.physical || task.taskType == TaskType.deepWork || task.taskType == TaskType.study) ? 30 : 0;
+        resolvedStart = DateTime(tmw.year, tmw.month, tmw.day, nextStartHour, nextStartMin);
+        dayOffset = 1;
+        primaryReason = 'fresh_start_tomorrow';
+        secondaryReasons.addAll(['avoid_late_night_fatigue']);
+        explanation = 'Tomorrow at ${DateFormat('h:mm a').format(resolvedStart)} — Avoids late-night fatigue and protects your recovery window.';
+      }
+
       final candEnd = resolvedStart.add(Duration(minutes: dur));
       DateTime? conflictEnd;
       for (final b in existingBusy) {
@@ -214,6 +317,7 @@ class SchedulingEngine {
     }
 
     final resolvedEnd = resolvedStart.add(Duration(minutes: dur));
+    dayOffset = resolvedStart.difference(DateTime(now.year, now.month, now.day)).inDays;
     final dayLabel = resolvedStart.day == now.day ? 'Today' : (resolvedStart.day == now.day + 1 ? 'Tomorrow' : DateFormat('MMM d').format(resolvedStart));
     final timeStr = DateFormat('h:mm a').format(resolvedStart);
     final slotDisplay = '$dayLabel · $timeStr';
@@ -221,7 +325,7 @@ class SchedulingEngine {
     return SchedulingSlotEvaluation(
       slotStart: resolvedStart,
       slotEnd: resolvedEnd,
-      dayOffset: resolvedStart.difference(DateTime(now.year, now.month, now.day)).inDays,
+      dayOffset: dayOffset,
       slotDisplay: slotDisplay,
       primaryReason: primaryReason,
       secondaryReasons: secondaryReasons,

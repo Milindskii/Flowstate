@@ -12,8 +12,10 @@ import 'package:flowstate/providers/app_state_provider.dart';
 import 'package:flowstate/providers/flow_provider.dart';
 import 'package:flowstate/providers/theme_provider.dart';
 import 'package:flowstate/screens/flow_screen.dart';
+import 'package:flowstate/screens/focus_ritual_screen.dart';
 import 'package:flowstate/screens/today_dashboard_tab.dart';
 import 'package:flowstate/services/flow_clock.dart';
+import 'package:flowstate/theme/flow_theme.dart';
 
 void main() {
   setUp(() {
@@ -162,10 +164,11 @@ void main() {
       expect(find.text('Best Session'), findsOneWidget);
       expect(find.text('Best Day'), findsOneWidget);
       expect(find.text('Total Focus'), findsOneWidget);
-      expect(find.text('Rhythm'), findsOneWidget);
+      expect(find.text('Streak'), findsOneWidget);
       expect(find.text('—'), findsNWidgets(2)); // Both Best Session and Best Day are '—'
       expect(find.text('0m'), findsOneWidget);   // Total focus is '0m'
-      expect(find.text('Building'), findsOneWidget); // Rhythm is 'Building'
+      expect(find.text('0 days'), findsOneWidget); // Streak is '0 days'
+      expect(find.text('Start building your personal record.'), findsOneWidget);
     });
 
     testWidgets('5. Responsive layout: zero RenderFlex overflow across 320px, 360px, 375px, 412px',
@@ -294,7 +297,7 @@ void main() {
       final provider = FlowProvider();
       final customOverview = FlowOverview(
         companion: const FlowCompanion(id: 'c1', name: 'Noya', species: 'fox', level: 2, companionXp: 150),
-        profile: const FlowProfile(userId: 'u1', currentStreak: 3, flowBalance: 400),
+        profile: const FlowProfile(userId: 'u1', currentStreak: 3, longestStreak: 5, flowBalance: 400),
         personalBestFocusMinutes: 45,
         bestFocusDayMinutes: 75,
         totalFocusMinutes: 120,
@@ -310,7 +313,8 @@ void main() {
       expect(find.text('45m'), findsOneWidget); // Best session
       expect(find.text('75m'), findsOneWidget); // Best day
       expect(find.text('2h'), findsOneWidget);  // Total focus (120 min = 2h)
-      expect(find.text('Steady'), findsOneWidget); // Rhythm
+      expect(find.text('Streak'), findsOneWidget);
+      expect(find.text('5d'), findsOneWidget); // Streak (longest streak)
     });
 
     testWidgets('11. Today YOUR FLOW card renders visible 44px Noya avatar, text, and Start Flow button on 320px screen',
@@ -373,6 +377,136 @@ void main() {
       expect(error, isNull);
 
       FlowClock().stopTimer();
+    });
+
+    testWidgets('12. Dark Mode contrast & theme consistency for Flow Hub',
+        (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+      tester.view.devicePixelRatio = 3.0;
+      addTearDown(() => tester.view.reset());
+
+      final provider = FlowProvider();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: FlowTheme.lightTheme(),
+          darkTheme: FlowTheme.darkTheme(),
+          themeMode: ThemeMode.dark,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: child!,
+          ),
+          home: MultiProvider(
+            providers: [
+              ChangeNotifierProvider<FlowProvider>.value(value: provider),
+            ],
+            child: const FlowScreen(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Verify Flow Hub renders under dark theme
+      expect(find.text('Living Flow Hub'), findsOneWidget);
+      expect(find.text('NOYA'), findsOneWidget);
+
+      // Verify tabs are visible and readable
+      expect(find.text('Journey'), findsOneWidget);
+      expect(find.text('Quests'), findsOneWidget);
+      expect(find.text('Badges'), findsOneWidget);
+      expect(find.text('Customize'), findsOneWidget);
+
+      // Verify Noya companion is visible in dark mode
+      expect(find.byType(FlowCompanionView), findsOneWidget);
+
+      // Verify zero render errors
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('13. Canonical Noya presentation and completion artwork in FocusRitualScreen',
+        (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+      tester.view.devicePixelRatio = 3.0;
+      addTearDown(() => tester.view.reset());
+
+      final timerCtrl = FakeFocusTimerController(targetSeconds: 1500);
+      final provider = FlowProvider();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: FlowTheme.darkTheme(),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: child!,
+          ),
+          home: MultiProvider(
+            providers: [
+              ChangeNotifierProvider<FlowProvider>.value(value: provider),
+              ChangeNotifierProvider<AppStateProvider>(create: (_) => AppStateProvider()),
+            ],
+            child: FocusRitualScreen(
+              skipCountdown: true,
+              timerController: timerCtrl,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // FlowCompanionView is rendered during ritual
+      expect(find.byType(FlowCompanionView), findsOneWidget);
+
+      // Verify timer is displayed with Done button
+      expect(find.text('Done'), findsOneWidget);
+
+      // Tap Done to complete flow
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+
+      // Verify Flow Complete screen shows canonical Noya celebration
+      expect(find.textContaining('Flow Complete'), findsOneWidget);
+      expect(find.byType(FlowCompanionView), findsOneWidget);
+
+      // Verify image uses canonical transparent cartoon asset
+      final imgFinder = find.descendant(
+        of: find.byType(FlowCompanionView),
+        matching: find.byType(Image),
+      );
+      expect(imgFinder, findsWidgets);
+      final imageWidget = tester.widget<Image>(imgFinder.first);
+      final assetImage = imageWidget.image as AssetImage;
+      expect(
+        assetImage.assetName.contains('noya_celebrating') || assetImage.assetName.contains('noya_success'),
+        isTrue,
+      );
+    });
+
+    testWidgets('14. Multi-screen responsiveness: zero overflow at 320, 360, 390, 432px',
+        (WidgetTester tester) async {
+      final widths = [320.0, 360.0, 390.0, 432.0];
+      final provider = FlowProvider();
+
+      for (final w in widths) {
+        tester.view.physicalSize = Size(w * 2, 800 * 2);
+        tester.view.devicePixelRatio = 2.0;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: FlowTheme.darkTheme(),
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(disableAnimations: true),
+              child: child!,
+            ),
+            home: MultiProvider(
+              providers: [
+                ChangeNotifierProvider<FlowProvider>.value(value: provider),
+              ],
+              child: const FlowScreen(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull, reason: 'Failed at width $w');
+      }
+      tester.view.reset();
     });
   });
 }

@@ -284,7 +284,7 @@ class _FocusRitualScreenState extends State<FocusRitualScreen>
         Provider.of<FlowProvider>(context, listen: false).startSession(
           taskId: task?.id,
           taskTitle: taskTitle,
-        );
+        ).catchError((_) {});
       } catch (_) {
         // Fallback in offline or test mode
       }
@@ -666,6 +666,7 @@ class _FocusRitualScreenState extends State<FocusRitualScreen>
               size: 130,
               showStageBadge: false,
               showStatusText: false,
+              frameless: true,
             ),
             const SizedBox(height: 36),
             AnimatedSwitcher(
@@ -759,6 +760,7 @@ class _FocusRitualScreenState extends State<FocusRitualScreen>
                             size: 130,
                             showStageBadge: false,
                             showStatusText: false,
+                            frameless: true,
                           ),
                         ],
                       ),
@@ -942,6 +944,7 @@ class _FocusRitualScreenState extends State<FocusRitualScreen>
             size: 140,
             showStageBadge: true,
             showStatusText: true,
+            frameless: true,
           ),
           const SizedBox(height: 20),
 

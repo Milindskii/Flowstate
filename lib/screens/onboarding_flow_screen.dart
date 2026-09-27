@@ -169,15 +169,52 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
         peakEnd = '21:30';
       }
 
+      final inertiaRaw = _answers['sleep_inertia'] as String? ?? '30_60_min';
+      int inertiaMins = 30;
+      if (inertiaRaw == 'almost_immediately') {
+        inertiaMins = 10;
+      } else if (inertiaRaw == '15_30_min') {
+        inertiaMins = 20;
+      } else if (inertiaRaw == '30_60_min') {
+        inertiaMins = 45;
+      } else if (inertiaRaw == '1_2_hours') {
+        inertiaMins = 90;
+      } else if (inertiaRaw == 'more_than_2_hours') {
+        inertiaMins = 120;
+      }
+
+      final focusRaw = _answers['focus_duration'] as String? ?? '25_40_min';
+      int sessionMins = 45;
+      if (focusRaw == '15_25_min') {
+        sessionMins = 20;
+      } else if (focusRaw == '25_40_min') {
+        sessionMins = 35;
+      } else if (focusRaw == '40_60_min') {
+        sessionMins = 50;
+      } else if (focusRaw == '60_90_min') {
+        sessionMins = 75;
+      } else if (focusRaw == '90_plus_min') {
+        sessionMins = 90;
+      }
+
+      final draining = _answers['draining_work'];
+      List<String> drainingList = ['coding'];
+      if (draining is List) {
+        drainingList = draining.map((e) => e.toString()).toList();
+      }
+
       final payload = {
         'preferred_peak_start': peakStart,
         'preferred_peak_end': peakEnd,
         'weekday_wake_time': _answers['wake_weekday'] ?? '07:00',
         'weekend_wake_time': _answers['wake_weekend'] ?? '08:30',
         'bedtime': _answers['sleep_time'] ?? '23:00',
-        'sleep_inertia_minutes': 30,
-        'preferred_session_minutes': 45,
-        'draining_work_types': _answers['draining_work'] ?? ['coding'],
+        'sleep_inertia_minutes': inertiaMins,
+        'preferred_session_minutes': sessionMins,
+        'draining_work_types': drainingList,
+        'fatigue_symptom': _answers['tired_reaction'] ?? 'distracted',
+        'routine_shift_preference': _answers['schedule_shift_adaptation'] ?? 'quick_recovery',
+        'session_disruptor': _answers['session_disruptor'] ?? 'phone',
         'primary_goal': _answers['primary_goal'] ?? 'start_difficult',
         'energy_predictability': _answers['energy_predictability'] ?? 'mostly_predictable',
         'timezone': 'Asia/Kolkata',

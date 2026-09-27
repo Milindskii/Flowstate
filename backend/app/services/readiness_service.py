@@ -39,6 +39,10 @@ class ReadinessService:
                 preferred_session_minutes=45,
                 energy_predictability="mostly_predictable",
                 optimization_goal="start_difficult_work",
+                bedtime="23:00",
+                draining_work_types="coding,problem_solving",
+                fatigue_symptom="distracted",
+                routine_shift_preference="quick_recovery",
                 confidence_level=0.20,
             )
         return profile
@@ -59,6 +63,12 @@ class ReadinessService:
 
         diff = abs(_to_hours(onboarding.weekend_wake_time) - _to_hours(onboarding.weekday_wake_time))
 
+        draining_str = ",".join(onboarding.draining_work_types) if onboarding.draining_work_types else "coding,problem_solving"
+        routine_shift = onboarding.routine_shift_preference or (
+            onboarding.adaptive_followup_answers.get("schedule_shift_adaptation")
+            if onboarding.adaptive_followup_answers else "quick_recovery"
+        ) or "quick_recovery"
+
         profile = self.repo.create_or_update_profile(
             db=db,
             user_id=user_id,
@@ -74,6 +84,10 @@ class ReadinessService:
             preferred_session_minutes=onboarding.preferred_session_minutes,
             energy_predictability=onboarding.energy_predictability,
             optimization_goal=onboarding.primary_goal,
+            bedtime=onboarding.bedtime,
+            draining_work_types=draining_str,
+            fatigue_symptom=onboarding.fatigue_symptom or "distracted",
+            routine_shift_preference=routine_shift,
             confidence_level=0.25, # Initial onboarding prior calibration
         )
 

@@ -119,7 +119,7 @@ class FlowColors {
   static const Color borderDark = Color(0xFF243248); // Low-contrast dark border
   static const Color dividerDark = Color(0xFF1C2739);
   static const Color textPrimaryDark = Color(0xFFF8FAFC); // Slate 50 (Crisp off-white)
-  static const Color textSecondaryDark = Color(0xFF94A3B8); // Slate 400 (Cool gray)
+  static const Color textSecondaryDark = Color(0xFFE2E8F0); // Slate 200 (Readable, clean contrast)
   static const Color textMutedDark = Color(0xFF94A3B8); // Slate 400 (WCAG 2.1 AA >5:1 contrast on Obsidian)
   static const Color softShadowDark = Color(0x28000000); // Subtle dark shadow
 

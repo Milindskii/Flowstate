@@ -71,6 +71,7 @@ class AppStateProvider extends ChangeNotifier {
   bool _isOptimizing = false;
   TaskItem? _activeFocusTask;
   bool _onboardingComplete = false;
+  VoidCallback? onTaskCompletedForFlow;
 
   AppStateProvider({ApiService? customApi}) {
     apiService = customApi ?? ApiService();
@@ -438,7 +439,13 @@ class AppStateProvider extends ChangeNotifier {
         _learningEngine.recordSessionFeedback(feedback);
         if (!_isDemoMode) {
           feedbackService.submitFeedback(feedback).catchError((_) {});
-          taskService.completeTask(task.id, actualMinutes: task.durationMinutes, perceivedFocusScore: 5).catchError((_) {});
+          taskService
+              .completeTask(task.id, actualMinutes: task.durationMinutes, perceivedFocusScore: 5)
+              .then((_) {
+            onTaskCompletedForFlow?.call();
+          }).catchError((_) {});
+        } else {
+          onTaskCompletedForFlow?.call();
         }
         _recalculateReadiness();
       }

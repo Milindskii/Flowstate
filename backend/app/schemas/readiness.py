@@ -20,6 +20,10 @@ class ReadinessProfileSchema(BaseModel):
     energy_predictability: str
     optimization_goal: str
     personalization_enabled: bool
+    bedtime: Optional[str] = "23:00"
+    draining_work_types: Optional[str] = None
+    fatigue_symptom: Optional[str] = None
+    routine_shift_preference: Optional[str] = None
     confidence_level: float
     created_at: datetime
     updated_at: datetime
@@ -36,6 +40,7 @@ class ReadinessOnboardingRequest(BaseModel):
     sleep_inertia_minutes: int = Field(default=30, ge=0, le=180, description="Time until properly awake")
     draining_work_types: List[str] = Field(default_factory=list, description="Work categories that cost the most focus")
     fatigue_symptom: Optional[str] = Field(default="distracted", description="Behavior when tired")
+    routine_shift_preference: Optional[str] = Field(default="quick_recovery", description="Routine adaptation on schedule shifts")
     session_disruptor: Optional[str] = Field(default="phone", description="Primary focus disruptor")
     preferred_session_minutes: int = Field(default=45, ge=15, le=180, description="Comfortable focus duration before break")
     primary_goal: str = Field(default="start_difficult_work", description="What Flowstate should help with most")

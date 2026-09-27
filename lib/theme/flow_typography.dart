@@ -16,7 +16,7 @@ class FlowTypography {
     'sans-serif',
   ];
 
-  static TextStyle displayLarge({Color color = FlowColors.textPrimary}) =>
+  static TextStyle displayLarge({Color? color}) =>
       GoogleFonts.plusJakartaSans(
         fontSize: 36.0,
         fontWeight: FontWeight.w800,
@@ -25,7 +25,7 @@ class FlowTypography {
         height: 1.22,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
-  static TextStyle displayMedium({Color color = FlowColors.textPrimary}) =>
+  static TextStyle displayMedium({Color? color}) =>
       GoogleFonts.plusJakartaSans(
         fontSize: 30.0,
         fontWeight: FontWeight.w800,
@@ -34,7 +34,7 @@ class FlowTypography {
         height: 1.25,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
-  static TextStyle headlineLarge({Color color = FlowColors.textPrimary}) =>
+  static TextStyle headlineLarge({Color? color}) =>
       GoogleFonts.plusJakartaSans(
         fontSize: 26.0,
         fontWeight: FontWeight.w700,
@@ -43,7 +43,7 @@ class FlowTypography {
         height: 1.28,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
-  static TextStyle headlineMedium({Color color = FlowColors.textPrimary}) =>
+  static TextStyle headlineMedium({Color? color}) =>
       GoogleFonts.plusJakartaSans(
         fontSize: 22.5,
         fontWeight: FontWeight.w700,
@@ -52,7 +52,7 @@ class FlowTypography {
         height: 1.3,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
-  static TextStyle titleMedium({Color color = FlowColors.textPrimary}) =>
+  static TextStyle titleMedium({Color? color}) =>
       GoogleFonts.plusJakartaSans(
         fontSize: 20.0,
         fontWeight: FontWeight.w600,
@@ -61,7 +61,7 @@ class FlowTypography {
         height: 1.35,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
-  static TextStyle titleSmall({Color color = FlowColors.textPrimary}) =>
+  static TextStyle titleSmall({Color? color}) =>
       GoogleFonts.plusJakartaSans(
         fontSize: 17.0,
         fontWeight: FontWeight.w600,
@@ -71,7 +71,7 @@ class FlowTypography {
       ).copyWith(fontFamilyFallback: emojiFallback);
 
   /// Readable mobile body font (bumped to 18px)
-  static TextStyle bodyLarge({Color color = FlowColors.textPrimary}) =>
+  static TextStyle bodyLarge({Color? color}) =>
       GoogleFonts.plusJakartaSans(
         fontSize: 18.0,
         fontWeight: FontWeight.w400,
@@ -79,7 +79,7 @@ class FlowTypography {
         height: 1.5,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
-  static TextStyle bodyMedium({Color color = FlowColors.textSecondary}) =>
+  static TextStyle bodyMedium({Color? color}) =>
       GoogleFonts.plusJakartaSans(
         fontSize: 16.5,
         fontWeight: FontWeight.w400,
@@ -87,7 +87,7 @@ class FlowTypography {
         height: 1.45,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
-  static TextStyle bodySmall({Color color = FlowColors.textSecondary}) =>
+  static TextStyle bodySmall({Color? color}) =>
       GoogleFonts.plusJakartaSans(
         fontSize: 14.5,
         fontWeight: FontWeight.w400,
@@ -95,7 +95,7 @@ class FlowTypography {
         height: 1.4,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
-  static TextStyle labelLarge({Color color = FlowColors.textPrimary}) =>
+  static TextStyle labelLarge({Color? color}) =>
       GoogleFonts.plusJakartaSans(
         fontSize: 17.5,
         fontWeight: FontWeight.w600,
@@ -104,7 +104,7 @@ class FlowTypography {
         height: 1.3,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
-  static TextStyle labelMedium({Color color = FlowColors.textSecondary}) =>
+  static TextStyle labelMedium({Color? color}) =>
       GoogleFonts.plusJakartaSans(
         fontSize: 15.5,
         fontWeight: FontWeight.w500,
@@ -113,7 +113,7 @@ class FlowTypography {
         height: 1.3,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
-  static TextStyle labelSmall({Color color = FlowColors.textMuted}) =>
+  static TextStyle labelSmall({Color? color}) =>
       GoogleFonts.plusJakartaSans(
         fontSize: 13.5,
         fontWeight: FontWeight.w500,
@@ -122,15 +122,15 @@ class FlowTypography {
         height: 1.25,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
-  static TextStyle numberHero({Color color = FlowColors.cyanLight}) =>
+  static TextStyle numberHero({Color? color}) =>
       GoogleFonts.plusJakartaSans(
         fontSize: 38.0,
         fontWeight: FontWeight.w800,
-        color: color,
+        color: color ?? FlowColors.cyanLight,
         letterSpacing: -0.5,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
-  static TextStyle badgeText({Color color = FlowColors.textPrimary}) =>
+  static TextStyle badgeText({Color? color}) =>
       GoogleFonts.plusJakartaSans(
         fontSize: 13.0,
         fontWeight: FontWeight.w700,

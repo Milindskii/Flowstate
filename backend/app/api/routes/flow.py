@@ -27,6 +27,7 @@ router = APIRouter(prefix="/flow", tags=["Flow & Companion Progression"])
 flow_service = FlowService()
 
 @router.get("", response_model=FlowOverviewResponse)
+@router.get("/overview", response_model=FlowOverviewResponse)
 def get_flow_overview(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

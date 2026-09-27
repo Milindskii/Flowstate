@@ -12,6 +12,7 @@ class ExtractedTaskItem {
   final String prioritySource; // 'explicit', 'inferred', or 'unspecified'
   final String? deadline; // e.g. "2026-09-26" or "tomorrow"
   final String? fixedStart; // e.g. "18:00"
+  final bool isDurationExplicit;
   final bool isRecurring;
   final List<String> dependencies;
   final double confidence;
@@ -32,6 +33,7 @@ class ExtractedTaskItem {
     required this.prioritySource,
     this.deadline,
     this.fixedStart,
+    this.isDurationExplicit = false,
     this.isRecurring = false,
     this.dependencies = const [],
     this.confidence = 1.0,
@@ -52,6 +54,15 @@ class ExtractedTaskItem {
     final prioSrc = json['priority_source'] as String? ??
         (rawPrio != null ? 'inferred' : 'unspecified');
 
+    final missing = (json['missing_fields'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .toList() ??
+        const [];
+    final durExplicit = json['is_duration_explicit'] as bool? ??
+        (json['field_provenance']?['duration']?['source'] != null
+            ? json['field_provenance']['duration']['source'] == 'explicit'
+            : !missing.contains('duration'));
+
     DateTime? recStart;
     if (json['recommended_slot_start'] != null) {
       recStart = DateTime.tryParse(json['recommended_slot_start'].toString());
@@ -71,6 +82,7 @@ class ExtractedTaskItem {
       prioritySource: prioSrc,
       deadline: json['deadline'] as String?,
       fixedStart: json['fixed_start'] as String?,
+      isDurationExplicit: durExplicit,
       isRecurring: json['is_recurring'] as bool? ?? false,
       dependencies: (json['dependencies'] as List<dynamic>?)
               ?.map((e) => e.toString())
@@ -217,7 +229,7 @@ class ExtractedTaskItem {
     }
 
     final finalSchedStart = scheduledStart ?? recommendedSlotStart;
-    final finalSchedEnd = finalSchedStart != null ? finalSchedStart.add(Duration(minutes: estimatedMinutes)) : null;
+    final finalSchedEnd = finalSchedStart?.add(Duration(minutes: estimatedMinutes));
 
     return TaskItem(
       id: customId ?? 'task-ai-${now.millisecondsSinceEpoch}',
@@ -239,6 +251,7 @@ class ExtractedTaskItem {
           : (tType == TaskType.physical ? 'Fitness' : (tType == TaskType.admin ? 'Admin' : 'Work')),
       source: TaskSource.aiParsed,
       confidence: confidence,
+      missingFields: isDurationExplicit ? const [] : const ['duration'],
       ambiguities: ambiguities,
       schedulingExplanation: schedulingExplanation,
       recommendedSlotDisplay: recommendedSlotDisplay,

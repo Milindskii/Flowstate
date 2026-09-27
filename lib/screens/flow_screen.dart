@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../components/companion/companion_graphic.dart';
 import '../components/companion/flow_companion_view.dart';
 import '../components/flow_ambient_background.dart';
+import '../components/noya_companion_view.dart';
 import '../components/shield_recovery_dialog.dart';
 import '../models/flow_achievement.dart';
 import '../models/flow_companion.dart';
@@ -40,6 +41,16 @@ class _FlowScreenState extends State<FlowScreen> {
   int _selectedTab = 0; // 0: Journey, 1: Quests, 2: Achievements, 3: Customize
   String? _speechBubble;
   int _speechCounter = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        Provider.of<FlowProvider>(context, listen: false).loadOverview();
+      }
+    });
+  }
 
   static const _noyaPhrases = [
     'Ready when you are!',
@@ -349,12 +360,9 @@ class _FlowScreenState extends State<FlowScreen> {
                 ),
                 child: Row(
                   children: [
-                    Image.asset(
-                      'assets/images/companions/fox_winking.png',
-                      width: 24,
-                      height: 24,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.pets_rounded, size: 20, color: Color(0xFFF97316)),
+                    const NoyaCompanionView(
+                      state: NoyaState.idle,
+                      size: 24,
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -1362,13 +1370,22 @@ class _FlowScreenState extends State<FlowScreen> {
               Container(width: 1, height: 28, color: FlowColors.border(context)),
               _buildMetricColumn(
                 context,
-                overview.consistencyScore.isNotEmpty
-                    ? overview.consistencyScore
-                    : 'Building',
-                'Rhythm',
+                overview.profile.longestStreak > 0
+                    ? '${overview.profile.longestStreak}d'
+                    : '0 days',
+                'Streak',
               ),
             ],
           ),
+          if (overview.personalBestFocusMinutes == 0 && overview.totalFocusMinutes == 0) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Start building your personal record.',
+              style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
         ],
       ),
     );

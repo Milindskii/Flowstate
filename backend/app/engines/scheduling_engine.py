@@ -45,6 +45,9 @@ class PlanningProfile:
     """
     User Cognitive & Scheduling Planning Profile.
     Integrates baseline questionnaire responses with learned performance history.
+    Provides strict access to all core questionnaire anchors:
+    wake_time, weekend_wake_time, bedtime, peak_window_start, peak_window_end,
+    warmup_minutes, high_energy_task_types, tired_behavior, routine_shift_preference.
     """
     def __init__(
         self,
@@ -55,6 +58,10 @@ class PlanningProfile:
         weekday_wake_time: float = 7.0,      # 07:00 AM
         weekend_wake_time: float = 8.5,      # 08:30 AM
         bedtime: float = 23.0,               # 11:00 PM
+        warmup_minutes: int = 30,            # 30 min cognitive warmup
+        high_energy_task_types: Optional[List[str]] = None,
+        tired_behavior: str = "distracted",
+        routine_shift_preference: str = "quick_recovery",
         preferred_session_minutes: int = 45,
         energy_predictability: str = "mostly_predictable",
         confidence_level: float = 0.20,
@@ -68,11 +75,40 @@ class PlanningProfile:
         self.weekday_wake_time = weekday_wake_time
         self.weekend_wake_time = weekend_wake_time
         self.bedtime = bedtime
+        self.warmup_minutes = warmup_minutes
+        self.high_energy_task_types = [t.lower() for t in (high_energy_task_types or ["coding", "problem_solving", "deep_work", "study"])]
+        self.tired_behavior = tired_behavior
+        self.routine_shift_preference = routine_shift_preference
         self.preferred_session_minutes = preferred_session_minutes
         self.energy_predictability = energy_predictability
         self.confidence_level = confidence_level
         self.avg_duration_ratio = avg_duration_ratio
         self.learned_afternoon_focus = learned_afternoon_focus
+
+    # Standardized profile aliases
+    @property
+    def wake_time(self) -> float:
+        return self.weekday_wake_time
+
+    @wake_time.setter
+    def wake_time(self, val: float):
+        self.weekday_wake_time = val
+
+    @property
+    def peak_window_start(self) -> float:
+        return self.preferred_peak_start
+
+    @peak_window_start.setter
+    def peak_window_start(self, val: float):
+        self.preferred_peak_start = val
+
+    @property
+    def peak_window_end(self) -> float:
+        return self.preferred_peak_end
+
+    @peak_window_end.setter
+    def peak_window_end(self, val: float):
+        self.preferred_peak_end = val
 
     @classmethod
     def from_user_context(
@@ -88,6 +124,10 @@ class PlanningProfile:
         wake_time = 7.0
         weekend_wake = 8.5
         bedtime = 23.0
+        warmup_mins = 30
+        high_energy_types = ["coding", "problem_solving", "deep_work", "study"]
+        tired_beh = "distracted"
+        routine_shift = "quick_recovery"
         session_mins = 45
         predictability = "mostly_predictable"
         confidence = 0.20
@@ -109,6 +149,27 @@ class PlanningProfile:
                 wake_time = int(ww[0]) + int(ww[1]) / 60.0
                 wew = getattr(readiness_profile, "weekend_wake_time", "08:30").split(":")
                 weekend_wake = int(wew[0]) + int(wew[1]) / 60.0
+
+                bt_val = getattr(readiness_profile, "bedtime", "23:00")
+                if bt_val and ":" in str(bt_val):
+                    bt_parts = str(bt_val).split(":")
+                    bedtime = int(bt_parts[0]) + int(bt_parts[1]) / 60.0
+                elif isinstance(bt_val, (int, float)):
+                    bedtime = float(bt_val)
+
+                warmup_val = getattr(readiness_profile, "sleep_inertia_minutes", None)
+                if warmup_val is not None:
+                    warmup_mins = int(warmup_val)
+
+                draining_val = getattr(readiness_profile, "draining_work_types", None)
+                if draining_val:
+                    if isinstance(draining_val, list):
+                        high_energy_types = list(draining_val)
+                    elif isinstance(draining_val, str):
+                        high_energy_types = [s.strip().lower() for s in draining_val.split(",") if s.strip()]
+
+                tired_beh = str(getattr(readiness_profile, "fatigue_symptom", "distracted") or "distracted")
+                routine_shift = str(getattr(readiness_profile, "routine_shift_preference", "quick_recovery") or "quick_recovery")
             except Exception:
                 pass
 
@@ -121,24 +182,35 @@ class PlanningProfile:
             except Exception:
                 pass
 
-        # Learn from empirical task performance records if available
+        # Empirical recency-weighted learning from actual completed tasks & reflection history
         avg_ratio = 1.0
         learned_pm_focus = False
         if performance_history:
+            # Sort by recency descending if timestamp available
+            sorted_history = sorted(
+                performance_history,
+                key=lambda x: getattr(x, "created_at", None) or getattr(x, "completed_at", None) or datetime.min,
+                reverse=True,
+            )
             ratios: List[float] = []
+            weights: List[float] = []
             pm_focus_ratings: List[int] = []
-            for perf in performance_history:
+
+            for idx, perf in enumerate(sorted_history[:30]):
+                w = 0.90 ** idx  # Exponential recency weighting
                 est = getattr(perf, "estimated_minutes", None)
                 act = getattr(perf, "actual_minutes", None)
                 if est and act and est > 0:
-                    ratios.append(act / est)
+                    ratios.append((act / est) * w)
+                    weights.append(w)
                 start_dt = getattr(perf, "actual_start", None) or getattr(perf, "scheduled_start", None)
                 if start_dt and hasattr(start_dt, "hour") and 13 <= start_dt.hour <= 17:
                     f_score = getattr(perf, "focus_score", None)
                     if f_score is not None:
                         pm_focus_ratings.append(int(f_score))
-            if ratios:
-                avg_ratio = sum(ratios) / len(ratios)
+
+            if weights and sum(weights) > 0:
+                avg_ratio = sum(ratios) / sum(weights)
             if len(pm_focus_ratings) >= 3 and (sum(pm_focus_ratings) / len(pm_focus_ratings)) >= 3.8:
                 learned_pm_focus = True
 
@@ -150,6 +222,10 @@ class PlanningProfile:
             weekday_wake_time=wake_time,
             weekend_wake_time=weekend_wake,
             bedtime=bedtime,
+            warmup_minutes=warmup_mins,
+            high_energy_task_types=high_energy_types,
+            tired_behavior=tired_beh,
+            routine_shift_preference=routine_shift,
             preferred_session_minutes=session_mins,
             energy_predictability=predictability,
             confidence_level=confidence,
@@ -464,6 +540,21 @@ class SchedulingEngine:
         best_result: Optional[SlotScoreResult] = None
         highest_score = -9999.0
 
+        task_title = str(getattr(task, "title", "") or "").lower()
+        is_cognitive = (
+            t_type in ("deep_work", "study") or
+            any(k.lower() in task_title for k in profile.high_energy_task_types) or
+            any(w in task_title for w in ["coding", "code", "problem solving", "assignment", "thesis", "algorithm", "study", "exam", "paper", "deep work"])
+        )
+        is_physical = (
+            t_type == "physical" or
+            any(w in task_title for w in ["gym", "workout", "run", "lift", "exercise", "training"])
+        )
+        is_light = (
+            t_type in ("admin", "shallow_work", "personal") or
+            any(w in task_title for w in ["email", "clean", "desk", "room", "laundry", "errand", "groceries", "call", "admin"])
+        )
+
         for slot in feasible_slots:
             score = 0.0
             primary_reason = "available_slot"
@@ -471,15 +562,28 @@ class SchedulingEngine:
 
             c_h = slot.start_time.hour + slot.start_time.minute / 60.0
 
-            # 1. Deadline Urgency Score
+            # 1. Wake & Cognitive Warmup Window Protection
+            target_wake_h = profile.weekend_wake_time if slot.start_time.weekday() >= 5 else profile.weekday_wake_time
+            warmup_end_h = target_wake_h + (profile.warmup_minutes / 60.0)
+
+            if is_cognitive and c_h < warmup_end_h:
+                score -= 0.85
+                secondary_reasons.append("during_cognitive_warmup")
+
+            # 2. Deadline Urgency Score
+            requires_tonight_for_deadline = False
             if deadline:
                 hours_until = (deadline - slot.start_time).total_seconds() / 3600.0
+                dl_date = deadline.date()
+                if hours_until <= 14 and (dl_date <= today_date or (dl_date == tomorrow_date and deadline.hour <= 10)):
+                    requires_tonight_for_deadline = True
+
                 if hours_until <= 3:
-                    score += 0.50
+                    score += 0.55
                     primary_reason = "deadline_imminent"
                     secondary_reasons.append("deadline_under_3h")
                 elif hours_until <= 16:
-                    score += 0.40
+                    score += 0.45
                     primary_reason = "deadline_imminent"
                     secondary_reasons.append("deadline_under_16h")
                 elif hours_until <= 24:
@@ -489,7 +593,7 @@ class SchedulingEngine:
                 else:
                     score += 0.05
 
-            # 2. Priority Score
+            # 3. Priority Score (Internal ranking only, separate from user priority)
             if pri_str == "urgent":
                 score += 0.35
                 secondary_reasons.append("urgent_priority")
@@ -501,14 +605,14 @@ class SchedulingEngine:
             else:
                 score += 0.05
 
-            # 3. Personal Fit & Task-Type Match
-            if t_type in ("deep_work", "study"):
+            # 4. Personal Fit & Task-Type Matching
+            if is_cognitive:
                 if slot.is_peak_window:
-                    score += 0.35
+                    score += 0.45
                     if primary_reason == "available_slot":
                         primary_reason = "peak_window"
                     secondary_reasons.append("strong_focus_window")
-                elif 9.0 <= c_h <= 13.0:
+                elif c_h >= warmup_end_h and 8.0 <= c_h <= 13.0:
                     score += 0.20
                     secondary_reasons.append("morning_focus")
                 elif profile.learned_afternoon_focus and 14.0 <= c_h <= 17.0:
@@ -516,35 +620,63 @@ class SchedulingEngine:
                     if primary_reason == "available_slot":
                         primary_reason = "learned_focus_window"
                     secondary_reasons.append("learned_afternoon_focus")
-                elif c_h >= 20.0 and pri_str not in ("urgent", "high"):
-                    # Late evening fatigue penalty for deep work
-                    score -= 0.30
+                elif c_h >= 20.0:
+                    score -= 0.50
                     secondary_reasons.append("avoids_late_fatigue")
-            elif t_type in ("admin", "shallow_work", "personal"):
+            elif is_light:
                 if slot.is_dip_window:
-                    score += 0.30
+                    score += 0.35
                     if primary_reason == "available_slot":
                         primary_reason = "dip_window"
                     secondary_reasons.append("light_work_dip")
-                elif c_h >= 13.0:
+                elif 13.0 <= c_h <= 18.0:
                     score += 0.20
-            elif t_type == "physical":
-                if (7.0 <= c_h <= 9.0) or (16.0 <= c_h <= 19.5):
-                    score += 0.30
+                elif c_h >= 20.0:
+                    score -= 0.40
+                    secondary_reasons.append("avoids_late_fatigue")
+            elif is_physical:
+                if (7.0 <= c_h <= 9.5) or (16.0 <= c_h <= 19.5):
+                    score += 0.40
                     if primary_reason == "available_slot":
                         primary_reason = "physical_window"
                     secondary_reasons.append("optimal_workout_window")
+                elif c_h >= 20.0:
+                    score -= 0.50
+                    secondary_reasons.append("avoids_late_fatigue")
 
-            # 4. Anti-Procrastination Rule:
-            # If high value / urgent work has viable time today, penalize pushing to tomorrow afternoon
+            # 5. Sleep Protection & Deadline Safety Override
+            bedtime_h = profile.bedtime
+            is_near_bedtime = (slot.day_offset == 0 and c_h >= (bedtime_h - 1.25))
+
+            if is_near_bedtime:
+                if requires_tonight_for_deadline:
+                    # Deadline safety overrides normal bedtime preference when necessary!
+                    score += 0.70
+                    primary_reason = "deadline_imminent"
+                    secondary_reasons.append("deadline_safety_overrides_sleep")
+                else:
+                    # Ordinary / low-priority / non-deadline tasks get heavy sleep protection penalty
+                    score -= 1.00
+                    if primary_reason == "available_slot":
+                        primary_reason = "sleep_protection"
+                    secondary_reasons.append("protects_sleep_schedule")
+
+            # General late-night safety rule: do not schedule non-urgent tasks late tonight (e.g. 10:15 PM)
+            if slot.day_offset == 0 and c_h >= 20.0 and not requires_tonight_for_deadline:
+                score -= 0.35
+
+            # 6. Anti-Procrastination Rule:
+            # If high value / urgent work has viable daytime today, penalize pushing to tomorrow afternoon
             if (pri_str in ("urgent", "high") or (deadline and (deadline - now_local).total_seconds() < 86400)):
-                if slot.day_offset > 0 and c_h > 12.0:
+                if slot.day_offset > 0 and c_h > 12.0 and now_local.hour < 18:
                     score -= 0.35
 
-            # 5. Timing relative to current time:
-            # If today and past peak (e.g. now is 18:22) and task has no deadline:
-            # A slot tomorrow morning in peak window will naturally score higher due to +0.35 peak bonus
-            # and today late slot getting -0.30 late fatigue penalty!
+            # 7. Routine adaptation on shifted schedule / weekends
+            if slot.day_offset > 0 and slot.start_time.weekday() >= 5:
+                if profile.routine_shift_preference == "lighter_work" and is_cognitive:
+                    score -= 0.20
+                elif profile.routine_shift_preference == "slower_tempo" and c_h < (target_wake_h + 2.0) and is_cognitive:
+                    score -= 0.25
 
             # Formulate user-facing explanation
             time_display = slot.start_time.strftime("%I:%M %p").lstrip("0")
@@ -553,7 +685,12 @@ class SchedulingEngine:
             if primary_reason == "peak_window":
                 expl = f"{day_display} at {time_display} — That's one of your strongest focus windows with a clear uninterrupted block."
             elif primary_reason == "deadline_imminent":
-                expl = f"{day_display} at {time_display} — Prioritized to protect your upcoming deadline."
+                if "deadline_safety_overrides_sleep" in secondary_reasons:
+                    expl = f"{day_display} at {time_display} — Prioritized tonight to protect your upcoming deadline before your bedtime."
+                else:
+                    expl = f"{day_display} at {time_display} — Prioritized to protect your upcoming deadline."
+            elif primary_reason == "sleep_protection" or (slot.day_offset == 1 and not deadline and now_local.hour >= 20):
+                expl = f"Tomorrow at {time_display} — Moved to tomorrow to protect your sleep schedule and wind-down window."
             elif primary_reason == "dip_window":
                 expl = f"{day_display} at {time_display} — Fits into your afternoon window to maintain momentum without cognitive strain."
             elif primary_reason == "physical_window":

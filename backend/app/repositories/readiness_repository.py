@@ -16,6 +16,8 @@ class ReadinessRepository:
     def get_profile(self, db: Session, user_id: str) -> Optional[ReadinessProfile]:
         return db.query(ReadinessProfile).filter(ReadinessProfile.user_id == user_id).first()
 
+    get_by_user_id = get_profile
+
     def create_or_update_profile(self, db: Session, user_id: str, **kwargs) -> ReadinessProfile:
         profile = self.get_profile(db, user_id)
         if not profile:
