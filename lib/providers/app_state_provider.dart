@@ -83,6 +83,14 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   DateTime _selectedCalendarDate = DateTime.now();
   int _calendarDayRequestId = 0;
 
+  /// Tasks the user deleted here whose DELETE is not yet confirmed and re-read. Any day the server sends in the
+  /// meantime (a clock tick, a resume, an older request) is stripped of them, so a deleted stop can never come back.
+  final Set<String> _deletedTaskIds = {};
+
+  /// Tasks created / edited / moved here that the server has not confirmed yet. A day read that started before the
+  /// save landed is re-projected from the live task list, so the stop never flickers back to its old slot.
+  final Set<String> _unsyncedTaskIds = {};
+
   TodayResponseModel? _todaySnapshot;
   DateTime? _lastUpdatedAt;
   DateTime? _lastBackendSyncAt;  // guards local recomputation
@@ -210,6 +218,64 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       refreshTodayData(),
       loadCalendarDay(_selectedCalendarDate, silent: true),
     ]);
+  }
+
+  /// [day] without the stops of [ids] (history nodes too when [history]: a deleted task leaves no ghost, a moved one does).
+  DayScheduleResponse _stripTasks(DayScheduleResponse day, Set<String> ids, {required bool history}) {
+    List<ScheduleItem> keep(List<ScheduleItem> items) =>
+        items.where((i) => !ids.contains(dayPathTaskKey(i))).toList();
+    return day.withItems(
+      timeline: keep(day.timeline),
+      fixedCommitments: keep(day.fixedCommitments),
+      completedTasks: keep(day.completedTasks),
+      remainingTasks: keep(day.remainingTasks),
+      unscheduledTasks: keep(day.unscheduledTasks),
+      deviations: history ? keep(day.deviations) : null,
+    );
+  }
+
+  /// [day] with task [id] drawn from the LIVE task list: a deleted / cancelled task leaves, a created or edited one
+  /// takes the slot it has now. A task that is not on this day any more is left exactly as the server drew it (a
+  /// defer keeps its stop and its history; only the server decides what the day keeps), and so is a finished one
+  /// (completion is drawn onto the existing stop). History nodes are never touched, so a stop keeps its anchor.
+  DayScheduleResponse _projectTask(DayScheduleResponse day, String id) {
+    TaskItem? task;
+    for (final t in _tasks) {
+      if (t.id == id) task = t;
+    }
+    if (task == null || task.status == TaskStatus.cancelled) return _stripTasks(day, {id}, history: true);
+    if (task.isCompleted) return day;
+    final date = DateTime.tryParse(day.date);
+    if (date == null) return day;
+    final local = _buildLocalScheduleForDate(DateTime(date.year, date.month, date.day), allowCachedToday: false)
+        .where((i) => i.taskId == id)
+        .toList();
+    if (local.isEmpty) return day;
+    final stripped = _stripTasks(day, {id}, history: false);
+    return stripped.withItems(
+      timeline: orderDayPathItems([...stripped.timeline, ...local.where((i) => !isUnscheduledItem(i))]),
+      unscheduledTasks: [...stripped.unscheduledTasks, ...local.where(isUnscheduledItem)],
+    );
+  }
+
+  /// What a server read may show: nothing the user just deleted, and every unsaved local change as it is now.
+  DayScheduleResponse _reconcileDay(DayScheduleResponse day) {
+    var out = day;
+    if (_deletedTaskIds.isNotEmpty) out = _stripTasks(out, _deletedTaskIds, history: true);
+    for (final id in _unsyncedTaskIds) {
+      out = _projectTask(out, id);
+    }
+    return out;
+  }
+
+  /// Draws the live state of [ids] onto the selected day right now (the caller notifies).
+  void _projectIntoSelectedDay(Iterable<String> ids) {
+    var day = _selectedDateSchedule;
+    if (day == null) return;
+    for (final id in ids) {
+      day = _projectTask(day!, id);
+    }
+    _selectedDateSchedule = day;
   }
 
   void _recordAnchors(String dateStr, DayScheduleResponse day) {
@@ -789,6 +855,11 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     if (!_isDemoMode && isAuthenticated) {
+      // The stop takes its new time on Calendar now; the server read after the save only confirms it.
+      _unsyncedTaskIds.add(taskId);
+      _dayScheduleCache.clear();
+      _projectIntoSelectedDay([taskId]);
+      notifyListeners();
       try {
         await taskService.patchTask(taskId, {
           'scheduled_start': newScheduledStart?.toUtc().toIso8601String(), // explicit null clears
@@ -803,6 +874,8 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (i != -1) _tasks[i] = task; // revert: never show a time the server did not accept
         _deferredTaskIds.remove(taskId);
         _lastSyncError = "Couldn't save the new time for \u201c${task.title}\u201d. Nothing was changed.";
+        _unsyncedTaskIds.remove(taskId);
+        _projectIntoSelectedDay([taskId]);
         _dayScheduleCache.clear();
         _recalculateSchedule();
         notifyListeners();
@@ -818,6 +891,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
 
     await loadCalendarDay(_selectedCalendarDate, silent: true);
+    _unsyncedTaskIds.remove(taskId);
     if (!_isDemoMode) {
       await refreshTodayData();
     }
@@ -1142,8 +1216,12 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     _dayScheduleCache.clear();
     _recalculateReadiness();
     _recalculateSchedule();
-    if (_selectedDateSchedule != null) {
-      loadCalendarDay(_selectedCalendarDate, silent: true);
+    if (_isDemoMode) {
+      if (_selectedDateSchedule != null) loadCalendarDay(_selectedCalendarDate, silent: true);
+    } else {
+      // The new stop is on Calendar now; the server read below only confirms it.
+      _unsyncedTaskIds.add(tempId);
+      _projectIntoSelectedDay([tempId]);
     }
     notifyListeners();
 
@@ -1161,10 +1239,21 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
             _sendCompleteToBackend(_tasks[idx]);
           }
           _dayScheduleCache.clear();
-          if (_selectedDateSchedule != null) {
-            loadCalendarDay(_selectedCalendarDate, silent: true);
+          // the temporary stop becomes the saved task's stop (same slot, real id)
+          _unsyncedTaskIds
+            ..remove(tempId)
+            ..add(persisted.id);
+          final day = _selectedDateSchedule;
+          if (day != null) {
+            _selectedDateSchedule = _projectTask(_stripTasks(day, {tempId}, history: true), persisted.id);
+            unawaited(loadCalendarDay(_selectedCalendarDate, silent: true)
+                .whenComplete(() => _unsyncedTaskIds.remove(persisted.id)));
+          } else {
+            _unsyncedTaskIds.remove(persisted.id);
           }
           notifyListeners();
+        } else if (_deletedTaskIds.contains(tempId)) {
+          _unsyncedTaskIds.remove(tempId);
         }
         completer.complete(persisted);
         _pendingTaskCreations.remove(tempId);
@@ -1189,10 +1278,18 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       _dayScheduleCache.clear();
       if (!_isDemoMode) {
+        // Calendar shows the edit now; the server read after the save only confirms it.
+        _unsyncedTaskIds.add(task.id);
+        _projectIntoSelectedDay([task.id]);
         taskService.updateTask(task).then((saved) {
           // The server has the change now: re-read the day so Calendar shows what is stored, not a pre-save view.
           _dayScheduleCache.clear();
-          if (_selectedDateSchedule != null) loadCalendarDay(_selectedCalendarDate, silent: true);
+          if (_selectedDateSchedule != null) {
+            unawaited(loadCalendarDay(_selectedCalendarDate, silent: true)
+                .whenComplete(() => _unsyncedTaskIds.remove(task.id)));
+          } else {
+            _unsyncedTaskIds.remove(task.id);
+          }
           return saved;
         }).catchError((Object e) {
           // A rejected save is reverted and reported, never silently kept.
@@ -1201,6 +1298,8 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (i != -1) _tasks[i] = previous;
           _lastSyncError = "Couldn't save changes to \u201c${task.title}\u201d. They were reverted.";
           _dayScheduleCache.clear();
+          _unsyncedTaskIds.remove(task.id);
+          _projectIntoSelectedDay([task.id]);
           _recalculateSchedule();
           notifyListeners();
           return previous;
@@ -1216,18 +1315,65 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// Deletes a task. The live task list, Calendar's day and the route drop it in this same call (no wait for the
+  /// server, no re-read of a day that may still hold it); the DELETE then runs and the stored day is re-read once.
   void removeTask(String taskId) {
-    _tasks.removeWhere((t) => t.id == taskId);
+    final index = _tasks.indexWhere((t) => t.id == taskId);
+    final removed = index == -1 ? null : _tasks[index];
+    if (index != -1) _tasks.removeAt(index);
+    _forgetAnchor(taskId);
+    _unsyncedTaskIds.remove(taskId);
     _dayScheduleCache.clear();
-    if (!_isDemoMode) {
-      taskService.deleteTask(taskId).catchError((_) {});
-    }
+    _deletedTaskIds.add(taskId);
+    final day = _selectedDateSchedule;
+    if (day != null) _selectedDateSchedule = _stripTasks(day, {taskId}, history: true);
     _recalculateReadiness();
     _recalculateSchedule();
-    if (_selectedDateSchedule != null) {
-      loadCalendarDay(_selectedCalendarDate, silent: true);
-    }
     notifyListeners();
+    unawaited(_confirmTaskDelete(taskId, removed, index));
+  }
+
+  Future<void> _confirmTaskDelete(String taskId, TaskItem? removed, int index) async {
+    final deleted = <String>{taskId};
+    try {
+      if (!_isDemoMode) {
+        // Still being created: there is nothing under the temporary id; delete what the server stores for it.
+        final creation = _pendingTaskCreations[taskId];
+        var onServer = <String>[taskId];
+        if (creation != null) {
+          final persisted = await creation.future;
+          onServer = persisted.id == taskId ? <String>[] : <String>[persisted.id];
+          deleted.addAll(onServer);
+          _deletedTaskIds.addAll(onServer);
+          _tasks.removeWhere((t) => onServer.contains(t.id));
+        }
+        for (final id in onServer) {
+          try {
+            await taskService.deleteTask(id);
+          } on ApiException catch (e) {
+            if (e.statusCode != 404) rethrow; // already gone is the goal
+          }
+        }
+      }
+    } catch (e) {
+      // The server kept it: it comes back where it was, and the user is told (never a silent ghost delete).
+      debugPrint('Error deleting task $taskId: $e');
+      _deletedTaskIds.removeAll(deleted);
+      if (removed != null && !_tasks.any((t) => t.id == taskId)) {
+        _tasks.insert(index.clamp(0, _tasks.length), removed);
+      }
+      _lastSyncError = "Couldn't delete \u201c${removed?.title ?? 'that task'}\u201d. It was put back.";
+      _dayScheduleCache.clear();
+      _recalculateReadiness();
+      _recalculateSchedule();
+      notifyListeners();
+    }
+    // One authoritative re-read of Today and the Calendar day, after the server has the change.
+    try {
+      await _afterTaskMutation();
+    } finally {
+      _deletedTaskIds.removeAll(deleted);
+    }
   }
 
   // Optimization Trigger
@@ -1313,12 +1459,14 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
           ? await busy.track(() => calendarService.getDaySchedule(dateStr), label: 'Loading your day')
           : await calendarService.getDaySchedule(dateStr);
       if (requestId == _calendarDayRequestId) {
-        _dayScheduleCache[dateStr] = remoteSchedule;
-        _selectedDateSchedule = remoteSchedule;
+        // The server's day, minus what was deleted here a moment ago and with unsaved local edits applied.
+        final day = _reconcileDay(remoteSchedule);
+        _dayScheduleCache[dateStr] = day;
+        _selectedDateSchedule = day;
         _lastCalendarFetchAt = FlowClock().now;
-        _recordAnchors(dateStr, remoteSchedule);
+        _recordAnchors(dateStr, day);
         if (isToday) {
-          _schedule = remoteSchedule.timeline.where((t) => !t.isCompleted).toList();
+          _schedule = day.timeline.where((t) => !t.isCompleted).toList();
         }
         _isLoadingCalendarDay = false;
         notifyListeners();
@@ -1438,6 +1586,20 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (_preferredActiveTaskId != null && movedIds.contains(_preferredActiveTaskId)) {
           _preferredActiveTaskId = null;
         }
+        // The new plan is on Calendar before the re-read: what Replan stored is drawn, what it cancelled is gone.
+        final replanned = <String>{
+          for (final raw in res.persistedTasks) (raw['id'] ?? '').toString(),
+        }..remove('');
+        final cancelled = {for (final c in diff.cancelledTasks) c.taskId};
+        _tasks.removeWhere((t) => cancelled.contains(t.id));
+        _unsyncedTaskIds.addAll(replanned);
+        _dayScheduleCache.clear();
+        final shown = _selectedDateSchedule;
+        if (shown != null) {
+          _selectedDateSchedule = _stripTasks(shown, cancelled, history: true);
+          _projectIntoSelectedDay(replanned);
+          notifyListeners();
+        }
         // Authoritative Refresh Cycle:
         // 1. Calendar schedule for selected date
         // The three reads are independent: run them together instead of one after another.
@@ -1447,6 +1609,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
           loadUserTasks(), // 2. User tasks from backend
           refreshTodayData(authoritative: true), // 3. Today (Up Next & Rhythm); never a stale cached snapshot
         ]);
+        _unsyncedTaskIds.removeAll(replanned);
         // 4. Recalculate local schedule and readiness
         _recalculateSchedule();
         _recalculateReadiness();
@@ -1512,7 +1675,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  List<ScheduleItem> _buildLocalScheduleForDate(DateTime date) {
+  List<ScheduleItem> _buildLocalScheduleForDate(DateTime date, {bool allowCachedToday = true}) {
     final now = FlowClock().now;
     final isToday = date.year == now.year && date.month == now.month && date.day == now.day;
 
@@ -1533,7 +1696,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       return isToday; // legacy undated rows belong to today
     }).toList();
 
-    if (dateTasks.isEmpty && unslotted.isEmpty && isToday && _schedule.isNotEmpty) {
+    if (allowCachedToday && dateTasks.isEmpty && unslotted.isEmpty && isToday && _schedule.isNotEmpty) {
       return _schedule;
     }
 
@@ -2228,7 +2391,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> loadUserTasks() async {
     try {
       final remoteTasks = await taskService.getTasks();
-      _tasks = remoteTasks;
+      _tasks = remoteTasks.where((t) => !_deletedTaskIds.contains(t.id)).toList();
       _recalculateReadiness();
       _recalculateSchedule();
       notifyListeners();
@@ -2261,6 +2424,8 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     _todayNetworkState = TodayNetworkState.emptySuccess;
     _errorMessage = null;
     _dayScheduleCache.clear();
+    _deletedTaskIds.clear();
+    _unsyncedTaskIds.clear();
     _selectedDateSchedule = null;
     _isLoadingCalendarDay = false;
     notifyListeners();

@@ -81,6 +81,34 @@ class DayScheduleResponse {
         dayComplete: status,
       );
 
+  /// The same day with its task lists replaced (everything else is carried over untouched).
+  DayScheduleResponse withItems({
+    List<ScheduleItem>? timeline,
+    List<ScheduleItem>? fixedCommitments,
+    List<ScheduleItem>? completedTasks,
+    List<ScheduleItem>? remainingTasks,
+    List<ScheduleItem>? unscheduledTasks,
+    List<ScheduleItem>? deviations,
+  }) =>
+      DayScheduleResponse(
+        date: date,
+        isToday: isToday,
+        isPast: isPast,
+        timeline: timeline ?? this.timeline,
+        fixedCommitments: fixedCommitments ?? this.fixedCommitments,
+        completedTasks: completedTasks ?? this.completedTasks,
+        remainingTasks: remainingTasks ?? this.remainingTasks,
+        unscheduledTasks: unscheduledTasks ?? this.unscheduledTasks,
+        deviations: deviations ?? this.deviations,
+        conflicts: conflicts,
+        workload: workload,
+        focusWindow: focusWindow,
+        readinessScore: readinessScore,
+        totalPlannedMinutes: totalPlannedMinutes,
+        remainingCapacityMinutes: remainingCapacityMinutes,
+        dayComplete: dayComplete,
+      );
+
   factory DayScheduleResponse.fromJson(Map<String, dynamic> json) {
     final rawTimeline = json['timeline'] as List? ?? [];
     final rawFixed = json['fixed_commitments'] as List? ?? [];

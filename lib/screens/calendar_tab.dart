@@ -202,7 +202,10 @@ class _CalendarTabState extends State<CalendarTab> {
                         style: TextButton.styleFrom(
                           foregroundColor: accent,
                           backgroundColor: accent.withValues(alpha: 0.12),
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          // same 44pt height as the month button beside it, never a shorter chip
+                          minimumSize: const Size(0, 44),
+                          tapTargetSize: MaterialTapTargetSize.padded,
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
                           shape: const RoundedRectangleBorder(borderRadius: FlowRadii.chipRadius),
                           textStyle: FlowTypography.labelMedium().copyWith(fontWeight: FontWeight.w700),
                         ),
