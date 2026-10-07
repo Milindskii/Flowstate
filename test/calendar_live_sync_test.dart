@@ -315,6 +315,7 @@ void main() {
     final done = provider.rescheduleTask('A', targetDate: _day, targetTime: const TimeOfDay(hour: 12, minute: 0));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 600)); // the road morphs to the new plan
     expect(order(tester, ['A', 'B', 'C', 'D']), ['B', 'C', 'D', 'A'], reason: 'A is last the moment it moves to 12:00');
     expect(find.text('Task A'), findsOneWidget);
 
@@ -357,6 +358,7 @@ void main() {
     final applied = provider.applyReplan(diff);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 600)); // the road morphs to the new plan
 
     expect(stop('C'), findsNothing, reason: 'the cancelled task is gone');
     expect(find.text('Task B'), findsOneWidget);

@@ -6,7 +6,7 @@ import 'package:flowstate/theme/flow_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-ScheduleItem _it(String id, {bool skipped = false, bool done = false, bool recovered = false, bool commitment = false}) => ScheduleItem(
+ScheduleItem _it(String id, {bool skipped = false, bool done = false, bool recovered = false, bool commitment = false, int? at, String? state}) => ScheduleItem(
       id: id,
       time: '9:00',
       period: 'AM',
@@ -18,7 +18,8 @@ ScheduleItem _it(String id, {bool skipped = false, bool done = false, bool recov
       isCompletedAfterDeviation: recovered,
       isCommitment: commitment,
       isFixed: commitment,
-      startTime: commitment ? DateTime(2026, 10, 5, 18, 30) : null,
+      state: state,
+      startTime: commitment ? DateTime(2026, 10, 5, 18, 30) : (at == null ? null : DateTime(2026, 10, 7, 9).add(Duration(minutes: at))),
       endTime: commitment ? DateTime(2026, 10, 5, 20, 30) : null,
     );
 
@@ -43,66 +44,90 @@ Widget _host(List<ScheduleItem> items, {bool reduced = false}) => MaterialApp(
 DayRoutePainter _painter(WidgetTester tester) => tester.widget<CustomPaint>(find.byKey(const Key('flow_day_route'))).painter as DayRoutePainter;
 
 void main() {
-  testWidgets('skipping a task never moves the road: only the node changes', (tester) async {
-    await tester.pumpWidget(_host([_it('a'), _it('b'), _it('c'), _it('d')]));
+  testWidgets('skipping a task deviates the road around it: the node stays, the road morphs', (tester) async {
+    await tester.pumpWidget(_host([_it('a', at: 0), _it('b', at: 60), _it('c', at: 120), _it('d', at: 180)]));
     await tester.pumpAndSettle();
-    final before = List<double>.from(_painter(tester).geometry.sampleXs);
+    final planned = _painter(tester).geometry;
     expect(tester.binding.transientCallbackCount, 0);
 
-    await tester.pumpWidget(_host([_it('a'), _it('b', skipped: true), _it('c'), _it('d')]));
+    await tester.pumpWidget(_host([_it('a', at: 0), _it('b', at: 60, skipped: true), _it('c', at: 120), _it('d', at: 180)]));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(tester.binding.transientCallbackCount, greaterThan(0), reason: 'the road is morphing, not swapping');
+    final mid = _painter(tester).geometry;
     await tester.pumpAndSettle();
     final after = _painter(tester).geometry;
-    expect(after.sampleXs, before, reason: 'the winding line is identical');
+    expect(after.stopById('b').center, planned.stopById('b').center, reason: 'the node keeps its place');
     expect(after.stopById('b').role, StopRouteRole.skipped);
-    expect(after.distanceToRoute(after.stopById('b').center), lessThan(0.5));
+    expect(after.distanceToRoute(after.stopById('b').center), greaterThan(30));
+    expect(mid.sampleXs, isNot(planned.sampleXs));
+    expect(mid.sampleXs, isNot(after.sampleXs), reason: 'mid-morph differs from both ends');
     expect(find.byKey(const Key('path_skipped_b')), findsOneWidget);
-    expect(_painter(tester).fromXs, isNull, reason: 'nothing had to morph');
   });
 
-  testWidgets('completing a stop colours the road in (green creeping down it) over a restrained duration', (tester) async {
+  testWidgets('completing a stop recolours the road green', (tester) async {
     await tester.pumpWidget(_host([_it('a'), _it('b'), _it('c')]));
     await tester.pumpAndSettle();
-    expect(tester.binding.transientCallbackCount, 0);
+    expect(_painter(tester).geometry.sampleStates, isNot(contains(RouteSegmentState.traveled)));
 
     await tester.pumpWidget(_host([_it('a'), _it('b', done: true), _it('c')]));
-    await tester.pump(const Duration(milliseconds: 150));
-    expect(tester.binding.transientCallbackCount, greaterThan(0), reason: 'the new colour is drawing in');
-    final mid = _painter(tester);
-    expect(mid.fromStates, isNotNull);
-    expect(mid.t, inInclusiveRange(0.01, 0.99));
-
-    await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
     expect(tester.binding.transientCallbackCount, 0);
-    final g = _painter(tester).geometry;
-    expect(g.sampleStates, contains(RouteSegmentState.traveled));
-  });
-
-  testWidgets('reduced motion: the road recolours at once, nothing animates', (tester) async {
-    await tester.pumpWidget(_host([_it('a'), _it('b'), _it('c')], reduced: true));
-    await tester.pumpAndSettle();
-    await tester.pumpWidget(_host([_it('a'), _it('b', done: true), _it('c')], reduced: true));
-    await tester.pump();
-    expect(tester.binding.transientCallbackCount, 0);
-    expect(_painter(tester).fromXs, isNull);
-    expect(_painter(tester).fromStates, isNull);
     expect(_painter(tester).geometry.sampleStates, contains(RouteSegmentState.traveled));
   });
 
-  testWidgets('recovering a skipped task turns the road into it orange, on the same line, and marks the node recovered',
-      (tester) async {
-    await tester.pumpWidget(_host([_it('a', done: true), _it('b', skipped: true), _it('c')]));
+  testWidgets('reduced motion: the road changes at once, nothing animates', (tester) async {
+    await tester.pumpWidget(_host([_it('a'), _it('b'), _it('c')], reduced: true));
     await tester.pumpAndSettle();
-    final skippedXs = List<double>.from(_painter(tester).geometry.sampleXs);
-    expect(_painter(tester).geometry.sampleStates, isNot(contains(RouteSegmentState.recovered)));
+    await tester.pumpWidget(_host([_it('a'), _it('b', skipped: true), _it('c')], reduced: true));
+    await tester.pump();
+    expect(tester.binding.transientCallbackCount, 0);
+    expect(_painter(tester).geometry.stopById('b').deviated, isTrue);
+  });
 
-    await tester.pumpWidget(_host([_it('a', done: true), _it('b', done: true, recovered: true), _it('c')]));
+  testWidgets('recovering then completing a skipped task: the orange way back appears and then stays as history', (tester) async {
+    await tester.pumpWidget(_host([_it('a', done: true, at: 0), _it('b', skipped: true, at: 60), _it('c', at: 120)]));
+    await tester.pumpAndSettle();
+    expect(_painter(tester).geometry.detours, isEmpty);
+
+    await tester.pumpWidget(_host([_it('a', done: true, at: 0), _it('b', state: 'recovering', at: 60), _it('c', at: 120)]));
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(_painter(tester).geometry.detours.single.reveal, inExclusiveRange(0.0, 1.0), reason: 'the orange path draws in');
+    await tester.pumpAndSettle();
+    expect(_painter(tester).geometry.detours.single.reveal, 1);
+    expect(_painter(tester).geometry.sampleStates, contains(RouteSegmentState.recovered));
+    expect(find.byKey(const Key('path_recovering_b')), findsOneWidget);
+    expect(find.text('Recovering'), findsOneWidget);
+
+    await tester.pumpWidget(_host([_it('a', done: true, at: 0), _it('b', done: true, recovered: true, at: 60), _it('c', at: 120)]));
     await tester.pumpAndSettle();
     final g = _painter(tester).geometry;
+    expect(g.detours.map((d) => d.stopId), ['b'], reason: 'the deviation history stays after completion');
+    expect(g.stopById('b').deviated, isTrue);
     expect(g.sampleStates, contains(RouteSegmentState.recovered));
-    expect(g.sampleXs, skippedXs, reason: 'no new line: the same road, recoloured');
     expect(find.byKey(const Key('path_check_b')), findsOneWidget);
     expect(find.textContaining('Recovered'), findsOneWidget);
+  });
+
+  testWidgets('rescheduling a task moves its stop and morphs the road; deleting one closes it', (tester) async {
+    await tester.pumpWidget(_host([_it('a', at: 0), _it('b', at: 30), _it('c', at: 240)]));
+    await tester.pumpAndSettle();
+    final before = _painter(tester).geometry;
+
+    await tester.pumpWidget(_host([_it('a', at: 0), _it('b', at: 200), _it('c', at: 240)]));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(tester.binding.transientCallbackCount, greaterThan(0));
+    await tester.pumpAndSettle();
+    final moved = _painter(tester).geometry;
+    expect(moved.stopById('b').center.dy, greaterThan(before.stopById('b').center.dy));
+    expect(tester.getTopLeft(find.byKey(const Key('path_stop_b'))).dy, greaterThan(before.stopById('b').center.dy - 46 - 1));
+
+    await tester.pumpWidget(_host([_it('a', at: 0), _it('c', at: 240)]));
+    await tester.pumpAndSettle();
+    final closed = _painter(tester).geometry;
+    expect(find.byKey(const Key('path_stop_b')), findsNothing);
+    expect(closed.stops.map((s) => s.id), ['a', 'c']);
+    expect(closed.height, lessThan(moved.height));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('a locked commitment reads as protected time with its span, never as work', (tester) async {

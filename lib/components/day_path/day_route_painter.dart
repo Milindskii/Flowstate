@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -49,54 +48,15 @@ class DayRoutePalette {
   int get hashCode => Object.hash(traveled, ahead, skipped, recovery, failed, bed, bedEdge, fadeTo, bypassed);
 }
 
-/// Draws exactly the geometry it is given: the road bed (a ribbon that narrows into the distance) and the colored
-/// center line, one segment at a time in that segment's state (green walked, blue ahead, orange recovered). There is
-/// only one line: states recolor it, they never add a second one. When [fromXs] is set the route is morphing: sample
-/// x values are interpolated by [t].
+/// Draws exactly the geometry it is given: the road bed (a ribbon that narrows into the distance), the colored
+/// center line, one segment at a time in that segment's state (green walked, blue ahead, orange the way back from a
+/// recovered stop), and the orange return paths that loop back to recovering / recovered stops. While the route
+/// morphs, the caller hands in the interpolated geometry; the painter itself holds no animation state.
 class DayRoutePainter extends CustomPainter {
   final DayRouteGeometry geometry;
   final DayRoutePalette palette;
-  final List<double>? fromXs;
 
-  /// The previous segment states: stretches that just changed color draw in (the new color creeping down the road)
-  /// instead of switching at once.
-  final List<RouteSegmentState>? fromStates;
-  final double t;
-
-  DayRoutePainter({
-    required this.geometry,
-    required this.palette,
-    this.fromXs,
-    this.fromStates,
-    this.t = 1,
-  }) {
-    final from = fromStates;
-    if (from != null && from.length == geometry.sampleStates.length) {
-      var first = -1;
-      var last = -1;
-      for (var i = 0; i < from.length; i++) {
-        final now = geometry.sampleStates[i];
-        if (now != from[i] && now != RouteSegmentState.ahead) {
-          if (first < 0) first = i;
-          last = i;
-        }
-      }
-      _revealFrom = first;
-      _revealTo = last;
-    }
-  }
-
-  int _revealFrom = -1;
-  int _revealTo = -1;
-
-  /// The state sample [i] shows right now (mid-reveal, a changed stretch still shows its old color).
-  RouteSegmentState _stateAt(int i) {
-    final now = geometry.sampleStates[i];
-    final from = fromStates;
-    if (from == null || _revealFrom < 0 || from.length != geometry.sampleStates.length) return now;
-    if (from[i] == now || now == RouteSegmentState.ahead) return now;
-    return i < _revealFrom + (_revealTo - _revealFrom + 1) * t ? now : from[i];
-  }
+  DayRoutePainter({required this.geometry, required this.palette});
 
   Color _color(RouteSegmentState s) => switch (s) {
         RouteSegmentState.traveled => palette.traveled,
@@ -104,13 +64,14 @@ class DayRoutePainter extends CustomPainter {
         RouteSegmentState.ahead => palette.ahead,
       };
 
-  double _x(int i) => fromXs == null ? geometry.sampleXs[i] : ui.lerpDouble(fromXs![i], geometry.sampleXs[i], t)!;
+  double _x(int i) => geometry.sampleXs[i];
 
   @override
   void paint(Canvas canvas, Size size) {
     if (!geometry.hasRoute) return;
     _paintBed(canvas);
     _paintCenterLine(canvas);
+    _paintDetours(canvas);
   }
 
   void _paintBed(Canvas canvas) {
@@ -165,16 +126,42 @@ class DayRoutePainter extends CustomPainter {
         Paint()
           ..strokeCap = StrokeCap.round
           ..strokeWidth = g.halfWidthAt(g.sampleYs[i]) * 0.9
-          ..color = _color(_stateAt(i + 1)),
+          ..color = _color(g.sampleStates[i + 1]),
+      );
+    }
+  }
+
+  /// The orange way back to a skipped stop: drawn over the road bed's own width so it reads as a path, not a doodle.
+  void _paintDetours(Canvas canvas) {
+    for (final d in geometry.detours) {
+      final count = (d.points.length * d.reveal.clamp(0.0, 1.0)).ceil();
+      if (count < 2) continue;
+      final path = Path()..moveTo(d.points.first.dx, d.points.first.dy);
+      for (var i = 1; i < count; i++) {
+        path.lineTo(d.points[i].dx, d.points[i].dy);
+      }
+      final width = geometry.halfWidthAt(d.points.first.dy) * 0.9;
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..strokeWidth = width + 5
+          ..color = palette.bed,
+      );
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..strokeWidth = width
+          ..color = palette.recovery,
       );
     }
   }
 
   @override
-  bool shouldRepaint(DayRoutePainter old) =>
-      !identical(old.geometry, geometry) ||
-      old.palette != palette ||
-      old.t != t ||
-      old.fromXs != fromXs ||
-      old.fromStates != fromStates;
+  bool shouldRepaint(DayRoutePainter old) => !identical(old.geometry, geometry) || old.palette != palette;
 }

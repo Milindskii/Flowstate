@@ -347,7 +347,17 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (item.taskId == null) continue;
       anchors.putIfAbsent(dayPathTaskKey(item), () => dayPathNaturalAnchor(item, history));
     }
-    if (_anchorStore.record(dateStr, anchors)) unawaited(_anchorStore.save());
+    final recorded = _anchorStore.record(dateStr, anchors);
+    // A time the user pinned to a task on this day is authoritative: a first-seen anchor from before an edit, a replan or
+    // a change made on another device must not keep its stop where the schedule no longer puts it.
+    final authoritative = <String, DateTime>{};
+    for (final t in _tasks) {
+      final start = t.scheduledStart;
+      if (start == null || !t.timeLocked || t.isCompleted || DateFormat('yyyy-MM-dd').format(start) != dateStr) continue;
+      authoritative[t.id] = start;
+    }
+    final corrected = _anchorStore.reconcile(dateStr, authoritative);
+    if (recorded || corrected) unawaited(_anchorStore.save());
   }
 
   /// The user explicitly moved [taskId] (a new time/day): its stop may take its new place.

@@ -51,24 +51,48 @@ class _FlowDateStripState extends State<FlowDateStrip> {
   }
 
   /// Scrolls only as far as needed to show the whole selected chip.
+  ///
+  /// Layout is only valid until the scroll position moves: `jumpTo` marks the strip for a new layout, and a render
+  /// box that needs layout has no trustworthy size or position. So the first-show jump is its own step, and the
+  /// visibility check runs on the next frame, against boxes that have been laid out again.
   void _revealSelected(Duration duration) {
     if (!mounted) return;
-    final chipContext = _selectedChipKey.currentContext;
-    if (chipContext == null) return;
-    final chipBox = chipContext.findRenderObject() as RenderBox?;
-    final scrollBox = Scrollable.maybeOf(chipContext)?.context.findRenderObject() as RenderBox?;
-    if (chipBox == null || scrollBox == null || !chipBox.hasSize || !scrollBox.hasSize) return;
-
-    if (duration == Duration.zero) {
-      // First show: today sits second from the left — one day of history in view, the days
-      // ahead filling the rest, and earlier history a scroll back.
-      final anchor = (_todayChipKey.currentContext ?? chipContext).findRenderObject() as RenderBox?;
-      if (anchor != null && anchor.hasSize) {
-        final position = Scrollable.of(chipContext).position;
-        final anchorLeft = anchor.localToGlobal(Offset.zero, ancestor: scrollBox).dx;
-        position.jumpTo((position.pixels + anchorLeft - anchor.size.width).clamp(position.minScrollExtent, position.maxScrollExtent));
-      }
+    if (duration == Duration.zero && _alignTodayOnFirstShow()) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _keepSelectedVisible(Duration.zero));
+      return;
     }
+    _keepSelectedVisible(duration);
+  }
+
+  /// A laid-out render box, or null when there is none yet (not built, detached, or not laid out).
+  static RenderBox? _laidOut(BuildContext? context) {
+    if (context == null || !context.mounted) return null;
+    final box = context.findRenderObject();
+    return box is RenderBox && box.attached && box.hasSize ? box : null;
+  }
+
+  /// First show: today sits second from the left — one day of history in view, the days ahead filling the rest, and
+  /// earlier history a scroll back. Returns true when it moved the strip (the caller must wait for a new layout).
+  bool _alignTodayOnFirstShow() {
+    final chipContext = _selectedChipKey.currentContext;
+    final anchor = _laidOut(_todayChipKey.currentContext ?? chipContext);
+    final scrollable = chipContext == null ? null : Scrollable.maybeOf(chipContext);
+    final scrollBox = _laidOut(scrollable?.context);
+    if (anchor == null || scrollBox == null || scrollable == null) return false;
+    final position = scrollable.position;
+    final anchorLeft = anchor.localToGlobal(Offset.zero, ancestor: scrollBox).dx;
+    final target = (position.pixels + anchorLeft - anchor.size.width).clamp(position.minScrollExtent, position.maxScrollExtent);
+    if ((target - position.pixels).abs() < 0.5) return false;
+    position.jumpTo(target);
+    return true;
+  }
+
+  void _keepSelectedVisible(Duration duration) {
+    if (!mounted) return;
+    final chipContext = _selectedChipKey.currentContext;
+    final chipBox = _laidOut(chipContext);
+    final scrollBox = _laidOut(chipContext == null ? null : Scrollable.maybeOf(chipContext)?.context);
+    if (chipContext == null || chipBox == null || scrollBox == null) return;
 
     final left = chipBox.localToGlobal(Offset.zero, ancestor: scrollBox).dx;
     final right = left + chipBox.size.width;

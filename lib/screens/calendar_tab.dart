@@ -356,11 +356,22 @@ class _CalendarTabState extends State<CalendarTab> {
     // THE stop list: one stop per task, sorted once by its anchor (history slot / first place seen / planned slot),
     // with a stable id. State changes (done, skipped, bypassed, recovered, Do this now) redraw the stop and the route;
     // they never move a stop or remount it.
-    final orderedItems = buildCanonicalDayStops(
-      live: enrichedItems.where((i) => i.deviation == null).toList(),
-      history: history,
-      anchors: state.dayPathAnchorsFor(selectedDate),
-    );
+    final recoveringKeys = {
+      if (isToday && state.preferredActiveTaskId != null) state.preferredActiveTaskId!,
+      if (isToday && state.activeFocusTask != null) state.activeFocusTask!.id,
+    };
+    final orderedItems = [
+      for (final s in buildCanonicalDayStops(
+        live: enrichedItems.where((i) => i.deviation == null).toList(),
+        history: history,
+        anchors: state.dayPathAnchorsFor(selectedDate),
+      ))
+        // A skipped stop the user went back to: the route loops back to it in orange until it is done.
+        if (s.taskId != null && s.isSkipped && !s.isCompleted && recoveringKeys.contains(dayPathTaskKey(s)))
+          s.copyWith(isSkipped: false, isMissed: false, state: 'recovering')
+        else
+          s,
+    ];
 
     // Where the traveller is (only on today): the Do-this-now pick, a running task, else the next open stop in path
     // order. Bypassed / skipped / missed stops are never the target.

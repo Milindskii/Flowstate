@@ -111,7 +111,7 @@ void main() {
       }
     });
 
-    testWidgets('2 & 3. Skip B -> B is a yellow skipped node and the road runs on through it', (WidgetTester tester) async {
+    testWidgets('2 & 3. Skip B -> B is a yellow skipped node and the road passes beside it', (WidgetTester tester) async {
       final items = [
         makeItem(id: 'item-a', title: 'Task A', time: '9:00', period: 'AM', durationMinutes: 30),
         makeItem(id: 'item-b', title: 'Task B', time: '11:00', period: 'AM', durationMinutes: 45, isSkipped: true),
@@ -136,12 +136,13 @@ void main() {
       expect(find.byKey(const Key('path_skipped_item-b')), findsOneWidget);
       expect(find.textContaining('Skipped'), findsOneWidget);
 
-      // The road is continuous: it runs through B (and A, C, D) and stays the normal blue, not removed or bent away.
+      // The road is continuous: it runs through A, C and D, swings out around B and carries on to C.
       final g = paintedGeometry(tester);
       expect(g.stopById('item-b').role, StopRouteRole.skipped);
-      for (final id in ['item-a', 'item-b', 'item-c', 'item-d']) {
+      for (final id in ['item-a', 'item-c', 'item-d']) {
         expect(g.distanceToRoute(g.stopById(id).center), lessThan(0.5));
       }
+      expect(g.distanceToRoute(g.stopById('item-b').center), greaterThan(30), reason: 'beside B, not through it');
       expect(g.sampleStates.every((s) => s == RouteSegmentState.ahead), isTrue, reason: 'nothing walked: all blue');
     });
 
@@ -237,11 +238,12 @@ void main() {
 
       expect(find.byKey(const Key('path_check_item-b')), findsOneWidget);
       expect(find.textContaining('Recovered'), findsOneWidget);
-      // History is kept: B is marked recovered and the road into it is orange, on the very same line as the rest.
+      // History is kept: B is marked recovered, the road still deviates around it, and the orange way back loops to it.
       final g = paintedGeometry(tester);
       final b = g.stopById('item-b');
       expect(b.role, StopRouteRole.recovered);
-      expect(g.distanceToRoute(b.center), lessThan(0.5));
+      expect(g.distanceToRoute(b.center), greaterThan(30), reason: "the deviation is not erased");
+      expect(g.detours.map((d) => d.stopId), ["item-b"]);
       final orange = [
         for (var i = 0; i < g.sampleYs.length; i++)
           if (g.sampleStates[i] == RouteSegmentState.recovered) Offset(g.sampleXs[i], g.sampleYs[i])
@@ -249,7 +251,7 @@ void main() {
       expect(orange, isNotEmpty);
       for (final p in orange) {
         expect(g.distanceToRoute(p), lessThan(1e-6), reason: 'orange follows the canonical route');
-        expect(p.dy, inInclusiveRange(g.stopById('item-a').center.dy, b.center.dy));
+        expect(p.dy, inInclusiveRange(b.center.dy, g.stopById('item-c').center.dy), reason: 'the road home from B is orange');
       }
     });
 

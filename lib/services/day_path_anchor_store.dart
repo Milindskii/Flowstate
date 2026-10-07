@@ -57,6 +57,25 @@ class DayPathAnchorStore {
     return changed;
   }
 
+  /// An authoritative time (the task's own committed schedule, which the server or the user set) beats the first-seen
+  /// ledger: where a recorded anchor disagrees with it, the entry takes the authoritative time and keeps its order.
+  /// Returns true when something was corrected. Suggestions and "Do this now" moves never come through here, so the
+  /// ledger still holds against those.
+  bool reconcile(String day, Map<String, DateTime> authoritative) {
+    final entries = _days[day];
+    if (entries == null) return false;
+    var changed = false;
+    for (final e in authoritative.entries) {
+      final cur = entries[e.key];
+      if (cur == null) continue;
+      final a = cur.anchor;
+      if (a != null && a.difference(e.value).inMinutes.abs() < 1) continue;
+      entries[e.key] = DayPathAnchorHint(anchor: e.value, seq: cur.seq);
+      changed = true;
+    }
+    return changed;
+  }
+
   /// The user explicitly moved this task: its stop may take its new place on every day.
   bool forgetTask(String taskId) {
     var changed = false;

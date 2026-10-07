@@ -185,6 +185,8 @@ void main() {
       expect(find.semantics.byLabel('Study arrays, now, 10:00 AM, 60 minutes'), findsOneWidget);
       expect(find.semantics.byLabel('Call mom, 6:00 PM, 60 minutes, Fixed'), findsOneWidget);
 
+      await tester.ensureVisible(find.byKey(const Key('path_node_comp-gym'))); // the road opens at NOW, scrolled past the first stop
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('path_node_comp-gym')));
       expect(tapped?.id, 'comp-gym');
       handle.dispose();

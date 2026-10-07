@@ -23,10 +23,11 @@ import 'noya_motion_view.dart';
 /// the viewer and shrink with distance; labels sit beside the road on the side opposite its bend and stay
 /// secondary.
 ///
-/// The route is not a decoration: [DayRouteGeometry] derives ONE road through every stop, and the painter draws
-/// exactly that. The stretch already travelled is green, the road ahead blue, the way into a recovered stop orange;
-/// a skipped (yellow) or failed (red) stop changes its own node, never the road, which runs on through it. When the
-/// day is complete the road ends in the day's Trophy.
+/// The route is not a decoration: [DayRouteGeometry] derives the road from the stops' timeline positions and what
+/// happened to them, and the painter draws exactly that. The stretch already travelled is green, the road ahead blue.
+/// A skipped (yellow), missed or failed (red) stop stays on the path but the road swings out around it; a recovered
+/// stop adds an orange way back that loops up to the node and rejoins the road. Edits morph the road (see
+/// [_MorphingRoute]). When the day is complete the road ends in the day's Trophy.
 class FlowDayPath extends StatefulWidget {
   final List<ScheduleItem> items;
   final String? nowItemId;
@@ -119,8 +120,16 @@ class _FlowDayPathState extends State<FlowDayPath> {
     if (id == null || id == _revealedFor) return;
     _revealedFor = id;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final ctx = _targetKey.currentContext;
-      if (!mounted || ctx == null || Scrollable.maybeOf(ctx) == null) return;
+      if (ctx == null || !ctx.mounted || Scrollable.maybeOf(ctx) == null) return;
+      // The target may have been built this frame but not laid out yet (a date switch, a route morph). ensureVisible
+      // reads its size; asking a render box that has no size is the assertion, so wait for a frame that has one.
+      final box = ctx.findRenderObject();
+      if (box is! RenderBox || !box.attached || !box.hasSize) {
+        _revealedFor = null;
+        return;
+      }
       Scrollable.ensureVisible(ctx, alignment: 0.3, duration: Duration.zero);
     });
   }
@@ -155,55 +164,60 @@ class _FlowDayPathState extends State<FlowDayPath> {
       children: [
         LayoutBuilder(builder: (context, constraints) {
           final width = constraints.maxWidth.isFinite ? constraints.maxWidth : MediaQuery.of(context).size.width;
-          final geo = DayRouteGeometry.compute(items, widget.nowItemId, width, finish: trophy);
+          final target = DayRouteGeometry.compute(items, widget.nowItemId, width, finish: trophy);
           final targetId = _targetId;
-          return SizedBox(
-            width: width,
-            height: geo.height,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Positioned.fill(child: _AnimatedRoute(geometry: geo, palette: _palette(context))),
-                for (final stop in geo.stops)
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    top: stop.center.dy - FlowDayPath.rowHeight / 2,
-                    height: FlowDayPath.rowHeight,
-                    child: _PathStop(
-                      key: Key('path_stop_${stop.id}'),
-                      rowKey: stop.id == targetId ? _targetKey : null,
-                      item: items[stop.index],
-                      stop: stop,
-                      width: width,
-                      isNow: stop.id == widget.nowItemId,
-                      reflection: items[stop.index].isCompleted ? widget.reflectionFor(items[stop.index]) : null,
-                      completedAt: items[stop.index].isCompleted
-                          ? (widget.reflectionFor(items[stop.index])?.completedAt ?? widget.completedAtFor(items[stop.index]))
-                          : null,
-                      category: FlowDayPath.categoryLabel(items[stop.index], widget.categoryFor?.call(items[stop.index])),
-                      palette: _palette(context),
-                      onTap: () => widget.onTap(items[stop.index]),
+          final palette = _palette(context);
+          return _MorphingRoute(
+            target: target,
+            builder: (context, geo) => SizedBox(
+              width: width,
+              height: geo.height,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned.fill(child: CustomPaint(key: const Key('flow_day_route'), painter: DayRoutePainter(geometry: geo, palette: palette))),
+                  for (final stop in geo.stops)
+                    Positioned(
+                      key: ValueKey('pos_${stop.id}'),
+                      left: 0,
+                      right: 0,
+                      top: stop.center.dy - FlowDayPath.rowHeight / 2,
+                      height: FlowDayPath.rowHeight,
+                      child: _PathStop(
+                        key: Key('path_stop_${stop.id}'),
+                        rowKey: stop.id == targetId ? _targetKey : null,
+                        item: items[stop.index],
+                        stop: stop,
+                        width: width,
+                        isNow: stop.id == widget.nowItemId,
+                        reflection: items[stop.index].isCompleted ? widget.reflectionFor(items[stop.index]) : null,
+                        completedAt: items[stop.index].isCompleted
+                            ? (widget.reflectionFor(items[stop.index])?.completedAt ?? widget.completedAtFor(items[stop.index]))
+                            : null,
+                        category: FlowDayPath.categoryLabel(items[stop.index], widget.categoryFor?.call(items[stop.index])),
+                        palette: palette,
+                        onTap: () => widget.onTap(items[stop.index]),
+                      ),
                     ),
-                  ),
-                // The end of the road: the day's Trophy, drawn like any other stop.
-                if (geo.finish != null && status != null)
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    top: geo.finish!.center.dy - FlowDayPath.rowHeight / 2,
-                    height: FlowDayPath.rowHeight,
-                    child: _TrophyStop(
-                      key: const Key('path_trophy_stop'),
-                      rowKey: targetId == DayRouteGeometry.finishId ? _targetKey : null,
-                      stop: geo.finish!,
-                      width: width,
-                      status: status,
-                      summary: _DaySummary.of(finished, widget.reflectionFor),
-                      onClaim: widget.onClaimTrophy,
+                  // The end of the road: the day's Trophy, drawn like any other stop.
+                  if (geo.finish != null && status != null)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      top: geo.finish!.center.dy - FlowDayPath.rowHeight / 2,
+                      height: FlowDayPath.rowHeight,
+                      child: _TrophyStop(
+                        key: const Key('path_trophy_stop'),
+                        rowKey: targetId == DayRouteGeometry.finishId ? _targetKey : null,
+                        stop: geo.finish!,
+                        width: width,
+                        status: status,
+                        summary: _DaySummary.of(finished, widget.reflectionFor),
+                        onClaim: widget.onClaimTrophy,
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           );
         }),
@@ -214,43 +228,45 @@ class _FlowDayPathState extends State<FlowDayPath> {
   }
 }
 
-/// Paints the route and, when the geometry changes for the same stops (a skip, a recovery, a completion), eases the
-/// change in: the sampled x positions interpolate and a newly coloured stretch draws in over 400 ms. Reduced motion snaps.
-class _AnimatedRoute extends StatefulWidget {
-  final DayRouteGeometry geometry;
-  final DayRoutePalette palette;
+/// Hands [builder] the geometry to draw. When [target] changes for the same day (a completion, a skip, a recovery, a
+/// reschedule, a delete) the shown geometry eases from what is on screen right now to the new one, so the road and
+/// its stops morph instead of swapping. A different day or width, and reduced motion, snap.
+class _MorphingRoute extends StatefulWidget {
+  final DayRouteGeometry target;
+  final Widget Function(BuildContext context, DayRouteGeometry shown) builder;
 
-  const _AnimatedRoute({required this.geometry, required this.palette});
+  const _MorphingRoute({required this.target, required this.builder});
 
   @override
-  State<_AnimatedRoute> createState() => _AnimatedRouteState();
+  State<_MorphingRoute> createState() => _MorphingRouteState();
 }
 
-class _AnimatedRouteState extends State<_AnimatedRoute> with SingleTickerProviderStateMixin {
-  static const Duration morph = Duration(milliseconds: 400);
+class _MorphingRouteState extends State<_MorphingRoute> with SingleTickerProviderStateMixin {
+  static const Duration morph = Duration(milliseconds: 450);
   late final AnimationController _c = AnimationController(vsync: this, duration: morph, value: 1);
-  List<double>? _fromXs;
-  List<RouteSegmentState>? _fromStates;
+  late DayRouteGeometry _from = widget.target;
+
+  DayRouteGeometry get _shown => DayRouteGeometry.lerp(_from, widget.target, Curves.easeInOutCubic.transform(_c.value));
+
+  /// A different set of stops is a different day (a date switch): that is navigation, not an edit to animate.
+  static bool _sameDay(DayRouteGeometry a, DayRouteGeometry b) {
+    if (a.width != b.width || !a.hasRoute || !b.hasRoute) return false;
+    final ids = {for (final s in a.stops) s.id};
+    final shared = [for (final s in b.stops) if (ids.contains(s.id)) s].length;
+    return shared > 0;
+  }
 
   @override
-  void didUpdateWidget(_AnimatedRoute old) {
+  void didUpdateWidget(_MorphingRoute old) {
     super.didUpdateWidget(old);
-    if (old.geometry.sameRoute(widget.geometry)) return;
-    final comparable = old.geometry.layoutSignature == widget.geometry.layoutSignature && old.geometry.hasRoute;
-    if (!comparable || FlowMotion.isReducedMotion(context)) {
-      _fromXs = null;
-      _fromStates = null;
+    if (old.target.sameRoute(widget.target)) return;
+    if (!_sameDay(old.target, widget.target) || FlowMotion.isReducedMotion(context)) {
+      _from = widget.target;
       _c.value = 1;
       return;
     }
     // Start from what is on screen right now, so a change mid-morph never jumps.
-    final eased = Curves.easeInOutCubic.transform(_c.value);
-    final shown = <double>[
-      for (var i = 0; i < old.geometry.sampleXs.length; i++)
-        _fromXs == null ? old.geometry.sampleXs[i] : _fromXs![i] + (old.geometry.sampleXs[i] - _fromXs![i]) * eased,
-    ];
-    _fromXs = shown;
-    _fromStates = old.geometry.sampleStates;
+    _from = DayRouteGeometry.lerp(_from, old.target, Curves.easeInOutCubic.transform(_c.value));
     _c.forward(from: 0);
   }
 
@@ -264,19 +280,7 @@ class _AnimatedRouteState extends State<_AnimatedRoute> with SingleTickerProvide
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _c,
-      builder: (context, _) {
-        final t = Curves.easeInOutCubic.transform(_c.value);
-        return CustomPaint(
-          key: const Key('flow_day_route'),
-          painter: DayRoutePainter(
-            geometry: widget.geometry,
-            palette: widget.palette,
-            fromXs: _c.isCompleted ? null : _fromXs,
-            fromStates: _c.isCompleted ? null : _fromStates,
-            t: t,
-          ),
-        );
-      },
+      builder: (context, _) => widget.builder(context, _c.isCompleted ? widget.target : _shown),
     );
   }
 }
@@ -602,11 +606,15 @@ class _PathStop extends StatelessWidget {
 
   bool get _isSkippedFamily => item.isSkipped || item.deviation == 'skipped' || item.deviation == 'deferred';
 
+  /// A skipped stop being done now: the orange way back loops to it.
+  bool get _isRecovering => !item.isCompleted && item.state == 'recovering';
+
   /// Which node is drawn; a change here is a real state change and crossfades.
   String get _nodeState {
     if (item.isCompleted) {
       return item.isCompletedAfterDeviation ? 'recovered' : 'done';
     }
+    if (_isRecovering) return 'recovering';
     if (isNow) return item.isActive ? 'focus' : 'now';
     if (_isSkippedFamily) return 'skipped';
     if (item.isFailed) return 'failed';
@@ -617,6 +625,7 @@ class _PathStop extends StatelessWidget {
 
   String? get _stateLabel {
     if (item.isFailed) return 'Unfinished';
+    if (_isRecovering) return 'Recovering';
     if (_isSkippedFamily) return item.deviation == 'deferred' ? 'Deferred' : 'Skipped';
     if (item.isConflict) return 'Conflict';
     if (item.isFixed || item.isCommitment) return 'Fixed';
@@ -750,6 +759,21 @@ class _PathStop extends StatelessWidget {
         child: Icon(Icons.check_rounded, size: 20, color: ok),
       );
     }
+    if (_isRecovering) {
+      // Back on a skipped stop: an orange ring. The orange road loops to it and rejoins the day below.
+      final orange = palette.recovery;
+      return Container(
+        key: Key('path_recovering_${item.id}'),
+        width: FlowDayPath.upcomingNodeSize,
+        height: FlowDayPath.upcomingNodeSize,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Color.alphaBlend(orange.withValues(alpha: dark ? 0.2 : 0.14), surface),
+          border: Border.all(color: orange, width: 2.5),
+        ),
+        child: Icon(Icons.replay_rounded, size: 18, color: orange),
+      );
+    }
     if (isNow) return _NowNode(key: Key('path_now_${item.id}'), active: item.isActive, accent: accent, surface: surface);
 
     if (_isSkippedFamily) {
@@ -851,6 +875,8 @@ class _PathStop extends StatelessWidget {
           stateLabel,
           item.isFailed
               ? palette.failed
+              : _isRecovering
+                  ? palette.recovery
               : _isSkippedFamily
                   ? palette.skipped
                   : item.isConflict

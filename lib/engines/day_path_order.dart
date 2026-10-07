@@ -158,7 +158,11 @@ List<ScheduleItem> buildCanonicalDayStops({
   }
 
   stops.sort(cmp);
-  return stops;
+  // The route is laid out from the same time the stops were ordered by, so the order and the gaps always agree.
+  return [
+    for (final s in stops)
+      if (s.taskId == null || isUnscheduledItem(s) || orderTime(s) == null) s else s.copyWith(anchorStart: orderTime(s)),
+  ];
 }
 
 /// Where the traveller is on today's path: the "Do this now" pick, else a running task (whose slot has not ended,
