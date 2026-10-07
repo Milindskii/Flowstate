@@ -49,7 +49,7 @@ def rows(uid):
 
 async def replan(ac, h, message, now=NOW, day="2026-10-05"):
     r = await ac.post("/api/v1/ai/replan", headers=h, json={
-        "selected_date": day, "user_message": message, "current_local_time": now.isoformat(), "timezone": "Asia/Kolkata"})
+        "selected_date": day, "user_message": message, "current_local_time": now.isoformat(), "timezone": "Asia/Kolkata", "ai_consent": True})
     assert r.status_code == 200, r.text
     return r.json()["plan_diff"]
 

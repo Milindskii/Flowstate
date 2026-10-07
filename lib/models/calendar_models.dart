@@ -697,16 +697,34 @@ class PlanDiff {
   }
 }
 
+/// The server says this Replan message needs AI understanding and a Shield. Nothing was sent to the model and
+/// nothing was charged: the app asks the user first (or says a Shield is missing).
+class ReplanAiRequired {
+  final int shieldCost;
+  final int shieldsAvailable;
+  final bool canAfford;
+
+  const ReplanAiRequired({required this.shieldCost, required this.shieldsAvailable, required this.canAfford});
+
+  factory ReplanAiRequired.fromJson(Map<String, dynamic> json) => ReplanAiRequired(
+        shieldCost: json['shield_cost'] as int? ?? 1,
+        shieldsAvailable: json['shields_available'] as int? ?? 0,
+        canAfford: json['can_afford'] as bool? ?? false,
+      );
+}
+
 /// Replan response from POST /api/v1/ai/replan
 class ReplanResponse {
   final bool success;
   final PlanDiff planDiff;
   final String userIntentSummary;
+  final ReplanAiRequired? aiRequired;
 
   const ReplanResponse({
     required this.success,
     required this.planDiff,
     required this.userIntentSummary,
+    this.aiRequired,
   });
 
   factory ReplanResponse.fromJson(Map<String, dynamic> json) {
@@ -719,6 +737,9 @@ class ReplanResponse {
               selectedDate: json['selected_date'] as String? ?? '',
             ),
       userIntentSummary: json['user_intent_summary'] as String? ?? '',
+      aiRequired: json['ai_required'] is Map<String, dynamic>
+          ? ReplanAiRequired.fromJson(json['ai_required'] as Map<String, dynamic>)
+          : null,
     );
   }
 

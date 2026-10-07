@@ -23,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
+from ..core.economy_config import SHIELD_COST_AI_REPLAN
 from ..core.logging import logger
 from ..core.timezone import owning_date, resolve_user_timezone
 from ..engines.planner import (
@@ -51,6 +52,7 @@ from ..schemas.calendar import (
     DayScheduleItem,
     DayScheduleResponse,
     PlanDiff,
+    ReplanAIRequired,
     ReplanClarification,
     ReplanIssue,
     ReplanOperation,
@@ -107,6 +109,26 @@ _CLAUSE_VERB_START = re.compile(rf"^(?:{_CLAUSE_VERBS})\b", re.IGNORECASE)
 _CANT_SPLIT = re.compile(
     r"(?:,|;|\band)\s+(?=(?:i\s+|i'?m\s+)?(?:can'?t|cannot|won'?t|not able|unable|no time|"
     r"(?:don'?t|do not) have (?:the |enough |any )?time)\b)", re.IGNORECASE)
+
+
+class _AIConsentRequired(Exception):
+    """The message needs AI understanding but no Shield has been confirmed (or none can be paid). Raised BEFORE any
+    provider call; generate_replan answers it with `ai_required` and nothing is sent or charged."""
+
+    def __init__(self, shield_cost: int, shields_available: int):
+        super().__init__("ai_consent_required")
+        self.shield_cost, self.shields_available = shield_cost, shields_available
+
+
+class _ReplanAIContext:
+    """What one Replan request has done on the AI side, so the whole dry run settles it exactly once."""
+
+    def __init__(self, request: ReplanRequest):
+        self.consent = bool(request.ai_consent)
+        self.key = request.idempotency_key or uuid.uuid4().hex
+        self.ticket = None          # a Shield reservation (Basic users) awaiting settlement
+        self.understood = None      # the validated understanding, if the model (or a replay) produced one
+        self.done = False           # AI already answered once in this request: never ask (or charge) twice
 
 
 def _gateway_refusal(refusal) -> HTTPException:
@@ -455,7 +477,8 @@ class CalendarService:
     @staticmethod
     def _split_replan_clauses(msg: str) -> List[str]:
         parts: List[str] = []
-        splitter = rf",?\s+(?:and\s+)?(?=(?:{_CLAUSE_VERBS})\b)"
+        # never split "don't move ..." / "do not touch ..." / "never move ...": the negation belongs to its verb
+        splitter = rf"(?<!don't)(?<!don\u2019t)(?<!\bnot)(?<!\bnever),?\s+(?:and\s+)?(?=(?:{_CLAUSE_VERBS})\b)"
         for sentence in re.split(r'(?<=[.!?])\s+|;\s*', msg.strip()):
             for piece in re.split(splitter, sentence.strip(), flags=re.IGNORECASE):
                 # "... and I can't go out" / ", no time for cleaning": a new clause even without a leading verb
@@ -491,6 +514,29 @@ class CalendarService:
             # no amount given: a default shift only when nothing else was asked (see parse_replan_instruction)
             operations.append(ReplanOperation(op="delay_remaining_schedule", delay_minutes=30, intent="bare"))
             return operations
+
+        # Completed work is immutable already: "don't move completed tasks" is understood, and changes nothing.
+        if re.match(r"^(?:and\s+)?(?:please\s+)?(?:don'?t|do not|never)\s+(?:touch|change|move|reschedule)\s+"
+                    r"(?:any\s+|the\s+|my\s+)?(?:completed|finished|done)(?:\s+(?:tasks?|work|items?))?$", lower):
+            return [ReplanOperation(op="noop")]
+
+        # "add another hour to ML" / "give gym 30 more minutes": more time for an EXISTING task, never a new task
+        m_more = re.match(
+            r"^(?:add|give)\s+(?:(?:another|an\s+extra|extra|one\s+more)\s+)?(?:(\d+)\s*(h|hr|hrs|hours?|m|min|mins|minutes?)"
+            r"|(hour|half\s+an?\s+hour|half\s+hour))\s*(?:more\s+|extra\s+)?(?:to|for|on)\s+(?:the\s+|my\s+)?(.+)$", lower)
+        if m_more:
+            if m_more.group(1):
+                n = int(m_more.group(1))
+                minutes = n * 60 if m_more.group(2).startswith("h") else n
+            else:
+                minutes = 60 if m_more.group(3) == "hour" else 30
+            if 5 <= minutes <= MAX_TASK_MINUTES:
+                return [ReplanOperation(op="change_duration", task_query=m_more.group(4).strip(), delay_minutes=minutes)]
+
+        # "keep Flowstate today": leave that task where it is
+        m_stay = re.match(r"^(?:keep|leave)\s+(?:the\s+|my\s+)?(.+?)\s+(?:today|for today|as planned|as it is)$", lower)
+        if m_stay and not re.search(r"\d", lower):
+            return [ReplanOperation(op="protect_task", task_query=m_stay.group(1).strip())]
 
         # "leave going out untouched": protect a task/commitment by name
         m_keep = re.match(
@@ -647,17 +693,26 @@ class CalendarService:
 
     @staticmethod
     def _ai_understand(db: Session, user: User, message: str, entities: List[PlanItem], now_local: datetime,
-                       tz: ZoneInfo):
+                       tz: ZoneInfo, ctx: Optional[_ReplanAIContext] = None):
         """Semantic understanding (language model) for a message the deterministic layers could not read.
 
-        Metered: per-minute guard + a daily budget separate from Build My Day credits. Over budget, disabled or on
-        any provider problem it returns None and the deterministic answer stands (never an error of its own).
+        THE gate in front of the provider. Basic users: without their confirmed Shield (`ctx.consent`) or without a
+        Shield to pay, it raises _AIConsentRequired and the model is never called; with both, the Shield is taken
+        atomically (ai_gateway.begin_replan) before the call and settled by generate_replan after the dry run.
+        Pro keeps the existing path (fair-use budget, no Shield). Over budget, disabled or on any provider problem
+        it returns None and the deterministic answer stands (never an error of its own).
         """
         from . import ai_gateway, replan_ai
         from .ai_economy_service import AIEconomyService, effective_is_pro
 
+        ctx = ctx or _ReplanAIContext(ReplanRequest(selected_date="", ai_consent=False))
+        if ctx.done:
+            return ctx.understood
         if not (settings.REPLAN_AI_ENABLED and settings.GEMINI_API_KEY) or not entities:
             return None
+        is_pro = effective_is_pro(AIEconomyService.get_or_create_usage(db, user.id))
+        if not is_pro:
+            return CalendarService._ai_understand_with_shield(db, user, message, entities, now_local, tz, ctx)
         if not replan_ai.allow_request(str(user.id)):
             return None
         # One AI request in flight per user across all instances (the slot Build My Day uses): 409 while taken.
@@ -687,6 +742,88 @@ class CalendarService:
             except Exception as exc:  # the deadline expiry frees it anyway
                 db.rollback()
                 logger.warning(f"replan_ai slot release failed: {type(exc).__name__}")
+
+    @staticmethod
+    def _ai_understand_with_shield(db: Session, user: User, message: str, entities: List[PlanItem],
+                                   now_local: datetime, tz: ZoneInfo, ctx: _ReplanAIContext):
+        """Basic user: an AI Replan costs SHIELD_COST_AI_REPLAN Shield(s), confirmed by the user BEFORE the call.
+
+        The existing daily Replan budget stays a hard ceiling (checked here, spent in the same transaction as the
+        Shield). The per-minute guard comes after the consent step so a confirmation prompt never burns it."""
+        from . import ai_gateway, replan_ai
+        from .ai_economy_service import AIEconomyService
+
+        if ai_gateway.period_used(db, user.id, "replan_day") >= replan_ai.FREE_REPLAN_AI_PER_DAY:
+            return None  # fair-use ceiling reached: the deterministic answer stands (as before), nothing to ask
+        shields = AIEconomyService.get_or_create_profile(db, user.id).shields_available
+        if not ctx.consent or shields < SHIELD_COST_AI_REPLAN:
+            raise _AIConsentRequired(SHIELD_COST_AI_REPLAN, shields)
+        if not replan_ai.allow_request(str(user.id)):
+            return None
+        try:
+            ticket = ai_gateway.begin_replan(
+                db, user_id=user.id, idempotency_key=ctx.key,
+                fingerprint=hashlib.sha256(f"{message}\x00{ctx.consent}".encode("utf-8")).hexdigest())
+        except ai_gateway.GatewayError as refusal:
+            raise _gateway_refusal(refusal)
+        except ai_gateway.QuotaExceeded as refusal:
+            if refusal.code == "insufficient_shields":  # lost a race for the last Shield: nothing was taken
+                raise _AIConsentRequired(SHIELD_COST_AI_REPLAN, 0)
+            return None  # fair-use ceiling
+        ctx.done = True
+        if isinstance(ticket, ai_gateway.Replay):  # the same request id again: its answer, no model call, no charge
+            ctx.understood = replan_ai.understanding_from_payload(ticket.payload)
+            return ctx.understood
+        ctx.ticket = ticket
+        ctx.understood = replan_ai.interpret(message, entities, now_local, tz, request_id=uuid.uuid4().hex[:12])
+        return ctx.understood
+
+    @staticmethod
+    def _settle_replan_ai(db: Session, ctx: _ReplanAIContext, *, crashed: bool = False) -> None:
+        """Close the Shield reservation exactly once: charge stands only for a usable answer; every other outcome
+        (provider failure, nothing usable, a crash later in the dry run) gives the Shield back."""
+        from . import ai_gateway, replan_ai
+
+        ticket, ctx.ticket = ctx.ticket, None
+        if ticket is None:
+            return
+        try:
+            if crashed:
+                db.rollback()
+            understood = ctx.understood
+            if not crashed and understood is not None and understood.operations:
+                ai_gateway.succeed(db, ticket, replan_ai.understanding_to_payload(understood))
+            elif not crashed and understood is not None:  # only a clarifying question: no change was proposed
+                ai_gateway.fail(db, ticket, "clarification_only", keep_budget=True)
+            else:
+                ai_gateway.fail(db, ticket, "replan_error" if crashed else "no_understanding")
+        except Exception as exc:  # the reservation deadline refunds it anyway
+            db.rollback()
+            logger.warning(f"replan_ai settle failed: {type(exc).__name__}")
+
+    def _ai_required_response(self, db: Session, user: User, request: ReplanRequest,
+                              need: _AIConsentRequired) -> ReplanResponse:
+        """No proposal yet: this message needs AI and the user must confirm (or cannot pay) the Shield first."""
+        tz, tz_name = self.resolve(user, request.timezone)
+        now_local = self._now(tz, request.current_local_time)
+        try:
+            datetime.strptime(request.selected_date, "%Y-%m-%d")
+            day = request.selected_date
+        except Exception:
+            day = now_local.date().strftime("%Y-%m-%d")
+        before = self.get_day_schedule(db, user, day, tz_name, now_local=now_local).timeline
+        can_afford = need.shields_available >= need.shield_cost
+        msg = ("Noya needs your OK to use AI for this one." if can_afford
+               else "Noya needs a Shield to use AI for this one, and you don't have one right now.")
+        diff = PlanDiff(
+            plan_id=str(uuid.uuid4()), selected_date=day, created_at=datetime.now(timezone.utc),
+            before_schedule=before, after_schedule=before, conflicts=[msg],
+            issues=[ReplanIssue(kind="ai_consent", message=msg)], explanation=msg, timezone_used=tz_name,
+            apply_request=ApplyReplanRequest(plan_id=str(uuid.uuid4()), selected_date=day, timezone=tz_name))
+        return ReplanResponse(
+            success=True, plan_diff=diff, user_intent_summary=request.user_message,
+            ai_required=ReplanAIRequired(kind="shield", shield_cost=need.shield_cost,
+                                         shields_available=need.shields_available, can_afford=can_afford))
 
     # words that never name new work on their own ("ugh, behind schedule again")
     _JUNK_TITLE_WORDS = frozenset({"schedule", "again", "behind", "ugh", "hmm", "everything", "stuff", "things",
@@ -798,6 +935,21 @@ class CalendarService:
     # ── 3. GENERATE REPLAN (dry run; never writes) ───────────────────────────
 
     def generate_replan(self, db: Session, user: User, request: ReplanRequest) -> ReplanResponse:
+        """Dry run (never writes). AI understanding is only ever reached through _ai_understand's Shield gate; a
+        Shield taken there is settled here once the whole proposal is built (refunded if it did not come out)."""
+        ctx = _ReplanAIContext(request)
+        try:
+            response = self._generate_replan_core(db, user, request, ctx)
+        except _AIConsentRequired as need:
+            return self._ai_required_response(db, user, request, need)
+        except BaseException:
+            self._settle_replan_ai(db, ctx, crashed=True)
+            raise
+        self._settle_replan_ai(db, ctx)
+        return response
+
+    def _generate_replan_core(self, db: Session, user: User, request: ReplanRequest,
+                              ctx: _ReplanAIContext) -> ReplanResponse:
         from . import ai_gateway
 
         try:
@@ -837,6 +989,7 @@ class CalendarService:
         row_by_id: Dict[str, Task] = {str(t.id): t for t in open_rows + done_rows}
         items: List[PlanItem] = [planning_service.task_row_to_plan_item(t, tz=tz) for t in open_rows + done_rows]
 
+        ai_notes: List[str] = []  # what the semantic reader could not do while understanding the rest
         qa = request.quick_add
         if qa is not None:
             title = qa.title.strip()
@@ -857,7 +1010,7 @@ class CalendarService:
                                       f"{getattr(row_by_id.get(it.id), 'description', '') or ''}"),
                     now_local, target_date == now_local.date())
                 if found is None or found.vague:
-                    ai = self._ai_understand(db, user, request.user_message, plan_entities, now_local, tz)
+                    ai = self._ai_understand(db, user, request.user_message, plan_entities, now_local, tz, ctx)
                     if ai is not None:
                         found = ai
                 return found
@@ -892,6 +1045,7 @@ class CalendarService:
                         request, plan_id, before_schedule, tz_name, understood.clarification)
                 if understood is not None and understood.operations:
                     operations = understood.operations
+                    ai_notes.extend(understood.notes)
                 elif rules_error is not None:
                     raise rules_error
                 elif doubtful == "nameless":
@@ -901,11 +1055,12 @@ class CalendarService:
                         "“running 20 min late” or “add a 30 min call at 5pm”.")
             elif any(o.op == "unparsed" for o in operations):
                 # part of a compound message was not understood: let the semantic layer read the whole message
-                ai = self._ai_understand(db, user, request.user_message, plan_entities, now_local, tz)
+                ai = self._ai_understand(db, user, request.user_message, plan_entities, now_local, tz, ctx)
                 if ai is not None and ai.clarification is not None:
                     return self._clarification_response(request, plan_id, before_schedule, tz_name, ai.clarification)
                 if ai is not None and ai.operations:
                     operations = ai.operations
+                    ai_notes.extend(ai.notes)
         # cancellations first: time a cancelled task frees is available to the moves in the same message,
         # whatever order the user said them in ("move gym to 8 and I can't go out")
         operations = sorted(operations, key=lambda o: o.op != "cancel_task")
@@ -921,6 +1076,9 @@ class CalendarService:
         def ambiguous(query: Optional[str], message: str) -> None:
             failed_queries.add((query or "").strip().lower())
             note("ambiguous", message)
+
+        for n in ai_notes:
+            note("ambiguous", n)
 
         cancelled_items: List[TaskDiffItem] = []
         cancel_ids: List[str] = []
@@ -1066,7 +1224,13 @@ class CalendarService:
                 elif op.op == "move_task_time" and op.target_time:
                     th, tm = map(int, op.target_time.split(":"))
                     new_start = datetime.combine(target_date, time(th, tm), tzinfo=tz)
-                    new_end = new_start + timedelta(minutes=it.estimated_minutes)
+                    new_minutes = it.estimated_minutes
+                    if op.end_time:  # "7 PM until 9 PM": the window sets the length too
+                        eh, em = map(int, op.end_time.split(":"))
+                        span = (eh * 60 + em) - (th * 60 + tm)
+                        if MIN_TASK_MINUTES <= span <= MAX_TASK_MINUTES:
+                            new_minutes = span
+                    new_end = new_start + timedelta(minutes=new_minutes)
                     clash = next((o for o in items if o.id != it.id and o.start is not None and not o.is_new
                                   and (o.is_commitment or o.time_locked or o.status == "completed")
                                   and o.start < new_end and new_start < (o.end or o.start + timedelta(minutes=o.estimated_minutes))), None)
@@ -1080,9 +1244,11 @@ class CalendarService:
                     explicit_ops.add(it.id)
                     intents[it.id] = op.intent or "rescheduled"
                     # the user named the time: it is fixed there, and may cross midnight (end lands on the next day)
+                    if new_minutes != it.estimated_minutes:
+                        duration_changes[it.id] = new_minutes
                     items[idx_of(it.id)] = replace(
-                        it, origin_start=it.start, start=new_start,
-                        end=new_start + timedelta(minutes=it.estimated_minutes), time_locked=True, force_replace=False)
+                        it, origin_start=it.start, start=new_start, estimated_minutes=new_minutes,
+                        end=new_end, time_locked=True, force_replace=False)
                 elif op.op == "change_duration":
                     new_minutes = min(MAX_TASK_MINUTES, it.estimated_minutes + (op.delay_minutes or 0))
                     duration_changes[it.id] = new_minutes
@@ -1355,7 +1521,8 @@ class CalendarService:
                     moved.append(TaskDiffItem(
                         task_id=it.id, title=it.title, change_type="moved", old_time=clock_label(it.origin_start, tz),
                         old_start=it.origin_start, new_time=clock_label(im.start, tz), new_start=im.start, new_end=im.end,
-                        old_time_range=_range_label(it.origin_start, it.origin_start + timedelta(minutes=it.estimated_minutes), tz),
+                        old_time_range=_range_label(it.origin_start, it.origin_start + timedelta(
+                            minutes=getattr(row_by_id.get(it.id), "estimated_minutes", None) or it.estimated_minutes), tz),
                         new_time_range=_range_label(im.start, im.end, tz),
                         old_date=None if same_day else request.selected_date,
                         new_date=None if same_day else (
@@ -1371,7 +1538,8 @@ class CalendarService:
                                                   updated_at=row_token(it.id)))
                     updates.append(TaskScheduleUpdate(
                         task_id=it.id, scheduled_start=im.start, scheduled_end=im.end,
-                        expected_updated_at=row_token(it.id), user_override=True))
+                        expected_updated_at=row_token(it.id), user_override=True,
+                        estimated_minutes=duration_changes.get(it.id)))  # a window ("7 until 9") also sets the length
                 elif on_day:
                     after.append(self._render(it, im.start, im.end, tz, locked=True, commitment=it.is_commitment,
                                               reason="explicit_time",

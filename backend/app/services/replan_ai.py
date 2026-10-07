@@ -82,7 +82,7 @@ def build_prompt(message: str, refs: Sequence[Tuple[str, PlanItem]], now_local: 
         '  "operations": [{"op": "move_task|defer_task|skip_task|cancel_task|change_duration|delay_task|'
         'preserve_priority|preserve_commitment|add_task", "task_ref": "t1"|null, '
         '"target_date": "tomorrow"|"monday".."sunday"|"YYYY-MM-DD"|null, "target_time": "HH:MM" (24h)|null, '
-        '"time_mode": "at"|"not_before"|"before"|"later"|null,"part_of_day": "morning"|"afternoon"|"evening"|"night"|null, '
+        '"time_mode": "at"|"not_before"|"before"|"later"|null, "end_time": "HH:MM" (24h)|null, "part_of_day": "morning"|"afternoon"|"evening"|"night"|null, '
         '"minutes": integer|null, "title": string|null}],\n'
         '  "clarification": {"question": string, "task_ref": "t1"|null, '
         '"options": [{"label": string, "message": string}]} | null,\n'
@@ -98,7 +98,11 @@ def build_prompt(message: str, refs: Sequence[Tuple[str, PlanItem]], now_local: 
         "- \"I don't have time for X\" -> defer_task. \"X is taking longer\" -> change_duration (minutes only if stated).\n"
         "- \"keep X first / X is priority\" -> preserve_priority. \"don't touch / leave X\" -> preserve_commitment.\n"
         "- \"running late\" WITHOUT an amount is NOT a delay: do not output delay_task.\n"
-        "- One operation per requested change; a message may contain several.\n"
+        "- One operation per requested change; a message may contain several. Return ALL of them, in the user's order.\n"
+        "- \"7 PM until 9 PM\" / \"from 7 to 9\" on a move_task: target_time is the start and end_time is the end.\n"
+        "- \"add another hour to X\" / \"X needs one more hour\" -> change_duration with minutes 60 (never add_task).\n"
+        "- Completed tasks are not listed and are never changed. \"keep X today\" -> preserve_commitment on X.\n"
+        "- A task you cannot match to a ref is skipped; the other operations are still returned.\n"
         "- Never change a fixed commitment the user did not mention.\n"
         "Examples (refs are illustrative):\n"
         "- \"can't make it out tonight\" + commitment t1 \"Going out\" -> cancel_task t1.\n"
@@ -129,8 +133,10 @@ def numbers_in(message: str) -> set:
             nums.add(value)
     if re.search(r"\bhalf an? hour\b|\bhalf hour\b", text):
         nums.add(30)
-    if re.search(r"\b(?:an|one) hour\b", text):
+    if re.search(r"\b(?:an|one|another|extra|additional|one more|1 more) hour\b|\bhour more\b", text):
         nums.add(60)
+    if re.search(r"\b(?:an|one) hour and a half\b|\bhour and a half\b|\b1\.5 hours?\b", text):
+        nums.add(90)
     return nums
 
 
@@ -193,6 +199,7 @@ def validate(payload: Any, message: str, refs: Sequence[Tuple[str, PlanItem]], n
 
     ops: List[ReplanOperation] = []
     asks: List[Understanding] = []
+    unresolved = 0
     raw_ops = payload.get("operations") or []
     if not isinstance(raw_ops, list):
         raw_ops = []
@@ -231,6 +238,7 @@ def validate(payload: Any, message: str, refs: Sequence[Tuple[str, PlanItem]], n
             continue
 
         if item is None:
+            unresolved += 1  # one unmatched reference never discards the actions that were clear
             continue
         title = item.title
         if item.is_commitment and kind not in ("preserve_commitment", "preserve_priority"):
@@ -275,10 +283,15 @@ def validate(payload: Any, message: str, refs: Sequence[Tuple[str, PlanItem]], n
         elif kind == "move_task":
             if hhmm is not None and not _time_said(*hhmm, said):
                 hhmm = None  # a time the user never said is never used
+            end = _clean_time(raw.get("end_time"))
+            if end is not None and (hhmm is None or mode != "at" or not _time_said(*end, said)
+                                    or (end[0] * 60 + end[1]) <= (hhmm[0] * 60 + hhmm[1])):
+                end = None  # a window needs a stated start and a stated, later end
             if hhmm is not None and (dest is None or dest == today.isoformat()):
                 constraint = {"at": None, "not_before": "not_before", "before": "latest_end"}[mode]
                 ops.append(ReplanOperation(op="move_task_time", task_id=item.id, task_query=title,
                                            target_time=f"{hhmm[0]:02d}:{hhmm[1]:02d}", constraint_type=constraint,
+                                           end_time=f"{end[0]:02d}:{end[1]:02d}" if end else None,
                                            intent="rescheduled"))
             elif dest is not None and dest != today.isoformat():
                 ops.append(ReplanOperation(op="move_task_date", task_id=item.id, task_query=title, target_date=dest,
@@ -291,11 +304,15 @@ def validate(payload: Any, message: str, refs: Sequence[Tuple[str, PlanItem]], n
             else:
                 asks.append(_ask_for(item, f"Sure. What time should I move {title} to?"))
 
-    # A missing detail is asked for before anything is proposed: never a partial, guessed plan.
+    # A change that is missing a detail is reported next to the changes that are fully specified (never guessed):
+    # one vague item among several clear ones no longer discards the clear ones.
+    notes = [a.clarification.question for a in asks if a.clarification is not None]
+    if unresolved:
+        notes.append("I couldn't match everything you mentioned to your plan, so I left that part alone.")
+    if ops and confidence >= MIN_CONFIDENCE:
+        return Understanding(operations=ops, notes=notes)
     if asks:
         return asks[0]
-    if ops and confidence >= MIN_CONFIDENCE:
-        return Understanding(operations=ops)
 
     clar = payload.get("clarification")
     if isinstance(clar, dict) and str(clar.get("question") or "").strip():
@@ -318,6 +335,17 @@ def validate(payload: Any, message: str, refs: Sequence[Tuple[str, PlanItem]], n
         if first is not None:
             return _ask_for(first, f"Just to check: what should I do with {first.title}?")
     return None
+
+
+# ── replay payload (idempotent re-send of an already-paid request) ───────────
+
+def understanding_to_payload(u: Understanding) -> Dict[str, Any]:
+    return {"operations": [o.model_dump() for o in (u.operations or [])], "notes": list(u.notes)}
+
+
+def understanding_from_payload(payload: Dict[str, Any]) -> Understanding:
+    return Understanding(operations=[ReplanOperation(**o) for o in payload.get("operations") or []],
+                         notes=list(payload.get("notes") or []))
 
 
 # ── provider call ───────────────────────────────────────────────────────────

@@ -75,6 +75,10 @@ class ReplanRequest(BaseModel):
     quick_add: Optional[QuickAddTask] = None
     current_local_time: Optional[datetime] = None
     timezone: Optional[str] = None     # IANA name; abbreviations fall back to the stored preference
+    # The user's explicit OK to spend Shields on AI understanding of this message. Consent only: the server decides
+    # whether AI is needed, what it costs and whether the user can pay.
+    ai_consent: bool = False
+    idempotency_key: Optional[str] = Field(default=None, max_length=100)  # one per composer submission; retries reuse it
 
 class ReplanOperation(BaseModel):
     op: str                            # add_task | move_task_date | move_task_time (target_time) | change_duration (delay_minutes = extra) | shift_task_preference | delay_remaining_schedule | cancel_task | change_duration | add_constraint | remove_constraint | move_later | prioritize | protect_block | unparsed
@@ -92,6 +96,7 @@ class ReplanOperation(BaseModel):
     constraint_value: Optional[str] = None
     block_start: Optional[str] = None  # protect_block: "HH:MM" local, a window the planner must keep clear
     block_end: Optional[str] = None
+    end_time: Optional[str] = None     # move_task_time: "HH:MM" the block now ends ("7 PM until 9 PM" sets the length)
     intent: Optional[str] = None       # move_task_date: "skipped" | "deferred" | "rescheduled"
 
 class TaskDiffItem(BaseModel):
@@ -189,10 +194,20 @@ class PlanDiff(BaseModel):
     apply_request: Optional[ApplyReplanRequest] = None  # server-authored; post back verbatim to apply
     clarification: Optional[ReplanClarification] = None  # set instead of a proposal when a detail is missing
 
+class ReplanAIRequired(BaseModel):
+    """The message needs AI understanding. Nothing was sent to the model and nothing was charged: the app asks first
+    (`can_afford`) or tells the user a Shield is missing."""
+    kind: str = "shield"
+    shield_cost: int = 1
+    shields_available: int = 0
+    can_afford: bool = False
+
+
 class ReplanResponse(BaseModel):
     success: bool
     plan_diff: PlanDiff
     user_intent_summary: str
+    ai_required: Optional[ReplanAIRequired] = None
 
 class ApplyReplanResponse(BaseModel):
     success: bool

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../components/ai_economy_sheets.dart';
 import '../components/noya_companion_view.dart';
 import '../components/noya_thinking.dart';
 import '../components/plan_diff_view.dart';
@@ -48,6 +49,7 @@ class _ChatMessage {
   final bool isError;
   final String? retryText; // the preserved request, resent by "Try again"
   final ReplanClarification? clarification; // Noya needs a detail: its options are shown under the question
+  final bool resting; // Noya can't use AI for this message right now (no Shield / declined): sleepy, never an error
   final DateTime timestamp;
 
   _ChatMessage({
@@ -57,6 +59,7 @@ class _ChatMessage {
     this.isError = false,
     this.retryText,
     this.clarification,
+    this.resting = false,
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
 }
@@ -83,6 +86,7 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
 
   final List<_ChatMessage> _messages = [];
   bool _isLoading = false;
+  bool _awaitingShield = false; // the Shield confirmation is open: no second send, no stacked sheet
   bool _isApplying = false;
   bool _planExpanded = false;
   bool get _hasConversation => _messages.any((m) => m.isUser);
@@ -138,7 +142,7 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
 
   Future<void> _sendMessage(String text, {Map<String, dynamic>? quickAdd, String? display, _ChatMessage? retryOf}) async {
     final trimmed = text.trim();
-    if ((trimmed.isEmpty && quickAdd == null) || _isLoading) return;
+    if ((trimmed.isEmpty && quickAdd == null) || _isLoading || _awaitingShield) return;
 
     setState(() {
       if (retryOf != null) {
@@ -153,11 +157,58 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
 
     try {
       final provider = Provider.of<AppStateProvider>(context, listen: false);
-      final response = await provider.replanDay(
+      // One id per submission: the confirmed resend reuses it, so the server can never charge a Shield twice.
+      final requestId = 'rp-${DateTime.now().microsecondsSinceEpoch}';
+      var response = await provider.replanDay(
         date: widget.selectedDate,
         message: trimmed,
         quickAdd: quickAdd,
+        idempotencyKey: requestId,
       );
+
+      // The server found this message needs AI. Nothing was sent to the model or charged: ask first, BEFORE the call.
+      var need = response.aiRequired;
+      if (need != null) {
+        if (!mounted) return;
+        if (!need.canAfford) {
+          _noyaRests(
+              "Noya can't use AI for this one right now: it needs ${need.shieldCost} Shield and you don't have one. "
+              'Your message is still here. A simpler instruction like “skip gym” or “move gym to 8” works without AI.');
+          return;
+        }
+        setState(() {
+          _isLoading = false;
+          _awaitingShield = true;
+        });
+        final confirmed = await showShieldConfirmationSheet(
+          context,
+          shieldsAvailable: need.shieldsAvailable,
+          shieldCost: need.shieldCost,
+          title: 'Use ${need.shieldCost} Shield${need.shieldCost == 1 ? '' : 's'} to let Noya reshape your day?',
+          reason: 'Noya can reshape your day using ${need.shieldCost} Shield${need.shieldCost == 1 ? '' : 's'}.',
+          detail: "Noya needs AI to understand this one. Nothing is used if she can't finish.",
+          cancelLabel: 'Cancel',
+        );
+        if (!mounted) return;
+        setState(() => _awaitingShield = false);
+        if (!confirmed) {
+          _noyaRests('No problem, no Shield was used. Your message is still here.');
+          return;
+        }
+        setState(() => _isLoading = true);
+        response = await provider.replanDay(
+          date: widget.selectedDate,
+          message: trimmed,
+          quickAdd: quickAdd,
+          aiConsent: true,
+          idempotencyKey: requestId,
+        );
+        need = response.aiRequired;
+        if (need != null) {
+          _noyaRests("Noya couldn't use AI for this one just now, and no Shield was used. Your message is still here.");
+          return;
+        }
+      }
 
       final diff = response.planDiff;
       final clarification = diff.clarification;
@@ -205,6 +256,17 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
         FlowHaptics.selection();
       }
     }
+  }
+
+  /// Noya sleeps instead of failing: the message stays in the composer, nothing was charged, no proposal is made.
+  void _noyaRests(String text) {
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+      _messages.add(_ChatMessage(isUser: false, text: text, resting: true));
+    });
+    _scrollToBottom();
+    FlowHaptics.selection();
   }
 
   /// A tap on one of Noya's task-specific options: send it as the user's reply, or hand the half-written
@@ -666,9 +728,9 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Padding(
-                padding: EdgeInsets.only(top: 2, right: 8),
-                child: NoyaCompanionView(state: NoyaState.idle, size: 28),
+              Padding(
+                padding: const EdgeInsets.only(top: 2, right: 8),
+                child: NoyaCompanionView(state: msg.resting ? NoyaState.sleepy : NoyaState.idle, size: 28),
               ),
               Flexible(
                 child: Container(

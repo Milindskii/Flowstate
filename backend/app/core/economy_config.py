@@ -41,6 +41,8 @@ INITIAL_SHIELDS: int = 2
 # Server-authoritative (ai_gateway charges exactly this many in one conditional UPDATE); /ai/status reports it
 # so the app never hard-codes the price.
 SHIELD_COST_BUILD_MY_DAY: int = 2
+# Shields a free-tier user pays for one AI-understood Replan (rules-only Replan is always free; Pro never pays).
+SHIELD_COST_AI_REPLAN: int = 1
 
 # Level Progression Table (Deterministic XP thresholds)
 # Level 1: 0, Level 2: 60, Level 3: 150, Level 4: 270, Level 5: 420 (Young evolution)

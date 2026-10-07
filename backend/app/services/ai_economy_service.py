@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
-from ..core.economy_config import SHIELD_COST_BUILD_MY_DAY
+from ..core.economy_config import SHIELD_COST_AI_REPLAN, SHIELD_COST_BUILD_MY_DAY
 from ..models.ai_usage import AIUsageRecord, AIPlanningAttempt
 from ..models.flow_progression import FlowProfile
 from ..models.user import User
@@ -120,6 +120,7 @@ class AIEconomyService:
             can_plan_free=can_plan_free,
             requires_shield=requires_shield,
             shield_cost=SHIELD_COST_BUILD_MY_DAY,
+            replan_shield_cost=SHIELD_COST_AI_REPLAN,
             can_afford_shield_plan=shields >= SHIELD_COST_BUILD_MY_DAY,
             subscription_tier=usage.subscription_tier,
             subscription_status=usage.subscription_status,

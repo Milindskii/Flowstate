@@ -36,8 +36,14 @@ class CalendarService {
     String? timezone,
     /// A structured new task ("Urgent work arrived"): sent as typed, never parsed from prose.
     Map<String, dynamic>? quickAdd,
+    /// The user's explicit OK to spend a Shield on AI understanding (consent only: the server owns price and balance).
+    bool aiConsent = false,
+    /// One id per composer submission; the confirm resend reuses it so the server can never charge twice.
+    String? idempotencyKey,
   }) async {
     final body = <String, dynamic>{
+      if (aiConsent) 'ai_consent': true,
+      if (idempotencyKey != null) 'idempotency_key': idempotencyKey,
       'selected_date': dateStr,
       'user_message': message,
       if (quickAdd != null) 'quick_add': quickAdd,

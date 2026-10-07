@@ -162,6 +162,10 @@ Future<bool> showShieldConfirmationSheet(
   required int shieldsAvailable,
   int shieldCost = AIUsageStatus.defaultShieldCost,
   int freeRemaining = 0,
+  String? title,
+  String? reason,
+  String? detail,
+  String? cancelLabel,
 }) async {
   if (_shieldSheetOpen) return false;
   _shieldSheetOpen = true;
@@ -178,6 +182,10 @@ Future<bool> showShieldConfirmationSheet(
       shieldsAvailable: shieldsAvailable,
       shieldCost: shieldCost,
       freeRemaining: freeRemaining,
+      title: title,
+      reason: reason,
+      detail: detail,
+      cancelLabel: cancelLabel,
     ),
     );
   } finally {
@@ -190,11 +198,19 @@ class _ShieldConfirmationSheet extends StatefulWidget {
   final int shieldsAvailable;
   final int shieldCost;
   final int freeRemaining;
+  final String? title;
+  final String? reason;
+  final String? detail;
+  final String? cancelLabel;
 
   const _ShieldConfirmationSheet({
     required this.shieldsAvailable,
     this.shieldCost = AIUsageStatus.defaultShieldCost,
     this.freeRemaining = 0,
+    this.title,
+    this.reason,
+    this.detail,
+    this.cancelLabel,
   });
 
   @override
@@ -263,7 +279,7 @@ class _ShieldConfirmationSheetState extends State<_ShieldConfirmationSheet> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Use ${_shieldCount(cost)}?',
+                    widget.title ?? 'Use ${_shieldCount(cost)}?',
                     style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context))
                         .copyWith(fontWeight: FontWeight.w700),
                   ),
@@ -282,14 +298,15 @@ class _ShieldConfirmationSheetState extends State<_ShieldConfirmationSheet> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Noya can plan this for you using ${_shieldCount(cost)}.',
+                    widget.reason ?? 'Noya can plan this for you using ${_shieldCount(cost)}.',
                     key: const Key('shield_reason_text'),
                     style: FlowTypography.bodyMedium(color: FlowColors.textPrimaryOf(context))
                         .copyWith(fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Your free AI plan is used up. Nothing is charged if Noya can\'t finish the plan.\nShields also protect your Flow streak if you ever miss a day.',
+                    widget.detail ??
+                        'Your free AI plan is used up. Nothing is charged if Noya can\'t finish the plan.\nShields also protect your Flow streak if you ever miss a day.',
                     style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(height: 1.4),
                   ),
                   const SizedBox(height: 10),
@@ -322,7 +339,7 @@ class _ShieldConfirmationSheetState extends State<_ShieldConfirmationSheet> {
                       shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
-                    child: Text('Not now', style: FlowTypography.labelLarge(color: FlowColors.textMutedOf(context))),
+                    child: Text(widget.cancelLabel ?? 'Not now', style: FlowTypography.labelLarge(color: FlowColors.textMutedOf(context))),
                   ),
                 ),
                 const SizedBox(width: 12),

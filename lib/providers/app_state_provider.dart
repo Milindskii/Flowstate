@@ -1660,6 +1660,8 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     required DateTime date,
     required String message,
     Map<String, dynamic>? quickAdd,
+    bool aiConsent = false,
+    String? idempotencyKey,
   }) {
     // Noya shows "thinking" from the moment the work starts until it settles (success, error or timeout).
     return busy.track(() async {
@@ -1673,6 +1675,8 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         currentLocalTime: now,
         timezone: timezone,
         quickAdd: quickAdd,
+        aiConsent: aiConsent,
+        idempotencyKey: idempotencyKey,
       );
     }, label: 'Rearranging your day');
   }

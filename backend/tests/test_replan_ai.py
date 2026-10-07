@@ -69,7 +69,7 @@ def op(kind, task_ref=None, **kw):
 async def _replan_raw(ac, h, message):
     return await ac.post("/api/v1/ai/replan", headers=h, json={
         "selected_date": "2026-10-05", "user_message": message, "current_local_time": NOW.isoformat(),
-        "timezone": "Asia/Kolkata"})
+        "timezone": "Asia/Kolkata", "ai_consent": True})
 
 
 # ── deterministic first: obvious messages never reach the model ──────────────

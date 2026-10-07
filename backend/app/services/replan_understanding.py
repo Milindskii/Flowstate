@@ -11,7 +11,7 @@ Outcomes:
   * nothing recognised     -> ``None`` (the caller keeps the generic message)
 """
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, time
 from typing import Callable, List, Optional, Sequence
 
@@ -38,6 +38,7 @@ _CANT = re.compile(
     r"don'?t (?:want|feel like)|isn'?t happening|am not|i'?m not|"
     r"(?:don'?t|do not) have (?:the |enough |any )?time (?:for|to)|no time (?:for|to)|can'?t fit)\b")
 # "I don't have time for X": X leaves today's remaining plan (deferred), it is not abandoned
+_WINDOW_END = re.compile(r"\s*(?:until|till|to|-)\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?(?!\s*(?:min|mins|minutes?|h|hr|hrs|hours?)\b)")
 _NO_TIME = re.compile(r"\b(?:(?:don'?t|do not) have (?:the |enough |any )?time|no time|can'?t fit)\b")
 _MOVE = re.compile(
     r"\b(?:move|moving|push|pushing|shift|reschedule|rescheduling|postpone|bump|delay)\b|"
@@ -64,6 +65,9 @@ class Understanding:
     clarification: Optional[ReplanClarification] = None
     # True when the rules could not tell what the user wants (a generic question): a smarter reader may do better
     vague: bool = False
+    # Things the reader could not do while still understanding the rest ("I need a time for Gym"): shown as notes
+    # next to the proposal instead of discarding the actions that were clear.
+    notes: List[str] = field(default_factory=list)
 
 
 def normalise(message: str) -> str:
@@ -234,11 +238,20 @@ def understand(message: str, entities: Sequence[PlanItem], meta: Callable[[PlanI
                 op="move_task_time", task_query=title, target_time=hh, constraint_type="not_before", intent="rescheduled")])
         m_time = _TIME.search(text)
         if m_time:
-            hh = _resolve_clock(int(m_time.group(1)), int(m_time.group(2) or 0), (m_time.group(3) or "").replace(".", "") or None,
-                                now, target_is_today)
+            # "to 7 PM until 9 PM" / "to 7 to 9 pm": a window sets the block's end (and so its length) too
+            m_end = _WINDOW_END.match(text[m_time.end():])
+            start_ap = (m_time.group(3) or (m_end.group(3) if m_end else None) or "").replace(".", "") or None
+            hh = _resolve_clock(int(m_time.group(1)), int(m_time.group(2) or 0), start_ap, now, target_is_today)
             if hh is None:
                 return ask(f"I couldn't read that time. What time should I move {title} to?", _opts_for(it))
-            return Understanding(operations=[ReplanOperation(op="move_task_time", task_query=title, target_time=hh, intent="rescheduled")])
+            end = None
+            if m_end:
+                end = _resolve_clock(int(m_end.group(1)), int(m_end.group(2) or 0),
+                                     (m_end.group(3) or start_ap or "").replace(".", "") or None, now, target_is_today)
+                if end is not None and end <= hh:
+                    end = None
+            return Understanding(operations=[ReplanOperation(
+                op="move_task_time", task_query=title, target_time=hh, end_time=end, intent="rescheduled")])
         m_day = _DAY.search(text)
         if m_day:
             return Understanding(operations=[ReplanOperation(

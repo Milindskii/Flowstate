@@ -264,3 +264,30 @@ def test_40_way_race_for_exactly_one_price_of_shields_has_one_winner_and_never_g
     with SessionLocal() as db:  # the winner's failure gives the whole price back once, however often it is reported
         assert [ai_gateway.fail(db, winners[0], "timeout") for _ in range(3)] == [True, False, False]
         assert db.query(FlowProfile).filter(FlowProfile.user_id == uid).one().shields_available == SHIELD_COST_BUILD_MY_DAY
+
+
+def test_40_way_race_for_one_replan_shield_has_one_winner_and_refunds_exactly_once():
+    from app.core.economy_config import SHIELD_COST_AI_REPLAN
+
+    uid, _ = make_user()
+    with SessionLocal() as db:
+        AIEconomyService.get_or_create_usage(db, uid)
+        AIEconomyService.get_or_create_profile(db, uid).shields_available = SHIELD_COST_AI_REPLAN
+        db.commit()
+
+    def begin_replan(i):
+        with SessionLocal() as db:
+            return ai_gateway.begin_replan(db, user_id=uid, idempotency_key=f"rp-race-{i}", fingerprint="f")
+
+    got = _race(begin_replan)
+    winners = [g for g in got if isinstance(g, ai_gateway.Ticket)]
+    assert len(winners) == 1 and winners[0].charge_source == ai_gateway.REPLAN_SHIELD
+    assert all(isinstance(g, Exception) for g in got if g not in winners), "every loser is refused, none gets AI"
+    with SessionLocal() as db:
+        assert db.query(FlowProfile).filter(FlowProfile.user_id == uid).one().shields_available == 0
+        assert db.query(AIUsagePeriod).filter(AIUsagePeriod.user_id == uid, AIUsagePeriod.period_kind == "replan_day").one().used == 1
+
+    with SessionLocal() as db:  # a failure gives back the Shield AND the budget unit, once
+        assert [ai_gateway.fail(db, winners[0], "no_understanding") for _ in range(3)] == [True, False, False]
+        assert db.query(FlowProfile).filter(FlowProfile.user_id == uid).one().shields_available == SHIELD_COST_AI_REPLAN
+        assert db.query(AIUsagePeriod).filter(AIUsagePeriod.user_id == uid, AIUsagePeriod.period_kind == "replan_day").one().used == 0

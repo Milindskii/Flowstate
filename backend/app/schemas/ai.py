@@ -29,6 +29,7 @@ class AIUsageStatus(BaseModel):
     shields_available: int = 2
     can_plan_free: bool = True
     requires_shield: bool = False
+    replan_shield_cost: int = 1   # Shields one AI-understood Replan costs (rules-only Replan is free)
     shield_cost: int = 2          # Shields one AI plan costs once the free use is gone (server-owned)
     can_afford_shield_plan: bool = False
     subscription_tier: str = "free"
