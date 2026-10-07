@@ -397,15 +397,10 @@ class _CalendarTabState extends State<CalendarTab> {
       dayComplete: daySchedule?.dayComplete,
       onClaimTrophy: state.isAuthenticated
           ? () async {
+              // the sheet shows the result; a failure throws so it can offer a retry
               final res = await state.claimDayComplete(selectedDate);
               if (res == null) throw StateError('not claimed');
               FlowHaptics.success();
-              if (context.mounted) {
-                final xp = (res['xp_awarded'] as num?)?.toInt() ?? 0;
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                  content: Text(xp > 0 ? 'Noya earned +$xp XP for finishing the day.' : 'Already collected for this day.'),
-                ));
-              }
             }
           : null,
       reflectionFor: (item) => state.reflectionFor(item.taskId ?? item.id) ?? state.reflectionFor(item.id),

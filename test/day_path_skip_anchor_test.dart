@@ -87,11 +87,10 @@ void main() {
       expect(skipped.stops.map((s) => s.id), ['sched-A', 'sched-B', 'sched-C', 'sched-D'], reason: 'B did not reorder');
       expect(_centers(skipped), _centers(planned), reason: 'every stop keeps its exact position');
       expect(skipped.stops[1].role, StopRouteRole.skipped);
-      expect(skipped.stops.where((s) => s.onRoute).map((s) => s.id), ['sched-A', 'sched-C', 'sched-D']);
-      expect(skipped.distanceToRoute(skipped.stops[1].center), greaterThan(DayRouteGeometry.nodeRadius),
-          reason: 'the route goes around B');
-      expect(planned.sameRoute(skipped), isFalse, reason: 'only the route changed');
-      expect(planned.layoutSignature, skipped.layoutSignature, reason: 'same stops: the route morphs, nothing remounts');
+      expect(skipped.distanceToRoute(skipped.stops[1].center), lessThan(0.5), reason: 'the route still runs through B');
+      expect(skipped.sampleXs, planned.sampleXs, reason: 'skipping changes B\'s node, never the road');
+      expect(planned.sameRoute(skipped), isFalse, reason: 'B\'s state changed');
+      expect(planned.layoutSignature, skipped.layoutSignature, reason: 'same stops: nothing remounts');
     });
 
     test('manual skip that moved B to ANOTHER DAY: the history node is the stop, same id, same place', () {
@@ -111,7 +110,8 @@ void main() {
       expect(bypassed.stops.map((s) => s.id), planned.stops.map((s) => s.id));
       expect(_centers(bypassed), _centers(planned));
       expect(bypassed.stops[1].role, StopRouteRole.bypassed);
-      expect(bypassed.stops.where((s) => s.onRoute).map((s) => s.id), ['sched-A', 'sched-C', 'sched-D']);
+      expect(bypassed.distanceToRoute(bypassed.stops[1].center), lessThan(0.5), reason: 'the road still runs through B');
+      expect(bypassed.sampleXs, planned.sampleXs);
       expect(planned.sameRoute(bypassed), isFalse);
     });
 
@@ -126,7 +126,7 @@ void main() {
       expect(redone.stops[1].role, StopRouteRole.bypassed);
     });
 
-    test('recovery: B completed after being skipped stays at its original place and the detour reaches it', () {
+    test('recovery: B completed after being skipped stays at its original place; the orange state is on the same road', () {
       final planned = _geo(_stops([_a(), _b(), _c(), _d()]));
       // completed later today (session at +7h); the skipped history node is still at +2h
       final recovered = _geo(_stops(
@@ -138,9 +138,9 @@ void main() {
       expect(recovered.layoutSignature, planned.layoutSignature);
       expect(_centers(recovered), _centers(planned));
       expect(recovered.stops[1].role, StopRouteRole.recovered);
-      expect(recovered.detours.single.stopId, 'sched-B');
-      final b = recovered.stops[1].center;
-      expect(recovered.detours.single.points.any((p) => (p - b).distance < 0.5), isTrue);
+      expect(recovered.sampleXs, planned.sampleXs, reason: 'no separate shortcut: the very same road');
+      expect(recovered.distanceToRoute(recovered.stops[1].center), lessThan(0.5));
+      expect(recovered.sampleStates, contains(RouteSegmentState.recovered));
     });
 
     test('positions stay put through the whole life of B: planned -> skipped -> recovered', () {

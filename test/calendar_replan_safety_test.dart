@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -184,7 +184,7 @@ void main() {
     return present;
   }
 
-  testWidgets('FIX 1: Replan moves B and collaterally C: both take their new places; skipped D keeps its stop',
+  testWidgets('FIX 1: Replan moves B and collaterally C: B takes new place; C keeps anchor; skipped D keeps stop',
       (tester) async {
     final server = _Server();
     final provider = await pump(tester, server);
@@ -216,12 +216,12 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(order(tester, ['A', 'B', 'C', 'D']), ['A', 'D', 'B', 'C'],
-        reason: 'B and C are drawn at their new 12:00 / 12:30 slots, D stays as its skipped history stop');
+    expect(order(tester, ['A', 'B', 'C', 'D']), ['A', 'C', 'D', 'B'],
+        reason: 'B takes its new 12:00 slot, C keeps its collateral anchor, D stays as its skipped history stop');
     expect(stop('D'), findsOneWidget, reason: 'skipped is not deleted');
     final anchors = provider.dayPathAnchorsFor(_day);
     expect(anchors['B']?.anchor, _at(12));
-    expect(anchors['C']?.anchor, _at(12, 30), reason: 'no stale 10:00 anchor for the collateral move');
+    expect(anchors['C']?.anchor, _at(10), reason: 'collateral move keeps its original 10:00 anchor');
     expect(anchors['D']?.anchor, _at(11), reason: 'the skip keeps D anchored at its original 11:00 slot');
 
     // a later re-read (clock tick / resume) keeps the new plan where it is

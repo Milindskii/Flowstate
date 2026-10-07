@@ -1,4 +1,5 @@
 import 'package:intl/intl.dart';
+import '../engines/day_path_order.dart';
 import 'schedule_item.dart';
 import 'today_model.dart';
 
@@ -62,33 +63,14 @@ class DayScheduleResponse {
     this.dayComplete = const DayCompleteStatus(),
   });
 
-  DayScheduleResponse withDayComplete(DayCompleteStatus status) => DayScheduleResponse(
-        date: date,
-        isToday: isToday,
-        isPast: isPast,
-        timeline: timeline,
-        fixedCommitments: fixedCommitments,
-        completedTasks: completedTasks,
-        remainingTasks: remainingTasks,
-        unscheduledTasks: unscheduledTasks,
-        deviations: deviations,
-        conflicts: conflicts,
-        workload: workload,
-        focusWindow: focusWindow,
-        readinessScore: readinessScore,
-        totalPlannedMinutes: totalPlannedMinutes,
-        remainingCapacityMinutes: remainingCapacityMinutes,
-        dayComplete: status,
-      );
-
-  /// The same day with its task lists replaced (everything else is carried over untouched).
-  DayScheduleResponse withItems({
+  DayScheduleResponse _copy({
     List<ScheduleItem>? timeline,
     List<ScheduleItem>? fixedCommitments,
     List<ScheduleItem>? completedTasks,
     List<ScheduleItem>? remainingTasks,
     List<ScheduleItem>? unscheduledTasks,
     List<ScheduleItem>? deviations,
+    DayCompleteStatus? dayComplete,
   }) =>
       DayScheduleResponse(
         date: date,
@@ -106,8 +88,44 @@ class DayScheduleResponse {
         readinessScore: readinessScore,
         totalPlannedMinutes: totalPlannedMinutes,
         remainingCapacityMinutes: remainingCapacityMinutes,
-        dayComplete: dayComplete,
+        dayComplete: dayComplete ?? this.dayComplete,
       );
+
+  /// The same day with its task lists replaced (everything else is carried over untouched).
+  DayScheduleResponse withItems({
+    List<ScheduleItem>? timeline,
+    List<ScheduleItem>? fixedCommitments,
+    List<ScheduleItem>? completedTasks,
+    List<ScheduleItem>? remainingTasks,
+    List<ScheduleItem>? unscheduledTasks,
+    List<ScheduleItem>? deviations,
+  }) =>
+      _copy(
+        timeline: timeline,
+        fixedCommitments: fixedCommitments,
+        completedTasks: completedTasks,
+        remainingTasks: remainingTasks,
+        unscheduledTasks: unscheduledTasks,
+        deviations: deviations,
+      );
+
+  DayScheduleResponse withDayComplete(DayCompleteStatus status) => _copy(dayComplete: status);
+
+  /// This day without [taskId]: the live items of that task (and, with [includeHistory], its skipped / missed
+  /// history nodes too). Used to show a delete or a move to another day at once, before the server has answered.
+  /// A history node is kept by default: a skipped task that moved away still has its stop on this day.
+  DayScheduleResponse withoutTask(String taskId, {bool includeHistory = false}) {
+    List<ScheduleItem> drop(List<ScheduleItem> items) =>
+        [for (final i in items) if (dayPathTaskKey(i) != taskId) i];
+    return _copy(
+      timeline: drop(timeline),
+      fixedCommitments: drop(fixedCommitments),
+      completedTasks: drop(completedTasks),
+      remainingTasks: drop(remainingTasks),
+      unscheduledTasks: drop(unscheduledTasks),
+      deviations: includeHistory ? drop(deviations) : null,
+    );
+  }
 
   factory DayScheduleResponse.fromJson(Map<String, dynamic> json) {
     final rawTimeline = json['timeline'] as List? ?? [];

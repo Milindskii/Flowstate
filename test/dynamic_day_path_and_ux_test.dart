@@ -51,7 +51,7 @@ void main() {
     final ya = g.stopById(a).center.dy, yb = g.stopById(b).center.dy;
     final flags = [
       for (var i = 0; i < g.sampleYs.length; i++)
-        if (g.sampleYs[i] > ya && g.sampleYs[i] < yb) g.sampleTraveled[i]
+        if (g.sampleYs[i] > ya && g.sampleYs[i] < yb) g.sampleStates[i] == RouteSegmentState.traveled
     ];
     return flags.isNotEmpty && flags.every((t) => t);
   }
@@ -111,7 +111,7 @@ void main() {
       }
     });
 
-    testWidgets('2 & 3. Skip B -> route physically bypasses B, B is visible as yellow skipped/deferred', (WidgetTester tester) async {
+    testWidgets('2 & 3. Skip B -> B is a yellow skipped node and the road runs on through it', (WidgetTester tester) async {
       final items = [
         makeItem(id: 'item-a', title: 'Task A', time: '9:00', period: 'AM', durationMinutes: 30),
         makeItem(id: 'item-b', title: 'Task B', time: '11:00', period: 'AM', durationMinutes: 45, isSkipped: true),
@@ -136,14 +136,13 @@ void main() {
       expect(find.byKey(const Key('path_skipped_item-b')), findsOneWidget);
       expect(find.textContaining('Skipped'), findsOneWidget);
 
-      // The route physically bends around B: it never passes through the node, yet still reaches A, C and D.
+      // The road is continuous: it runs through B (and A, C, D) and stays the normal blue, not removed or bent away.
       final g = paintedGeometry(tester);
       expect(g.stopById('item-b').role, StopRouteRole.skipped);
-      expect(g.distanceToRoute(g.stopById('item-b').center), greaterThanOrEqualTo(DayRouteGeometry.bypassClearance - 3));
-      for (final id in ['item-a', 'item-c', 'item-d']) {
+      for (final id in ['item-a', 'item-b', 'item-c', 'item-d']) {
         expect(g.distanceToRoute(g.stopById(id).center), lessThan(0.5));
       }
-      expect(g.spurs.map((x) => x.stopId), contains('item-b'));
+      expect(g.sampleStates.every((s) => s == RouteSegmentState.ahead), isTrue, reason: 'nothing walked: all blue');
     });
 
     testWidgets('4. Complete A -> A and traveled segment become green', (WidgetTester tester) async {
@@ -199,10 +198,11 @@ void main() {
       expect(find.byKey(const Key('path_check_item-a')), findsOneWidget);
       expect(find.byKey(const Key('path_skipped_item-b')), findsOneWidget);
       expect(find.byKey(const Key('path_check_item-c')), findsOneWidget);
-      // The route that bends around B was traveled from A to C (green), and stays blue beyond.
+      // A -> B is still the blue road into the skipped stop; B -> C was walked (green); beyond C it is blue.
       final g = paintedGeometry(tester);
       expect(g.stopById('item-b').role, StopRouteRole.skipped);
-      expect(traveledBetween(g, 'item-a', 'item-c'), isTrue);
+      expect(traveledBetween(g, 'item-a', 'item-b'), isFalse);
+      expect(traveledBetween(g, 'item-b', 'item-c'), isTrue);
       expect(traveledBetween(g, 'item-c', 'item-d'), isFalse);
     });
 
@@ -237,13 +237,20 @@ void main() {
 
       expect(find.byKey(const Key('path_check_item-b')), findsOneWidget);
       expect(find.textContaining('Recovered'), findsOneWidget);
-      // History is kept: the route still bends around B, and a real orange detour runs through it.
+      // History is kept: B is marked recovered and the road into it is orange, on the very same line as the rest.
       final g = paintedGeometry(tester);
       final b = g.stopById('item-b');
       expect(b.role, StopRouteRole.recovered);
-      expect(g.distanceToRoute(b.center), greaterThanOrEqualTo(DayRouteGeometry.bypassClearance - 3));
-      expect(g.detours.single.stopId, 'item-b');
-      expect(g.detours.single.points.any((p) => (p - b.center).distance < 1), isTrue);
+      expect(g.distanceToRoute(b.center), lessThan(0.5));
+      final orange = [
+        for (var i = 0; i < g.sampleYs.length; i++)
+          if (g.sampleStates[i] == RouteSegmentState.recovered) Offset(g.sampleXs[i], g.sampleYs[i])
+      ];
+      expect(orange, isNotEmpty);
+      for (final p in orange) {
+        expect(g.distanceToRoute(p), lessThan(1e-6), reason: 'orange follows the canonical route');
+        expect(p.dy, inInclusiveRange(g.stopById('item-a').center.dy, b.center.dy));
+      }
     });
 
     testWidgets('7. Unresolved task past sleep boundary -> red cross', (WidgetTester tester) async {
