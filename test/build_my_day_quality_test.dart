@@ -145,7 +145,7 @@ const _ambiguous = 'I need to get that project thing done sometime before my mee
 
 const _guest = AuthUser(id: 'guest_demo', email: 'demo@flowstate.local', name: 'Demo', onboardingCompleted: true);
 
-Future<void> _openAndBuild(WidgetTester tester, _PlanApi api, {AuthUser? as}) async {
+Future<void> _openAndBuild(WidgetTester tester, _PlanApi api, {AuthUser? as, String? text}) async {
   const signedIn = AuthUser(id: 'user-bmdq', email: 'q@flowstate.local', name: 'Q', onboardingCompleted: true);
   final user = as ?? signedIn;
   final appState = AppStateProvider(customApi: api, initialUser: user);
@@ -167,7 +167,7 @@ Future<void> _openAndBuild(WidgetTester tester, _PlanApi api, {AuthUser? as}) as
   ));
   await tester.tap(find.text('Open'));
   await tester.pumpAndSettle();
-  await tester.enterText(find.byKey(const Key('brain_dump_text_field')), _ambiguous);
+  await tester.enterText(find.byKey(const Key('brain_dump_text_field')), text ?? _ambiguous);
   await tester.pump();
   await tester.tap(find.byKey(const Key('brain_dump_build_button')));
   await tester.pumpAndSettle();
@@ -183,12 +183,12 @@ void main() {
     });
     tearDown(() => FlowClock().stopTimer());
 
-    testWidgets('AI failure keeps dump and shows Retry with AI + Use basic planner', (tester) async {
+    testWidgets('AI failure keeps dump and shows Try again + Plan it myself', (tester) async {
       final api = _PlanApi(failCode: 'gemini_error');
       await _openAndBuild(tester, api);
-      expect(find.textContaining('AI planning failed'), findsOneWidget);
-      expect(find.text('Retry with AI'), findsOneWidget);
-      expect(find.text('Use basic planner'), findsOneWidget);
+      expect(find.text("Noya's taking a little nap"), findsOneWidget);
+      expect(find.text('Try again'), findsOneWidget);
+      expect(find.text('Plan it myself'), findsOneWidget);
       expect(find.text(_ambiguous), findsOneWidget); // raw dump preserved
       expect(find.text('YOUR PLAN'), findsNothing); // never silently replaced by a local plan
     });
@@ -201,9 +201,9 @@ void main() {
       expect(api.reports, isEmpty, reason: 'nothing is sent to the server either');
       expect(find.text('Sign in to use AI planning'), findsOneWidget);
       expect(find.byKey(const Key('sign_in_for_ai_button')), findsOneWidget);
-      expect(find.text('Use basic planner'), findsOneWidget);
-      expect(find.text('Retry with AI'), findsNothing);
-      expect(find.textContaining('AI planning failed'), findsNothing, reason: 'signing in is not a failure');
+      expect(find.text('Plan it myself'), findsOneWidget);
+      expect(find.text('Try again'), findsNothing);
+      expect(find.textContaining("Noya's taking a little nap"), findsNothing, reason: 'signing in is not a failure');
       expect(find.textContaining('Gemini'), findsNothing);
       expect(find.text(_ambiguous), findsOneWidget); // dump preserved
       expect(find.text('YOUR PLAN'), findsNothing); // never silently replaced by a local plan
@@ -212,7 +212,8 @@ void main() {
     testWidgets('signed out: basic planner is explicit, labelled, and still makes no AI call', (tester) async {
       final api = _PlanApi();
       await _openAndBuild(tester, api, as: _guest);
-      await tester.tap(find.text('Use basic planner'));
+      await tester.ensureVisible(find.text('Plan it myself'));
+      await tester.tap(find.text('Plan it myself'));
       await tester.pumpAndSettle();
       expect(find.text('Basic plan (not AI)'), findsOneWidget);
       expect(find.text('Enhanced with AI'), findsNothing);
@@ -221,34 +222,35 @@ void main() {
     });
 
     testWidgets('each failure code explains itself and never claims Gemini was unreachable', (tester) async {
-      const expected = {
-        'provider_unavailable': 'busy',
-        'provider_quota': 'capacity',
-        'model_not_found': 'temporarily unavailable',
-        'provider_auth': 'temporarily unavailable',
-        'timeout': 'too long',
-        'network': 'unreachable',
-        'ai_busy': 'busy',
-        'rate_limited': 'planning limit',
-        'request_in_progress': 'still working',
-        'pro_cap_day': "today's fair-use",
-        'pro_cap_month': "month's fair-use",
-        'offline': "couldn't connect",
-        'server_error': 'having trouble',
-      };
-      for (final entry in expected.entries) {
-        final api = _PlanApi(failCode: entry.key);
+      const codes = [
+        'provider_unavailable',
+        'provider_quota',
+        'model_not_found',
+        'provider_auth',
+        'timeout',
+        'network',
+        'ai_busy',
+        'rate_limited',
+        'request_in_progress',
+        'pro_cap_day',
+        'pro_cap_month',
+        'offline',
+        'server_error',
+      ];
+      for (final code in codes) {
+        final api = _PlanApi(failCode: code);
         await _openAndBuild(tester, api);
-        expect(find.textContaining('AI planning failed'), findsOneWidget, reason: entry.key);
-        expect(find.textContaining(entry.value), findsOneWidget, reason: entry.key);
-        expect(find.textContaining("couldn't be reached"), findsNothing, reason: entry.key);
-        expect(find.textContaining('Gemini'), findsNothing, reason: '${entry.key}: provider names never reach the user');
-        expect(find.textContaining('HTTP'), findsNothing, reason: entry.key);
+        expect(find.text("Noya's taking a little nap"), findsOneWidget, reason: code);
+        expect(find.textContaining("Something went wrong while planning your day"), findsOneWidget, reason: code);
+        expect(find.textContaining("couldn't be reached"), findsNothing, reason: code);
+        expect(find.textContaining('Gemini'), findsNothing, reason: '$code: provider names never reach the user');
+        expect(find.textContaining('HTTP'), findsNothing, reason: code);
         for (final banned in ['AI service', 'provider', 'quota', 'misconfigured', 'model', 'Google', 'server error']) {
-          expect(find.textContaining(banned), findsNothing, reason: '${entry.key}: "$banned" is internal terminology');
+          expect(find.textContaining(banned), findsNothing, reason: '$code: "$banned" is internal terminology');
         }
-        expect(find.text(_ambiguous), findsOneWidget, reason: '${entry.key}: dump preserved');
-        expect(find.text('Retry with AI'), findsOneWidget, reason: entry.key);
+        expect(find.text(_ambiguous), findsOneWidget, reason: '$code: dump preserved');
+        expect(find.text('Try again'), findsOneWidget, reason: code);
+        expect(find.text('Plan it myself'), findsOneWidget, reason: code);
         await tester.pumpWidget(const SizedBox());
       }
     });
@@ -258,7 +260,8 @@ void main() {
       await _openAndBuild(tester, api);
       final plansBefore = api.planCalls;
       final statusBefore = api.statusCalls;
-      await tester.tap(find.text('Use basic planner'));
+      await tester.ensureVisible(find.text('Plan it myself'));
+      await tester.tap(find.text('Plan it myself'));
       await tester.pumpAndSettle();
       expect(find.text('YOUR PLAN'), findsOneWidget);
       expect(find.text('Basic plan (not AI)'), findsOneWidget);
@@ -271,7 +274,8 @@ void main() {
       final api = _PlanApi(failCode: 'gemini_error');
       await _openAndBuild(tester, api);
       api.failCode = null;
-      await tester.tap(find.text('Retry with AI'));
+      await tester.ensureVisible(find.text('Try again'));
+      await tester.tap(find.text('Try again'));
       await tester.pumpAndSettle();
       expect(api.planCalls, 2);
       expect(api.requestIds[0], isNotNull);
@@ -445,6 +449,43 @@ void main() {
     test('the AI plan call outlives the backend fallback chain; ordinary calls keep 12s', () {
       expect(ApiService.postTimeoutFor('/api/v1/ai/plan'), greaterThanOrEqualTo(const Duration(seconds: 40)));
       expect(ApiService.postTimeoutFor('/api/v1/tasks'), const Duration(seconds: 12));
+    });
+  });
+
+  group('Conversational brain dump routing & failure state (Task Item 10)', () {
+    const conversationalDump =
+        "I need to finish my ML assignment because it is due tomorrow morning and it will take about 2 hours. "
+        "I also need to write two college observation records, then stick the CN pictures after the observations. "
+        "I want one proper block for Flowstate work. I have to go out from 6:30 PM to 8:30 PM. I also need dinner and breaks.";
+
+    testWidgets('conversational brain dump routes to /api/v1/ai/plan when authenticated', (tester) async {
+      final api = _PlanApi();
+      await _openAndBuild(tester, api, text: conversationalDump);
+      expect(api.planCalls, 1, reason: 'Gemini AI planning must be attempted');
+      expect(find.text('Enhanced with AI'), findsOneWidget);
+      expect(find.text('Planned by Flowstate'), findsNothing);
+      expect(find.text('YOUR PLAN'), findsOneWidget);
+    });
+
+    testWidgets('AI failure shows sleeping Noya, preserves dump, never silently falls back', (tester) async {
+      final api = _PlanApi(failCode: 'ai_busy');
+      await _openAndBuild(tester, api, text: conversationalDump);
+      expect(api.planCalls, 1);
+      expect(find.textContaining('resting'), findsOneWidget, reason: 'Noya is asleep/resting');
+      expect(find.text("Noya's taking a little nap"), findsOneWidget);
+      expect(find.text(conversationalDump), findsOneWidget, reason: 'Dump kept in text box');
+      expect(find.text('YOUR PLAN'), findsNothing, reason: 'Never silently converted into tasks');
+      expect(find.text('Try again'), findsOneWidget);
+      expect(find.text('Plan it myself'), findsOneWidget);
+    });
+
+    testWidgets('quota exhausted shows friendly resting state and does not create silent local plan', (tester) async {
+      final api = _PlanApi(failCode: 'quota_exhausted');
+      await _openAndBuild(tester, api, text: conversationalDump);
+      expect(find.textContaining('resting'), findsOneWidget);
+      expect(find.textContaining("Something went wrong while planning your day"), findsOneWidget);
+      expect(find.text('YOUR PLAN'), findsNothing);
+      expect(find.text(conversationalDump), findsOneWidget);
     });
   });
 }

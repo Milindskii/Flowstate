@@ -441,11 +441,12 @@ void main() {
 
       // Not silently replaced by a local plan: the failure is stated and the dump is kept.
       expect(find.text('YOUR PLAN'), findsNothing);
-      expect(find.textContaining('AI planning failed'), findsOneWidget);
+      expect(find.textContaining("Noya's taking a little nap"), findsOneWidget);
       expect(find.text('Work on the stuff I told you about last week, dentist at 4'), findsOneWidget);
 
       // The basic planner is one tap away and is labelled as not AI.
-      await tester.tap(find.text('Use basic planner'));
+      await tester.ensureVisible(find.text('Plan it myself'));
+      await tester.tap(find.text('Plan it myself'));
       await tester.pumpAndSettle();
       expect(find.text('YOUR PLAN'), findsOneWidget);
       expect(find.text('Basic plan (not AI)'), findsOneWidget);
@@ -637,8 +638,9 @@ void main() {
 
       // No crash; the failure is explicit and the basic planner still produces a plan.
       expect(tester.takeException(), isNull);
-      expect(find.textContaining('AI planning failed'), findsOneWidget);
-      await tester.tap(find.text('Use basic planner'));
+      expect(find.textContaining("Noya's taking a little nap"), findsOneWidget);
+      await tester.ensureVisible(find.text('Plan it myself'));
+      await tester.tap(find.text('Plan it myself'));
       await tester.pumpAndSettle();
       expect(find.text('YOUR PLAN'), findsOneWidget);
       expect(find.byKey(const Key('add_and_schedule_button')), findsOneWidget);
@@ -1058,11 +1060,12 @@ void main() {
       final offline = MockAISubscriptionApiService()..throwOnAiPlan = true;
       await open(offline);
       expect(offline.aiPlanCallCount, 1);
-      expect(find.textContaining('AI planning failed'), findsOneWidget);
+      expect(find.textContaining("Noya's taking a little nap"), findsOneWidget);
       expect(find.text('YOUR PLAN'), findsNothing);
       expect(find.text('finish assignment'), findsOneWidget);
       // ... and the explicit basic planner still produces the plan.
-      await tester.tap(find.text('Use basic planner'));
+      await tester.ensureVisible(find.text('Plan it myself'));
+      await tester.tap(find.text('Plan it myself'));
       await tester.pumpAndSettle();
       expect(find.text('YOUR PLAN'), findsOneWidget);
       expect(find.text('Finish assignment'), findsOneWidget);
@@ -1205,7 +1208,7 @@ void main() {
         ..trackEntitlement = true
         ..throwOnAiPlan = true;
       await openAndBuild(tester, api);
-      expect(find.textContaining('AI planning failed'), findsOneWidget);
+      expect(find.textContaining("Noya's taking a little nap"), findsOneWidget);
       expect(api.freeUsesConsumed, 0);
       expect(await freeAvailable(api), isTrue);
       expect(api.shieldsCount, 2);
@@ -1219,10 +1222,11 @@ void main() {
       expect(api.freeUsesConsumed, 0);
 
       api.throwOnAiPlan = false; // the AI service is back
-      await tester.tap(find.text('Retry with AI'));
+      await tester.ensureVisible(find.text('Try again'));
+      await tester.tap(find.text('Try again'));
       await tester.pumpAndSettle();
 
-      expect(api.aiPlanCallCount, 2, reason: 'Retry with AI reaches the AI again');
+      expect(api.aiPlanCallCount, 2, reason: 'Try again reaches the AI again');
       expect(api.planKeys[0], isNotNull);
       expect(api.planKeys[1], api.planKeys[0], reason: 'the same request key, so a retry can never charge twice');
       expect(find.text('Enhanced with AI'), findsOneWidget);
@@ -1247,7 +1251,8 @@ void main() {
       await openAndBuild(tester, api);
       final callsBefore = api.aiPlanCallCount;
 
-      await tester.tap(find.text('Use basic planner'));
+      await tester.ensureVisible(find.text('Plan it myself'));
+      await tester.tap(find.text('Plan it myself'));
       await tester.pumpAndSettle();
 
       expect(find.text('Basic plan (not AI)'), findsOneWidget);

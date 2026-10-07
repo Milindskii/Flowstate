@@ -11,6 +11,7 @@ import '../services/flow_clock.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_motion.dart';
+import '../theme/flow_radii.dart';
 import '../theme/flow_spacing.dart';
 import '../theme/flow_typography.dart';
 
@@ -33,15 +34,55 @@ class InsightsHistoryScreen extends StatefulWidget {
   State<InsightsHistoryScreen> createState() => _InsightsHistoryScreenState();
 }
 
+enum HistoryFilter { all, week, month }
+
 class _InsightsHistoryScreenState extends State<InsightsHistoryScreen> {
   DateTime? _open;
+  HistoryFilter _filter = HistoryFilter.all;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadHistory();
+    });
+  }
+
+  Future<void> _loadHistory() async {
+    if (!mounted) return;
+    final state = Provider.of<AppStateProvider>(context, listen: false);
+    setState(() => _isLoading = true);
+    try {
+      await Future.wait([
+        state.reflectionsReady,
+        state.loadUserTasks(),
+        state.refreshTodayData(),
+      ]);
+    } catch (_) {}
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = Provider.of<AppStateProvider>(context);
-    final days = HistoryDay.from(tasks: state.tasks, reflections: state.reflections);
+    final accent = Theme.of(context).colorScheme.primary;
+    final allDays = HistoryDay.from(tasks: state.tasks, reflections: state.reflections);
     final now = FlowClock().now;
     final today = DateTime(now.year, now.month, now.day);
+
+    final days = allDays.where((d) {
+      if (_filter == HistoryFilter.all) return true;
+      final diff = today.difference(d.date).inDays;
+      if (_filter == HistoryFilter.week) return diff <= 7;
+      if (_filter == HistoryFilter.month) return diff <= 30;
+      return true;
+    }).toList();
+
+    final totalTasks = allDays.fold<int>(0, (sum, d) => sum + d.entries.length);
+    final totalMinutes = allDays.fold<int>(0, (sum, d) => sum + d.totalMinutes);
 
     return Scaffold(
       backgroundColor: FlowColors.background(context),
@@ -55,42 +96,220 @@ class _InsightsHistoryScreenState extends State<InsightsHistoryScreen> {
           style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w800),
         ),
       ),
-      body: days.isEmpty
-          ? const _NoHistory()
-          : ListView.separated(
-              key: const Key('insights_history_list'),
-              padding: EdgeInsets.fromLTRB(FlowSpacing.pageMargin(context), 4, FlowSpacing.pageMargin(context), 48),
-              itemCount: days.length + 1,
-              separatorBuilder: (context, i) => i == 0 ? const SizedBox.shrink() : Divider(height: 1, color: FlowColors.border(context)),
-              itemBuilder: (context, i) {
-                if (i == 0) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Text(
-                      '${days.length} ${days.length == 1 ? 'day' : 'days'} with finished work. Tap a day to open it.',
-                      style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
-                    ),
+      body: RefreshIndicator(
+        onRefresh: _loadHistory,
+        color: accent,
+        child: allDays.isEmpty
+            ? const SingleChildScrollView(
+                physics: AlwaysScrollableScrollPhysics(),
+                child: _NoHistory(),
+              )
+            : ListView.separated(
+                key: const Key('insights_history_list'),
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: EdgeInsets.fromLTRB(FlowSpacing.pageMargin(context), 4, FlowSpacing.pageMargin(context), 48),
+                itemCount: days.length + 1,
+                separatorBuilder: (context, i) => const SizedBox(height: 12),
+                itemBuilder: (context, i) {
+                  if (i == 0) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Overview Stats Card
+                        Container(
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(bottom: 16),
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: FlowColors.surface(context),
+                            borderRadius: BorderRadius.circular(FlowRadii.cardLarge),
+                            border: Border.all(color: FlowColors.border(context)),
+                            boxShadow: [
+                              BoxShadow(
+                                color: FlowColors.softShadow(context),
+                                blurRadius: 10,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.auto_graph_rounded, size: 16, color: accent),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'COMPLETION OVERVIEW',
+                                    style: FlowTypography.badgeText(color: accent).copyWith(
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.8,
+                                      fontSize: 10.5,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  if (_isLoading)
+                                    SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: accent),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 14),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _MetricTile(
+                                      label: 'Finished',
+                                      value: '$totalTasks',
+                                      unit: totalTasks == 1 ? 'task' : 'tasks',
+                                    ),
+                                  ),
+                                  Container(width: 1, height: 36, color: FlowColors.border(context)),
+                                  Expanded(
+                                    child: _MetricTile(
+                                      label: 'Focus Time',
+                                      value: _minutes(totalMinutes),
+                                      unit: 'total',
+                                    ),
+                                  ),
+                                  Container(width: 1, height: 36, color: FlowColors.border(context)),
+                                  Expanded(
+                                    child: _MetricTile(
+                                      label: 'Active Days',
+                                      value: '${allDays.length}',
+                                      unit: allDays.length == 1 ? 'day' : 'days',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // Timeframe Filter Chips
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          physics: const BouncingScrollPhysics(),
+                          child: Row(
+                            children: [
+                              _FilterChip(
+                                label: 'All Time',
+                                selected: _filter == HistoryFilter.all,
+                                onTap: () => setState(() => _filter = HistoryFilter.all),
+                              ),
+                              const SizedBox(width: 8),
+                              _FilterChip(
+                                label: 'Last 7 Days',
+                                selected: _filter == HistoryFilter.week,
+                                onTap: () => setState(() => _filter = HistoryFilter.week),
+                              ),
+                              const SizedBox(width: 8),
+                              _FilterChip(
+                                label: 'Last 30 Days',
+                                selected: _filter == HistoryFilter.month,
+                                onTap: () => setState(() => _filter = HistoryFilter.month),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+
+                        Text(
+                          '${days.length} ${days.length == 1 ? 'day' : 'days'} with finished work. Tap a day to open it.',
+                          style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                    );
+                  }
+                  final day = days[i - 1];
+                  final open = _open == day.date;
+                  return _DayRow(
+                    day: day,
+                    today: today,
+                    open: open,
+                    onToggle: () {
+                      FlowHaptics.selection();
+                      setState(() => _open = open ? null : day.date);
+                    },
+                    onOpenInCalendar: () {
+                      FlowHaptics.lightTap();
+                      state.loadCalendarDay(day.date);
+                      state.setNavIndex(2);
+                      Navigator.of(context).maybePop();
+                    },
                   );
-                }
-                final day = days[i - 1];
-                final open = _open == day.date;
-                return _DayRow(
-                  day: day,
-                  today: today,
-                  open: open,
-                  onToggle: () {
-                    FlowHaptics.selection();
-                    setState(() => _open = open ? null : day.date);
-                  },
-                  onOpenInCalendar: () {
-                    FlowHaptics.lightTap();
-                    state.loadCalendarDay(day.date);
-                    state.setNavIndex(2);
-                    Navigator.of(context).maybePop();
-                  },
-                );
-              },
-            ),
+                },
+              ),
+      ),
+    );
+  }
+}
+
+class _MetricTile extends StatelessWidget {
+  final String label;
+  final String value;
+  final String unit;
+
+  const _MetricTile({required this.label, required this.value, required this.unit});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
+            fontWeight: FontWeight.w800,
+            fontSize: 16,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(fontSize: 11),
+        ),
+      ],
+    );
+  }
+}
+
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _FilterChip({required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+    return InkWell(
+      onTap: () {
+        FlowHaptics.selection();
+        onTap();
+      },
+      borderRadius: BorderRadius.circular(FlowRadii.pill),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? accent.withValues(alpha: 0.14) : FlowColors.surface(context),
+          borderRadius: BorderRadius.circular(FlowRadii.pill),
+          border: Border.all(
+            color: selected ? accent : FlowColors.border(context),
+            width: selected ? 1.5 : 1.0,
+          ),
+        ),
+        child: Text(
+          label,
+          style: FlowTypography.labelSmall(
+            color: selected ? accent : FlowColors.textSecondaryOf(context),
+          ).copyWith(fontWeight: selected ? FontWeight.w700 : FontWeight.w500),
+        ),
+      ),
     );
   }
 }
@@ -131,58 +350,83 @@ class _DayRow extends StatelessWidget {
 
     final details = open ? _DayDetails(day: day, onOpenInCalendar: onOpenInCalendar) : const SizedBox(width: double.infinity);
 
-    return Column(
+    return Container(
       key: Key('history_day_${DateFormat('yyyy-MM-dd').format(day.date)}'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Semantics(
-          button: true,
-          expanded: open,
-          label: '${_dayTitle(day.date, today)}, $summary',
-          excludeSemantics: true,
-          onTap: onToggle,
-          child: InkWell(
+      decoration: BoxDecoration(
+        color: FlowColors.surface(context),
+        borderRadius: BorderRadius.circular(FlowRadii.card),
+        border: Border.all(color: FlowColors.border(context), width: 1.0),
+        boxShadow: [
+          BoxShadow(
+            color: FlowColors.softShadow(context),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Semantics(
+            button: true,
+            expanded: open,
+            label: '${_dayTitle(day.date, today)}, $summary',
+            excludeSemantics: true,
             onTap: onToggle,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _dayTitle(day.date, today),
-                          style: FlowTypography.bodyLarge(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w700),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(FlowRadii.card),
+              onTap: onToggle,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _dayTitle(day.date, today),
+                            style: FlowTypography.bodyLarge(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w700),
+                          ),
                         ),
-                      ),
-                      AnimatedRotation(
-                        turns: open ? 0.5 : 0,
-                        duration: duration,
-                        curve: FlowMotion.easeOut,
-                        child: Icon(Icons.expand_more_rounded, color: FlowColors.textMutedOf(context)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    summary,
-                    style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context))
-                        .copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
-                  ),
-                  const SizedBox(height: 10),
-                  _DayStrip(day: day),
-                ],
+                        AnimatedRotation(
+                          turns: open ? 0.5 : 0,
+                          duration: duration,
+                          curve: FlowMotion.easeOut,
+                          child: Icon(Icons.expand_more_rounded, color: FlowColors.textMutedOf(context)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      summary,
+                      style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context))
+                          .copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
+                    ),
+                    const SizedBox(height: 12),
+                    _DayStrip(day: day),
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-        // Zero-duration AnimatedSize throws under disabled animations, so it only wraps real motion.
-        if (duration == Duration.zero)
-          details
-        else
-          AnimatedSize(duration: duration, curve: FlowMotion.easeOut, alignment: Alignment.topCenter, child: details),
-      ],
+          if (open)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Divider(height: 1, color: FlowColors.border(context)),
+            ),
+          // Zero-duration AnimatedSize throws under disabled animations, so it only wraps real motion.
+          if (duration == Duration.zero)
+            Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: details)
+          else
+            AnimatedSize(
+              duration: duration,
+              curve: FlowMotion.easeOut,
+              alignment: Alignment.topCenter,
+              child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: details),
+            ),
+        ],
+      ),
     );
   }
 }

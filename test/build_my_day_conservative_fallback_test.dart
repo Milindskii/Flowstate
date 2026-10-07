@@ -178,4 +178,50 @@ void main() {
       expect(TaskParseService.deterministicFallbackParse('finish my assignment and submit it').length, 1);
     });
   });
+
+  group('Conversational brain dump regression (Task Item 10)', () {
+    const conversationalDumpWithFragments =
+        "I need to finish my ML assignment because it is due tomorrow morning and it will take about 2 hours. "
+        "I also need to write two college observation records, then stick the CN pictures after the observations. "
+        "I want one proper block for Flowstate work. I have to go out from 6:30 PM to 8:30 PM. I also need dinner and breaks. "
+        "I usually sleep around 11. Together they take 3 hours. Not before them. "
+        "Please create a realistic schedule based on these constraints.";
+
+    test('does NOT produce local-parser garbage (sleep, together, instructions, outings)', () {
+      final tasks = TaskParseService.deterministicFallbackParse(conversationalDumpWithFragments);
+      final titles = tasks.map((t) => t.title.toLowerCase()).toList();
+
+      for (final t in tasks) {
+        expectWellFormed(t.title);
+      }
+
+      // Garbage fragments must NOT become task candidates
+      expect(titles.any((t) => t.contains('sleep') || t.contains('usually sleep')), isFalse,
+          reason: 'Sleep context must not become a task: $titles');
+      expect(titles.any((t) => t.contains('together') || t.contains('together they')), isFalse,
+          reason: '"Together they" must not become a task: $titles');
+      expect(titles.any((t) => t.contains('not before') || t.contains('not before them')), isFalse,
+          reason: '"Not before them" must not become a task: $titles');
+      expect(titles.any((t) => t.contains('create a realistic schedule') || t.contains('schedule based')), isFalse,
+          reason: 'Instruction must not become a task: $titles');
+      expect(titles.any((t) => t.contains('go out') || t.contains('out from')), isFalse,
+          reason: 'Outing commitment must not become a task: $titles');
+      expect(titles.any((t) => t.contains('dinner and breaks')), isFalse,
+          reason: 'Routine meals/breaks must not become a task: $titles');
+
+      // Valid semantic tasks ARE parsed
+      expect(titles.any((t) => t.contains('ml assignment') || t.contains('assignment')), isTrue);
+      expect(titles.any((t) => t.contains('observation')), isTrue);
+      expect(titles.any((t) => t.contains('pictures')), isTrue);
+      expect(titles.any((t) => t.contains('flowstate')), isTrue);
+    });
+
+    test('requiresAiEnrichment returns true for conversational dump', () {
+      const conversationalDump =
+          "I need to finish my ML assignment because it is due tomorrow morning and it will take about 2 hours. "
+          "I also need to write two college observation records, then stick the CN pictures after the observations. "
+          "I want one proper block for Flowstate work. I have to go out from 6:30 PM to 8:30 PM. I also need dinner and breaks.";
+      expect(TaskParseService.requiresAiEnrichment(conversationalDump), isTrue);
+    });
+  });
 }

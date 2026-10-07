@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../components/ai_economy_sheets.dart';
 import '../components/companion/noya_reaction_controller.dart';
 import '../components/noya_companion_view.dart';
+import '../components/noya_failure_state.dart';
 import '../components/noya_motion_view.dart';
 import '../components/task_date_time_pickers.dart';
 import '../engines/plan_candidates.dart';
@@ -221,21 +222,33 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     // Newly created accounts receive at least one complimentary AI task-planning use.
     // If the account has complimentary AI planning available, route to AI planning.
     // Otherwise, call Gemini only if the input requires AI enrichment.
-    // AI planning needs an account: a signed-out (guest/demo) user is never sent to AI, and never sees a
-    // provider error. If their text needs AI they get a sign-in prompt; otherwise the local planner handles it.
+    // AI planning needs an account: a signed-out (guest/demo) user is never sent to AI.
+    // If their text needs AI they get a sign-in prompt; otherwise the local planner handles simple lists.
     final signedIn =
         Provider.of<AppStateProvider>(context, listen: false).isAuthenticated;
-    final hasComplimentaryUse =
-        signedIn && (_usageStatus?.freeUseAvailable ?? true);
-    final needsAi =
-        hasComplimentaryUse || TaskParseService.requiresAiEnrichment(rawText);
+    final isPro = signedIn && (_usageStatus?.isPro ?? false);
+    final requiresAi = TaskParseService.requiresAiEnrichment(rawText);
 
-    if (needsAi && !signedIn) {
+    if (requiresAi && !signedIn) {
       _showAiFailure('auth_required');
       return;
     }
 
-    if (!needsAi) {
+    if (!signedIn) {
+      _proceedLocalParsing(rawText, 'Planned by Flowstate');
+      return;
+    }
+
+    // Authenticated user:
+    // If complimentary AI is available, Pro is active, shields are available, OR the input is a
+    // conversational brain dump requiring AI, route to the backend AI planning pipeline.
+    // The deterministic parser is NEVER used as a silent substitute for conversational dumps.
+    final canUseLocalDirectly = !requiresAi &&
+        _usageStatus != null &&
+        !_usageStatus!.freeUseAvailable &&
+        !isPro;
+
+    if (canUseLocalDirectly) {
       _proceedLocalParsing(rawText, 'Planned by Flowstate');
       return;
     }
@@ -325,47 +338,13 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     }
   }
 
-  // User-facing reasons use neutral Flowstate wording only: never the AI provider, a model, a quota/config detail,
-  // an HTTP status, or an internal term. offline/server_error are Flowstate connectivity, not the AI.
-  static const _busy = 'Flowstate AI is busy right now. Try again in a moment.';
-  static const _unavailable =
-      'Flowstate AI is temporarily unavailable. Try again later.';
-  static const Map<String, String> _aiFailureReasons = {
-    'offline':
-        "Flowstate couldn't connect. Check your connection and try again.",
-    'server_error':
-        'Flowstate is having trouble right now. Try again in a moment.',
-    'gemini_error': _unavailable,
-    'provider_unavailable': _busy,
-    'ai_busy': _busy,
-    'provider_quota': 'Flowstate AI is at capacity right now. Try again later.',
-    'model_not_found': _unavailable,
-    'provider_auth': _unavailable,
-    'timeout': 'Flowstate AI took too long to answer.',
-    'network': 'Flowstate AI is unreachable right now. Try again shortly.',
-    'malformed': "Flowstate AI's answer couldn't be read.",
-    'empty': "Flowstate AI didn't find any tasks in your text.",
-    'scheduling_failed': "the tasks couldn't be fitted into your schedule.",
-    'quota_exhausted': "you've used your free AI plans.",
-    'privacy_declined': 'you chose not to send this to Flowstate AI.',
-    'rate_limited':
-        "you've reached the planning limit for now. Try again later.",
-    'request_in_progress':
-        'Flowstate is still working on your last plan. One moment.',
-    'another_request_in_flight':
-        'Flowstate is still working on your last plan. One moment.',
-    'pro_cap_day': "you've reached today's fair-use limit for AI planning.",
-    'pro_cap_month':
-        "you've reached this month's fair-use limit for AI planning.",
-  };
-
   void _showAiFailure(String code) {
     if (!mounted) return;
     setState(() {
       _aiFailureCode = code;
       _aiFailureMessage = code == 'auth_required'
           ? 'Sign in to use AI planning'
-          : 'AI planning failed: ${_aiFailureReasons[code] ?? "something went wrong. Please try again."}';
+          : "Noya's taking a little nap";
       _isLoading = false;
       _viewMode = _BrainDumpViewMode.input;
     });
@@ -902,6 +881,13 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       noyaMessage =
           "It didn't save yet. Nothing is lost — try again when you're ready.";
       noyaState = NoyaState.encouraging;
+    } else if (_aiFailureMessage != null && _viewMode == _BrainDumpViewMode.input) {
+      phase = 'asleep';
+      noyaTitle = '$name is resting';
+      noyaMessage = _aiFailureCode == 'auth_required'
+          ? 'Sign in to let $name organize your day with AI.'
+          : '$name is taking a little nap right now.';
+      noyaState = NoyaState.sleepy;
     } else if (_viewMode == _BrainDumpViewMode.preview) {
       phase = 'ready';
       noyaTitle = '$name organized your plan';
@@ -940,15 +926,15 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // Living Noya: thinks while planning or saving (bounded loop), hops when the plan
-          // lands, and recovers calmly when a save fails.
+          // lands, sleeps peacefully when AI is resting, and recovers calmly when a save fails.
           NoyaMotionView(
             mood: (phase == 'thinking' || phase == 'saving')
                 ? NoyaMood.thinking
-                : NoyaMood.rest,
+                : (phase == 'asleep' ? NoyaMood.asleep : NoyaMood.rest),
             pose: noyaState,
             size: noyaSize,
             reactions: _noyaReactions,
-            showAmbientGlow: !hasKeyboard,
+            showAmbientGlow: !hasKeyboard && phase != 'asleep',
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -1210,58 +1196,23 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
   }
 
   Widget _buildAiFailureCard() {
-    return Container(
+    final isAuth = _aiFailureCode == 'auth_required';
+    return NoyaFailureState(
       key: const Key('ai_failure_card'),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: FlowColors.warning.withValues(alpha: 0.10),
-        borderRadius: FlowRadii.cardRadius,
-        border: Border.all(color: FlowColors.warning.withValues(alpha: 0.35)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            _aiFailureMessage!,
-            style: FlowTypography.bodySmall(
-                    color: FlowColors.textPrimaryOf(context))
-                .copyWith(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            _aiFailureCode == 'auth_required'
-                ? 'Your text is still here. Nothing was sent.'
-                : 'Your text is still here. Nothing was charged.',
-            style:
-                FlowTypography.bodySmall(color: FlowColors.textMutedOf(context))
-                    .copyWith(fontSize: 12),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              if (_aiFailureCode == 'auth_required')
-                FilledButton(
-                  key: const Key('sign_in_for_ai_button'),
-                  onPressed: _isLoading ? null : _signInForAi,
-                  child: const Text('Sign in'),
-                )
-              else
-                OutlinedButton(
-                  key: const Key('retry_ai_button'),
-                  onPressed: _isLoading ? null : _retryWithAi,
-                  child: const Text('Retry with AI'),
-                ),
-              TextButton(
-                key: const Key('use_basic_planner_button'),
-                onPressed: _isLoading ? null : _useBasicPlanner,
-                child: const Text('Use basic planner'),
-              ),
-            ],
-          ),
-        ],
-      ),
+      compact: true,
+      title: isAuth ? 'Sign in to use AI planning' : "Noya's taking a little nap",
+      body: isAuth
+          ? 'Sign in to let Noya organize your day with AI. Your text is safe.'
+          : 'Something went wrong while planning your day. Your existing tasks are safe.',
+      onRetry: isAuth ? _signInForAi : _retryWithAi,
+      retryLabel: isAuth ? 'Sign in' : 'Try again',
+      retryKey: isAuth
+          ? const Key('sign_in_for_ai_button')
+          : const Key('retry_ai_button'),
+      onAlternative: _useBasicPlanner,
+      alternativeLabel: 'Plan it myself',
+      alternativeKey: const Key('use_basic_planner_button'),
+      isLoading: _isLoading,
     );
   }
 
@@ -1450,29 +1401,25 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                 ),
               ),
               const SizedBox(width: 4),
-              // Remove from this proposed plan (not saved yet, so no confirmation is needed; Undo is offered)
+              // Delete from this proposed plan (dustbin icon button in top-right corner)
               Semantics(
                 button: true,
-                label: 'Remove ${task.title} from the plan',
-                child: InkWell(
-                  key: Key('preview_remove_${task.id}'),
-                  borderRadius: FlowRadii.pillRadius,
-                  onTap: () => _removeCandidate(index),
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(minHeight: 44, minWidth: 44),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.close_rounded, size: 16, color: FlowColors.textMutedOf(context)),
-                          const SizedBox(width: 2),
-                          Text(
-                            'Remove',
-                            style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context))
-                                .copyWith(fontSize: 11, fontWeight: FontWeight.w600),
-                          ),
-                        ],
+                label: 'Delete task',
+                child: Tooltip(
+                  message: 'Delete task',
+                  child: InkWell(
+                    key: Key('preview_remove_${task.id}'),
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () => _removeCandidate(index),
+                    child: ConstrainedBox(
+                      constraints:
+                          const BoxConstraints(minHeight: 44, minWidth: 44),
+                      child: Center(
+                        child: Icon(
+                          Icons.delete_outline_rounded,
+                          size: 18,
+                          color: FlowColors.textMutedOf(context),
+                        ),
                       ),
                     ),
                   ),

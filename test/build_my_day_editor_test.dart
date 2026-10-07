@@ -9,6 +9,9 @@ import 'package:flowstate/services/auth_service.dart';
 import 'package:flowstate/providers/theme_provider.dart';
 import 'package:flowstate/providers/flow_provider.dart';
 import 'package:flowstate/services/api_service.dart';
+import 'package:flowstate/services/flow_clock.dart';
+import 'package:flowstate/services/timezone_service.dart';
+import 'package:flowstate/components/ai_economy_sheets.dart';
 
 class MockBuildMyDayApiService extends ApiService {
   @override
@@ -47,8 +50,8 @@ class MockBuildMyDayApiService extends ApiService {
       return {
         'is_pro': false,
         'subscription_tier': 'free',
-        'free_use_available': true,
-        'free_uses_consumed': 0,
+        'free_use_available': false,
+        'free_uses_consumed': 1,
         'shields_available': 3,
         'shield_funded_uses': 0,
         'can_use_ai': true,
@@ -105,8 +108,12 @@ Widget createTestApp({
 
 void main() {
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
+    FlowClock.enableAutoTick = false;
+    FlowClock().stopTimer();
+    SharedPreferences.setMockInitialValues({kGeminiPrivacyAcceptedKey: true});
+    TimezoneService.overrideForTesting = () async => 'Asia/Kolkata';
   });
+  tearDown(() => FlowClock().stopTimer());
 
   group('Phase 1: Build My Day Task Editor Pickers & Semantics', () {
     test('Unit: TaskDateTimePickers formatting and parsing helpers', () {

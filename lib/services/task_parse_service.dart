@@ -66,20 +66,26 @@ class TaskParseService {
       RegExp(r'\b(?:project\s+thing|stuff\s+i\s+told\s+you|the\s+thing\s+we\s+talked\s+about|whatever\s+we\s+discussed)\b'),
       RegExp(r'\b(?:sometime\s+before\s+(?:that|the|my)?\s*meeting|before\s+the\s+call\s+with|after\s+my\s+sync)\b'),
       RegExp(r'\b(?:help\s+me\s+figure\s+out|not\s+sure\s+(?:when|exactly|how\s+long)|whenever\s+you\s+can|sometime\s+this\s+week)\b'),
+      RegExp(r'\b(?:stick\s+.*after|after\s+the\s+[a-z]+|not\s+before\s+them|together\s+they)\b'),
+      RegExp(r'\b(?:proper\s+block|dinner\s+and\s+breaks|create\s+a\s+realistic\s+schedule)\b'),
     ];
     for (final pattern in ambiguousPatterns) {
       if (pattern.hasMatch(lower)) return true;
     }
 
     // 2. Multi-sentence paragraph brain dump — deterministic splitter cannot segment
-    // these correctly. Sentence count >= 3 is the primary signal.
+    // these correctly. Sentence count >= 3 is the primary signal; count >= 2 with conversational connectors also signals AI need.
     final sentences = text.trim().split(RegExp(r'[.!?]+')).where((s) => s.trim().length > 4).toList();
     if (sentences.length >= 3) return true;
+    if (sentences.length >= 2 &&
+        RegExp(r'\b(?:because|since|due\s+to|also\s+need|want\s+one|have\s+to\s+go|go\s+out|usually\s+sleep)\b').hasMatch(lower)) {
+      return true;
+    }
 
     // 3. High word count with multiple distinct task-action verbs targeting different
     // objects (e.g. "finish X ... call Y ... clean Z") — strong multi-task signal.
     final words = lower.split(RegExp(r'\s+'));
-    if (words.length > 40) {
+    if (words.length > 30) {
       // Count distinct action verb occurrences targeting distinct objects
       final actionVerbPattern = RegExp(
         r'\b(?:finish|fix|call|clean|review|study|email|submit|buy|pay|meet|run|gym|workout|prep|read|write|do|complete|reply|send|check|update|prepare|schedule|go\s+to)\b',
@@ -88,7 +94,15 @@ class TaskParseService {
       if (matches.length >= 3) return true;
     }
 
-    // 4. If text was substantial but local parser found no tasks, AI is needed
+    // 4. Conversational narrative markers (first-person intentions, explanations, constraints)
+    final conversationalMarkers = RegExp(
+      r'\b(?:i\s+need\s+to|i\s+also\s+need|i\s+have\s+to\s+go|i\s+want\s+one|due\s+tomorrow|together\s+they|not\s+before\s+them|usually\s+sleep|dinner\s+and\s+breaks|create\s+a\s+realistic\s+schedule)\b',
+    );
+    if (conversationalMarkers.allMatches(lower).length >= 2) {
+      return true;
+    }
+
+    // 5. If text was substantial but local parser found no tasks, AI is needed
     final localTasks = deterministicFallbackParse(text);
     if (localTasks.isEmpty && text.trim().length >= 12) {
       return true;
@@ -125,10 +139,15 @@ class TaskParseService {
       // Availability / context phrases are NOT actionable tasks.
       // They describe scheduling constraints and must not create task cards.
       final contextPatterns = [
-        RegExp(r'^\s*(?:i\s+)?(?:work|working|office|in\s+office)\s+(?:from\s+)?[\d][\d:apm]*\s*(?:[-–]|to)\s*[\d]', caseSensitive: false),
-        RegExp(r'^\s*(?:i\s+have\s+)?class\s+(?:from\s+)?[\d][\d:apm]*\s*(?:[-–]|to)\s*[\d]', caseSensitive: false),
+        RegExp(r'^\s*(?:i\s+)?(?:work|working|office|in\s+office)\s+(?:from\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:[-–]|to)\s*\d', caseSensitive: false),
+        RegExp(r'^\s*(?:i\s+have\s+)?class\s+(?:from\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:[-–]|to)\s*\d', caseSensitive: false),
         RegExp(r'^\s*(?:i\s+)?lea(?:ve|ving)(?:\s+home)?\s+at\s+\d', caseSensitive: false),
-        RegExp(r'^\s*(?:lunch|breakfast|dinner)\s+(?:at|around)\s+\d[\d:]*(?: ?[apm]*)?\s*$', caseSensitive: false),
+        RegExp(r'^\s*(?:lunch|breakfast|dinner)\s+(?:at|around)\s+\d', caseSensitive: false),
+        RegExp(r'^\s*(?:i\s+)?(?:usually\s+)?(?:sleep|go\s+to\s+bed|sleeping|bedtime)\b', caseSensitive: false),
+        RegExp(r'^\s*(?:i\s+)?(?:have\s+to\s+)?(?:go\s+out|going\s+out|out|away|busy|unavailable)\s+(?:from\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:[-–]|to)\s*\d', caseSensitive: false),
+        RegExp(r'^\s*(?:i\s+also\s+need\s+|i\s+need\s+)?(?:lunch|breakfast|dinner|breaks?|meals?|break)(?:\s+(?:and|&)\s+(?:lunch|breakfast|dinner|breaks?|meals?|break))*\s*$', caseSensitive: false),
+        RegExp(r'^\s*(?:breaks?|dinner|lunch|breakfast)\s*$', caseSensitive: false),
+        RegExp(r'^\s*(?:deadlines?|durations?|priorities|constraints?|dependencies|schedule)\s*$', caseSensitive: false),
       ];
       if (contextPatterns.any((p) => p.hasMatch(lower))) continue;
       // ─────────────────────────────────────────────────────────────────────
@@ -529,7 +548,7 @@ class TaskParseService {
     // Strip leading/trailing punctuation or bullet marks
     t = t.replaceAll(RegExp(r'^[,\s\-•*:]+|[,\s\-•*:]+$'), '').trim();
     // Strip conversational openers
-    t = t.replaceAll(RegExp(r"^(?:i have|i've got|i need to do|i need to|i have to|on my plate:?|my tasks are:?|plan for today:?|today i have|today:?)\s+", caseSensitive: false), '').trim();
+    t = t.replaceAll(RegExp(r"^(?:i have|i've got|i need to do|i need to|i have to|i want(?:\s+(?:one|a))?(?:\s+(?:proper|focus))?(?:\s+block\s+for)?|on my plate:?|my tasks are:?|plan for today:?|today i have|today:?)\s+", caseSensitive: false), '').trim();
     // Strip prefixes like "task for ", "task: ", "to do: "
     t = t.replaceAll(RegExp(r'^(?:task\s+for|task\s*:|to\s*do\s*:)\s*', caseSensitive: false), '').trim();
     // Strip suffixes like " to do", " todo", " task"
@@ -695,6 +714,7 @@ class TaskParseService {
     r'^(?:also|and|then|plus|'
     r'i\s+(?:also\s+)?(?:should|must|need\s+to|have\s+to|want\s+to|gotta|will|plan\s+to|'
     r'am\s+going\s+to|would\s+like\s+to)|'
+    r'i\s+(?:also\s+)?want(?:\s+(?:one|a))?(?:\s+(?:proper|focus))?(?:\s+block\s+for)?|'
     r"i'(?:ll|d\s+like\s+to|m\s+going\s+to)|"
     r"i\s+(?:also\s+)?have(?:\s+(?:a|an))?|i've\s+got(?:\s+(?:a|an))?|"
     r"don'?t\s+forget\s+to|remember\s+to|remind\s+me\s+to)\s+",
@@ -704,12 +724,14 @@ class TaskParseService {
   /// A clause that cannot stand alone: it refers back to the previous task.
   static final _dependentStart = RegExp(
     r"^(?:which|it|it's|its|but|so|because|since|though|although|"
-    r'preferably|ideally|hopefully|otherwise|'
+    r'preferably|ideally|hopefully|otherwise|if\s+possible|'
     r"(?:this|that)(?:'s|\s+(?:is|will|should|can|could|may|might|would))|"
     r'(?:can|could|should|might|may|will|would|must)\s+be|'
     r"shouldn'?t|should\s+not|won'?t|can'?t|cannot|mustn'?t|must\s+not|doesn'?t|does\s+not|"
     r"i'd\s+(?:like|prefer|rather)|i\s+would\s+(?:like|prefer|rather)|"
-    r'(?:i\s+)?(?:want|need)\s+to\s+do\s+(?:that|it)|do\s+(?:that|it))\b',
+    r'(?:i\s+)?(?:want|need)\s+to\s+do\s+(?:that|it)|do\s+(?:that|it)|'
+    r'together\s+they\b|'
+    r'not\s+(?:before|after|during)\s+(?:them|that|it|these)\b)\b',
     caseSensitive: false,
   );
 
@@ -721,7 +743,10 @@ class TaskParseService {
     r'prioriti[sz]e\b|remind\s+me\s+(?:that|about\s+that)\b|'
     r'if\s+(?:something|anything|there|everything|the\s+day)\b|'
     r'(?:tomorrow|today|tonight|my\s+day|the\s+day|this\s+week)\s+'
-    r'(?:is|will\s+be|is\s+going\s+to\s+be|looks|seems)\b)',
+    r'(?:is|will\s+be|is\s+going\s+to\s+be|looks|seems)\b|'
+    r'(?:please\s+)?(?:create|make|build|generate)\s+(?:a\s+)?(?:realistic\s+)?(?:schedule|plan)\b|'
+    r'based\s+on\s+these\s+(?:constraints|tasks|rules|inputs)\b|'
+    r'respect\s+(?:task\s+)?(?:dependencies|constraints|deadlines)\b)',
     caseSensitive: false,
   );
 
@@ -735,7 +760,7 @@ may might must shall be is are was were been being take takes taking took spend 
 need needs i i'm i'll i'd me my we our you min mins minute minutes hr hrs hour hours half today
 tonight tomorrow morning afternoon evening night sometime later soon early earlier am pm
 monday tuesday wednesday thursday friday saturday sunday high low medium normal priority urgent
-important optional one two three four five
+important optional one two three four five together not them deadlines durations priorities constraints
 '''.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toSet();
 
   static const _leadingDangling = {

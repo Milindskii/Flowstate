@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../components/noya_companion_view.dart';
+import '../components/noya_failure_state.dart';
 import '../components/noya_thinking.dart';
 import '../components/plan_diff_view.dart';
 import '../components/replan_new_task_sheet.dart';
@@ -657,6 +658,25 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
       );
     }
 
+    if (msg.isError) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: NoyaFailureState(
+          key: const Key('replan_error_bubble'),
+          compact: true,
+          title: "Noya's taking a little nap",
+          body:
+              'Something went wrong while planning your day. Your existing tasks are safe.',
+          onRetry: msg.retryText != null
+              ? () => _sendMessage(msg.retryText!, retryOf: msg)
+              : null,
+          retryLabel: 'Try again',
+          retryKey: const Key('replan_retry'),
+          isLoading: _isLoading,
+        ),
+      );
+    }
+
     final bubbleBg = FlowColors.surfaceElevated(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -672,7 +692,6 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
               ),
               Flexible(
                 child: Container(
-                  key: msg.isError ? const Key('replan_error_bubble') : null,
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
                     color: bubbleBg,
@@ -687,34 +706,7 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (msg.isError) ...[
-                            Padding(
-                              padding: const EdgeInsets.only(top: 2),
-                              child: Icon(Icons.info_outline_rounded, size: 16, color: FlowColors.warningOf(context)),
-                            ),
-                            const SizedBox(width: 8),
-                          ],
-                          Expanded(
-                            child: Text(msg.text, style: FlowTypography.bodyMedium(color: FlowColors.textPrimaryOf(context))),
-                          ),
-                        ],
-                      ),
-                      if (msg.isError && msg.retryText != null)
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: TextButton(
-                            key: const Key('replan_retry'),
-                            style: TextButton.styleFrom(
-                              minimumSize: const Size(48, 44),
-                              padding: const EdgeInsets.symmetric(horizontal: 4),
-                            ),
-                            onPressed: _isLoading ? null : () => _sendMessage(msg.retryText!, retryOf: msg),
-                            child: const Text('Try again'),
-                          ),
-                        ),
+                      Text(msg.text, style: FlowTypography.bodyMedium(color: FlowColors.textPrimaryOf(context))),
                     ],
                   ),
                 ),

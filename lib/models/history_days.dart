@@ -59,14 +59,14 @@ class HistoryDay {
     final entries = <String, HistoryEntry>{};
     for (final t in tasks.where((t) => t.isCompleted)) {
       final r = byTask[t.id];
-      final at = r?.completedAt ?? t.completedAt;
+      final at = r?.completedAt ?? t.completedAt ?? t.scheduledStart;
       if (at == null) continue;
       entries[t.id] = HistoryEntry(
         taskId: t.id,
         title: t.title,
         category: t.category.isEmpty || t.category.toLowerCase() == 'general' ? null : t.category,
         completedAt: at,
-        minutes: r != null && r.actualMinutes > 0 ? r.actualMinutes : t.durationMinutes,
+        minutes: r != null && r.actualMinutes > 0 ? r.actualMinutes : (t.durationMinutes > 0 ? t.durationMinutes : 25),
         plannedMinutes: r?.plannedMinutes ?? t.durationMinutes,
         reflection: r,
       );
