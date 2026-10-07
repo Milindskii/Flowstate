@@ -3,23 +3,34 @@ import 'dart:ui';
 
 import '../../models/schedule_item.dart';
 
-/// How a stop relates to the main route.
+/// What state a stop's NODE is in. It only chooses how the node is drawn and how the road leading to it is
+/// coloured: it never decides whether the stop is on the route. Every stop is on the one canonical route.
 enum StopRouteRole {
-  /// The route passes through this stop (planned, active, completed, missed, commitment).
+  /// Planned, active, completed or a commitment: nothing special to show.
   onRoute,
 
-  /// Skipped or deferred: the route bends AROUND the stop (yellow).
+  /// Skipped or deferred: a yellow node. The road still runs through it, unchanged.
   skipped,
 
-  /// Unfinished past the sleep boundary: the route bends around it (red — true failure only).
+  /// Unfinished past the sleep boundary: a red node (true failure only).
   failed,
 
-  /// The slot ended and the task was not done: the route moves past it on its own (derived from the clock, never a
-  /// user "skip"), the node stays where it is and the task keeps its history. Distinct from [skipped].
+  /// The slot ended and the task was not done (derived from the clock, never a user "skip"): a muted node.
   bypassed,
 
-  /// Skipped/deferred earlier and completed since: the route still bends around it (history is kept)
-  /// and an orange detour runs through it.
+  /// Skipped/deferred earlier and completed since: a done node ringed in orange; the road into it is orange.
+  recovered,
+}
+
+/// How one stretch of the route is coloured. The route's shape is the same whatever these are.
+enum RouteSegmentState {
+  /// The road ahead (blue).
+  ahead,
+
+  /// Already walked (green).
+  traveled,
+
+  /// The road into a stop that was done after being skipped (orange): same line, different colour.
   recovered,
 }
 
@@ -51,32 +62,20 @@ class StopGeometry {
     required this.role,
     required this.walked,
   });
-
-  bool get onRoute => role == StopRouteRole.onRoute;
-}
-
-/// A line that leaves the main route to touch a bypassed stop (a short dashed spur).
-class RouteSpur {
-  final String stopId;
-  final StopRouteRole role;
-  final Offset from;
-  final Offset to;
-  const RouteSpur({required this.stopId, required this.role, required this.from, required this.to});
-}
-
-/// The orange recovery detour: previous route stop → recovered stop → next route stop.
-class RouteDetour {
-  final String stopId;
-  final List<Offset> points;
-  const RouteDetour({required this.stopId, required this.points});
 }
 
 /// The single source of truth for the Day Path route.
 ///
-/// The main route is a function of y (it only ever travels forward, top → bottom: the first task of the day is at the
-/// top, the last at the bottom), sampled on a fixed grid, so
-/// two geometries with the same [layoutSignature] can be morphed by interpolating [sampleXs]. Everything is derived
-/// from the items' real state: nothing here is a visual-only flag.
+/// ONE canonical route runs through every stop, top to bottom (the first task of the day at the top, the last at the
+/// bottom), sampled on a fixed grid. Its shape depends on the stops' positions only, never on their state:
+///
+///   stop position  ->  route geometry  ->  segment state  ->  node state
+///
+/// The route is cut into segments, one per stop (the stretch arriving at it), and each segment gets a colour from
+/// its stop: green when walked, orange when the stop was recovered, blue otherwise. So a skipped, missed or
+/// recovered stop changes how it is drawn, but the road through it is the same line, still continuous.
+///
+/// Two geometries with the same [layoutSignature] can be morphed by interpolating [sampleXs].
 class DayRouteGeometry {
   static const double padBottom = 72;
   static const double padTop = 64;
@@ -92,54 +91,52 @@ class DayRouteGeometry {
   static const double nearHalfWidth = 12;
   static const double farHalfWidth = 12;
 
-  /// How far the route stays from a bypassed stop's centre.
-  static const double bypassClearance = nodeRadius + nearHalfWidth + 26;
+  /// The id of the finish (Trophy) point at the end of the route, when there is one.
+  static const String finishId = 'path_finish';
 
   final double width;
   final double height;
   final List<StopGeometry> stops;
 
-  /// Main-route samples, top to bottom (y increasing).
+  /// The end of the road after the last stop (the day's Trophy), or null. It is not one of [stops].
+  final StopGeometry? finish;
+
+  /// Route samples, top to bottom (y increasing).
   final List<double> sampleYs;
   final List<double> sampleXs;
 
-  /// True when the sample belongs to the walked stretch (green); false is the road ahead (blue).
-  final List<bool> sampleTraveled;
+  /// The colour state of each sample's segment: the stretch that ARRIVES at the sample from the one above it.
+  final List<RouteSegmentState> sampleStates;
 
-  /// Index of the first sample past the last route stop (always the sample count: the road ends at the last stop).
+  /// Index of the first sample past the last stop (always the sample count: the road ends at the last point).
   final int tailStart;
-  final List<RouteSpur> spurs;
-  final List<RouteDetour> detours;
 
   const DayRouteGeometry({
     required this.width,
     required this.height,
     required this.stops,
+    this.finish,
     required this.sampleYs,
     required this.sampleXs,
-    required this.sampleTraveled,
+    required this.sampleStates,
     required this.tailStart,
-    required this.spurs,
-    required this.detours,
   });
 
   bool get hasRoute => sampleYs.isNotEmpty;
 
   /// Two geometries with the same signature have the same stops and sample grid, so their routes can morph.
   String get layoutSignature =>
-      '${width.round()}|${stops.map((s) => s.id).join(',')}|${sampleYs.length}|${sampleYs.isEmpty ? 0 : sampleYs.first}|${sampleYs.isEmpty ? 0 : sampleYs.last}';
+      '${width.round()}|${stops.map((s) => s.id).join(',')}${finish == null ? '' : '|finish'}|${sampleYs.length}|${sampleYs.isEmpty ? 0 : sampleYs.first}|${sampleYs.isEmpty ? 0 : sampleYs.last}';
 
-  /// True when [other] would draw the same route (same samples, colors, detours and spurs).
+  /// True when [other] would draw the same route (same samples, colours and node states).
   bool sameRoute(DayRouteGeometry other) {
     if (layoutSignature != other.layoutSignature ||
         sampleXs.length != other.sampleXs.length ||
-        detours.length != other.detours.length ||
-        spurs.length != other.spurs.length ||
         tailStart != other.tailStart) {
       return false;
     }
     for (var i = 0; i < sampleXs.length; i++) {
-      if ((sampleXs[i] - other.sampleXs[i]).abs() > 0.01 || sampleTraveled[i] != other.sampleTraveled[i]) return false;
+      if ((sampleXs[i] - other.sampleXs[i]).abs() > 0.01 || sampleStates[i] != other.sampleStates[i]) return false;
     }
     for (var i = 0; i < stops.length; i++) {
       if (stops[i].role != other.stops[i].role) return false;
@@ -192,37 +189,43 @@ class DayRouteGeometry {
 
   static double _smooth(double u) => u * u * (3 - 2 * u);
 
-  static DayRouteGeometry compute(List<ScheduleItem> items, String? nowItemId, double width) {
+  /// The colour of the road arriving at [s].
+  static RouteSegmentState _stateInto(StopGeometry s, {required bool isFinish}) {
+    if (isFinish) return RouteSegmentState.traveled; // the finish only exists once the day is done
+    if (s.role == StopRouteRole.recovered) return RouteSegmentState.recovered;
+    return s.walked ? RouteSegmentState.traveled : RouteSegmentState.ahead;
+  }
+
+  /// [finish] adds the end of the road after the last stop: the day's Trophy sits there, on the same route.
+  static DayRouteGeometry compute(List<ScheduleItem> items, String? nowItemId, double width, {bool finish = false}) {
     final n = items.length;
     if (n == 0) {
       return DayRouteGeometry(
-          width: width, height: 0, stops: const [], sampleYs: const [], sampleXs: const [], sampleTraveled: const [], tailStart: 0, spurs: const [], detours: const []);
+          width: width, height: 0, stops: const [], sampleYs: const [], sampleXs: const [], sampleStates: const [], tailStart: 0);
     }
+    final points = n + (finish ? 1 : 0);
 
     // Vertical layout: the first (earliest) stop at the TOP, the last at the bottom, one even step per stop. A
     // stop's place is a function of its index in the chronological list only, so a state change never moves it.
     final spacings = List<double>.generate(
-        math.max(0, n - 1), (i) => nearSpacing + (farSpacing - nearSpacing) * (n > 2 ? i / (n - 2) : 0.0));
+        math.max(0, points - 1), (i) => nearSpacing + (farSpacing - nearSpacing) * (points > 2 ? i / (points - 2) : 0.0));
     final height = padTop + spacings.fold<double>(0, (a, b) => a + b) + padBottom;
     final ys = <double>[];
     var fromTop = padTop;
-    for (var i = 0; i < n; i++) {
+    for (var i = 0; i < points; i++) {
       ys.add(fromTop);
-      if (i < n - 1) fromTop += spacings[i];
+      if (i < points - 1) fromTop += spacings[i];
     }
 
     final amp = math.min(width * 0.18, 72.0);
-    final stops = <StopGeometry>[];
-    for (var i = 0; i < n; i++) {
-      final depth = n > 1 ? i / (n - 1) : 0.0;
+    StopGeometry place(int i, String id, StopRouteRole role, bool walked) {
+      // depth is measured over the task stops only: adding the finish after the last one moves no stop
+      final depth = (n > 1 ? i / (n - 1) : i.toDouble()).clamp(0.0, 1.0);
       final bend = math.sin(1.05 * i + 0.5);
       final x = width / 2 + amp * (1 - 0.22 * depth) * bend;
-      final item = items[i];
-      final role = roleOf(item);
-      final walked = role == StopRouteRole.onRoute && (item.isCompleted || item.id == nowItemId);
       final leftOfCentre = (x - width / 2).abs() < 10 ? i.isOdd : x >= width / 2;
-      stops.add(StopGeometry(
-        id: item.id,
+      return StopGeometry(
+        id: id,
         index: i,
         center: Offset(x, ys[i]),
         depth: depth,
@@ -230,17 +233,20 @@ class DayRouteGeometry {
         labelOnLeft: leftOfCentre,
         role: role,
         walked: walked,
-      ));
+      );
     }
 
-    final route = [for (final s in stops) if (s.onRoute) s];
-    if (route.isEmpty) {
-      return DayRouteGeometry(
-          width: width, height: height, stops: stops, sampleYs: const [], sampleXs: const [], sampleTraveled: const [], tailStart: 0, spurs: const [], detours: const []);
+    final stops = <StopGeometry>[];
+    for (var i = 0; i < n; i++) {
+      final item = items[i];
+      final role = roleOf(item);
+      stops.add(place(i, item.id, role, role == StopRouteRole.onRoute && (item.isCompleted || item.id == nowItemId)));
     }
+    final end = finish ? place(n, finishId, StopRouteRole.onRoute, true) : null;
 
-    // Base route: smooth S-curves between consecutive route stops, straight outside the first/last.
-    double baseX(double y) {
+    // The route passes through EVERY point, whatever its state: smooth S-curves between consecutive points.
+    final route = [...stops, if (end != null) end];
+    double routeX(double y) {
       if (y <= route.first.center.dy) return route.first.center.dx;
       if (y >= route.last.center.dy) return route.last.center.dx;
       for (var k = 0; k + 1 < route.length; k++) {
@@ -254,141 +260,37 @@ class DayRouteGeometry {
       return route.last.center.dx;
     }
 
-    // Bypassed stops push the route sideways, away from the stop, until it clears them.
-    final bypassed = [for (final s in stops) if (!s.onRoute) s];
-    final bumps = <(double y, double amp, double half)>[];
-    double bumpAt(double y) {
-      var sum = 0.0;
-      for (final b in bumps) {
-        final d = (y - b.$1).abs();
-        if (d < b.$3) sum += b.$2 * 0.5 * (1 + math.cos(math.pi * d / b.$3));
-      }
-      return sum;
-    }
-
-    for (var pass = 0; pass < 2; pass++) {
-      for (final s in bypassed) {
-        final cur = baseX(s.center.dy) + bumpAt(s.center.dy);
-        final gap = s.center.dx - cur;
-        final need = bypassClearance - gap.abs();
-        if (need > 0.5) {
-          final away = gap >= 0 ? -1.0 : 1.0;
-          bumps.add((s.center.dy, away * need, 104.0));
-        }
-      }
-    }
-    double routeX(double y) => (baseX(y) + bumpAt(y)).clamp(28.0, width - 28.0);
-
-    // Sample grid: the road begins at the first stop and ends at the last one (no lead-in, no tail).
-    final yStart = stops.first.center.dy;
-    final yEnd = stops.last.center.dy;
+    // Sample grid: the road begins at the first stop and ends at the last point (no lead-in, no tail).
+    final yStart = route.first.center.dy;
+    final yEnd = route.last.center.dy;
     final sampleYs = <double>[];
     final sampleXs = <double>[];
-    final traveled = <bool>[];
-    var tailStart = -1;
-    for (var y = yStart; y <= yEnd; y += sampleStep) {
+    final states = <RouteSegmentState>[];
+    // The state of the stretch that ARRIVES at a sample: the one whose far end is the first point at or below it.
+    var k = 0;
+    void addSample(double y) {
+      while (k + 1 < route.length && y > route[k].center.dy + 1e-9) {
+        k++;
+      }
       sampleYs.add(y);
       sampleXs.add(routeX(y));
-      if (y <= route.first.center.dy) {
-        traveled.add(route.first.walked);
-      } else if (y >= route.last.center.dy) {
-        traveled.add(false);
-        if (tailStart < 0) tailStart = sampleYs.length - 1;
-      } else {
-        var walked = false;
-        for (var k = 0; k + 1 < route.length; k++) {
-          if (y >= route[k].center.dy && y <= route[k + 1].center.dy) {
-            walked = route[k + 1].walked;
-            break;
-          }
-        }
-        traveled.add(walked);
-      }
+      states.add(_stateInto(route[k], isFinish: end != null && identical(route[k], end)));
     }
-    if (yEnd - sampleYs.last > 0.01) {
-      sampleYs.add(yEnd);
-      sampleXs.add(routeX(yEnd));
-      traveled.add(traveled.last);
+
+    for (var y = yStart; y <= yEnd; y += sampleStep) {
+      addSample(y);
     }
-    tailStart = sampleYs.length; // no faded tail: the road simply ends at the last stop
-
-    final geo = DayRouteGeometry(
-      width: width,
-      height: height,
-      stops: stops,
-      sampleYs: sampleYs,
-      sampleXs: sampleXs,
-      sampleTraveled: traveled,
-      tailStart: tailStart,
-      spurs: const [],
-      detours: const [],
-    );
-
-    final spurs = <RouteSpur>[];
-    final detours = <RouteDetour>[];
-    for (final s in bypassed) {
-      final rx = geo.routeXAt(s.center.dy);
-      final dir = s.center.dx >= rx ? 1.0 : -1.0;
-      final r = nodeRadius * s.scale;
-      final hw = geo.halfWidthAt(s.center.dy);
-      final from = Offset(rx + dir * (hw + 1), s.center.dy);
-      final to = Offset(s.center.dx - dir * (r + 2), s.center.dy);
-      if (s.role != StopRouteRole.recovered && (to.dx - from.dx).abs() > 4) {
-        spurs.add(RouteSpur(stopId: s.id, role: s.role, from: from, to: to));
-      }
-      if (s.role == StopRouteRole.recovered) {
-        StopGeometry? before;
-        StopGeometry? after;
-        for (final r2 in route) {
-          if (r2.index < s.index) before = r2;
-          if (r2.index > s.index && after == null) after = r2;
-        }
-        final pts = <Offset>[];
-        void leg(Offset a, Offset b) {
-          const steps = 18;
-          for (var i = 0; i <= steps; i++) {
-            final u = i / steps;
-            pts.add(Offset(a.dx + (b.dx - a.dx) * _smooth(u), a.dy + (b.dy - a.dy) * u));
-          }
-        }
-
-        final a = before?.center ?? Offset(s.center.dx, math.max(0.0, s.center.dy - 44));
-        final c = after?.center ?? Offset(s.center.dx, math.min(height, s.center.dy + 44));
-        leg(a, s.center);
-        leg(s.center, c);
-        detours.add(RouteDetour(stopId: s.id, points: pts));
-      }
-    }
+    if (yEnd - sampleYs.last > 0.01) addSample(yEnd);
 
     return DayRouteGeometry(
       width: width,
       height: height,
-      stops: [for (final s in stops) s.onRoute ? s : _labelAwayFromRoad(s, geo, width)],
+      stops: stops,
+      finish: end,
       sampleYs: sampleYs,
       sampleXs: sampleXs,
-      sampleTraveled: traveled,
-      tailStart: tailStart,
-      spurs: spurs,
-      detours: detours,
-    );
-  }
-
-  /// A bypassed stop sits off the road, so its label goes on the outer side (never over the road) when there is
-  /// room for it. Only the label side changes; the stop itself never moves.
-  static StopGeometry _labelAwayFromRoad(StopGeometry s, DayRouteGeometry geo, double width) {
-    final outerLeft = s.center.dx < geo.routeXAt(s.center.dy);
-    const reserved = 24.0 + 12.0; // half the tap box + the label's outer margin
-    final room = outerLeft ? s.center.dx - reserved : width - s.center.dx - reserved;
-    if (room < 76 || outerLeft == s.labelOnLeft) return s;
-    return StopGeometry(
-      id: s.id,
-      index: s.index,
-      center: s.center,
-      depth: s.depth,
-      scale: s.scale,
-      labelOnLeft: outerLeft,
-      role: s.role,
-      walked: s.walked,
+      sampleStates: states,
+      tailStart: sampleYs.length, // no faded tail: the road simply ends at the last point
     );
   }
 }

@@ -30,13 +30,25 @@ ScheduleItem item(
 
 const w = 360.0;
 
-DayRouteGeometry geo(List<ScheduleItem> items, {String? now}) => DayRouteGeometry.compute(items, now, w);
+DayRouteGeometry geo(List<ScheduleItem> items, {String? now, bool finish = false}) =>
+    DayRouteGeometry.compute(items, now, w, finish: finish);
 
-/// Samples strictly between [a] and [b] ([a] is the earlier stop: higher on the screen, smaller y).
-Iterable<bool> travelledBetween(DayRouteGeometry g, StopGeometry a, StopGeometry b) sync* {
-  for (var i = 0; i < g.sampleYs.length; i++) {
-    final y = g.sampleYs[i];
-    if (y > a.center.dy && y < b.center.dy) yield g.sampleTraveled[i];
+/// The state of every sample strictly between [a] and [b] ([a] is the earlier stop: higher on the screen, smaller y):
+/// the one stretch of road between two neighbouring stops.
+List<RouteSegmentState> between(DayRouteGeometry g, StopGeometry a, StopGeometry b) => [
+      for (var i = 0; i < g.sampleYs.length; i++)
+        if (g.sampleYs[i] > a.center.dy && g.sampleYs[i] < b.center.dy) g.sampleStates[i]
+    ];
+
+bool allAre(List<RouteSegmentState> states, RouteSegmentState s) => states.isNotEmpty && states.every((x) => x == s);
+
+/// The road is the same line: every stop sits on it, and its shape does not depend on any stop's state.
+void expectSameRoad(DayRouteGeometry g, DayRouteGeometry reference) {
+  expect(g.layoutSignature, reference.layoutSignature);
+  expect(g.sampleYs, reference.sampleYs);
+  expect(g.sampleXs, reference.sampleXs);
+  for (final s in g.stops) {
+    expect(g.distanceToRoute(s.center), lessThan(0.5), reason: '${s.id} is on the route');
   }
 }
 
@@ -59,8 +71,8 @@ void main() {
 
   test('all-future: one blue route through every stop', () {
     final g = geo([item('a'), item('b'), item('c')]);
-    expect(g.stops.every((s) => s.onRoute), isTrue);
-    expect(g.sampleTraveled.any((t) => t), isFalse);
+    expect(g.stops.every((s) => s.role == StopRouteRole.onRoute), isTrue);
+    expect(g.sampleStates.every((s) => s == RouteSegmentState.ahead), isTrue);
     for (final s in g.stops) {
       expect(g.distanceToRoute(s.center), lessThan(0.5));
     }
@@ -69,65 +81,74 @@ void main() {
   test('completed stops turn the walked stretch green; the road ahead stays blue', () {
     final g = geo([item('a', completed: true), item('b', completed: true), item('c'), item('d')], now: 'c');
     final a = g.stopById('a'), b = g.stopById('b'), c = g.stopById('c'), d = g.stopById('d');
-    expect(travelledBetween(g, a, b).every((t) => t), isTrue);
-    expect(travelledBetween(g, b, c).every((t) => t), isTrue, reason: 'the stretch into NOW is walked');
-    expect(travelledBetween(g, c, d).every((t) => !t), isTrue, reason: 'beyond NOW is still ahead');
+    expect(allAre(between(g, a, b), RouteSegmentState.traveled), isTrue);
+    expect(allAre(between(g, b, c), RouteSegmentState.traveled), isTrue, reason: 'the stretch into NOW is walked');
+    expect(allAre(between(g, c, d), RouteSegmentState.ahead), isTrue, reason: 'beyond NOW is still ahead');
   });
 
-  test('a skipped stop is bypassed: the blue route physically bends around it and never passes through', () {
+  test('a skipped stop changes its node only: the road is the same line and stays blue through it', () {
     final all = geo([item('a'), item('b'), item('c'), item('d')]);
     final g = geo([item('a'), item('b', skipped: true), item('c'), item('d')]);
-    final b = g.stopById('b');
+    final a = g.stopById('a'), b = g.stopById('b'), c = g.stopById('c'), d = g.stopById('d');
     expect(b.role, StopRouteRole.skipped);
-    expect(g.distanceToRoute(b.center), greaterThanOrEqualTo(DayRouteGeometry.bypassClearance - 3));
-    expect(all.distanceToRoute(all.stopById('b').center), lessThan(0.5), reason: 'before the skip the route went through B');
-    // the route still reaches its neighbours
-    for (final id in ['a', 'c', 'd']) {
-      expect(g.distanceToRoute(g.stopById(id).center), lessThan(0.5));
-    }
-    // the bend is real geometry: the route differs from the unskipped one near B
-    final y = b.center.dy;
-    expect((g.routeXAt(y) - all.routeXAt(y)).abs(), greaterThan(1));
-    expect(g.spurs.map((s) => s.stopId), contains('b'));
+    expectSameRoad(g, all);
+    expect(allAre(between(g, a, b), RouteSegmentState.ahead), isTrue, reason: 'blue runs INTO the skipped stop');
+    expect(allAre(between(g, b, c), RouteSegmentState.ahead), isTrue, reason: 'and on out of it');
+    expect(allAre(between(g, c, d), RouteSegmentState.ahead), isTrue);
   });
 
-  test('a deferred history node bypasses like a skip', () {
+  test('skipped between two done stops: blue into it (it was not walked), green after it', () {
+    final g = geo([item('a', completed: true), item('b', skipped: true), item('c', completed: true), item('d')], now: 'd');
+    final a = g.stopById('a'), b = g.stopById('b'), c = g.stopById('c'), d = g.stopById('d');
+    expect(allAre(between(g, a, b), RouteSegmentState.ahead), isTrue);
+    expect(allAre(between(g, b, c), RouteSegmentState.traveled), isTrue);
+    expect(allAre(between(g, c, d), RouteSegmentState.traveled), isTrue);
+    expectSameRoad(g, geo([item('a'), item('b'), item('c'), item('d')]));
+  });
+
+  test('a deferred history node is a skipped node on the same road', () {
     final g = geo([item('a'), item('h', deviation: 'deferred'), item('c')]);
     expect(g.stopById('h').role, StopRouteRole.skipped);
-    expect(g.distanceToRoute(g.stopById('h').center), greaterThanOrEqualTo(DayRouteGeometry.bypassClearance - 3));
+    expectSameRoad(g, geo([item('a'), item('h'), item('c')]));
   });
 
-  test('a recovered stop keeps its history: route still bends around it and an orange detour runs through it', () {
+  test('a recovered stop: the orange state follows the SAME winding route, no separate line', () {
     final g = geo([item('a', completed: true), item('b', completed: true, recovered: true), item('c', completed: true), item('d')], now: 'd');
-    final b = g.stopById('b');
+    final a = g.stopById('a'), b = g.stopById('b'), c = g.stopById('c'), d = g.stopById('d');
     expect(b.role, StopRouteRole.recovered);
     expect(b.walked, isFalse, reason: 'recovered is not part of the normal walked route');
-    expect(g.distanceToRoute(b.center), greaterThanOrEqualTo(DayRouteGeometry.bypassClearance - 3));
-    expect(g.detours.length, 1);
-    final d = g.detours.single;
-    expect(d.stopId, 'b');
-    expect(d.points.any((p) => (p - b.center).distance < 1), isTrue, reason: 'the detour passes through the node');
-    expect(d.points.first.dy, lessThan(b.center.dy), reason: 'it leaves the previous stop (above) ...');
-    expect(d.points.last.dy, greaterThan(b.center.dy), reason: '... and rejoins at the next stop (below)');
+    expectSameRoad(g, geo([item('a'), item('b'), item('c'), item('d')]));
+    expect(allAre(between(g, a, b), RouteSegmentState.recovered), isTrue, reason: 'the way into B is orange');
+    expect(allAre(between(g, b, c), RouteSegmentState.traveled), isTrue);
+    expect(allAre(between(g, c, d), RouteSegmentState.traveled), isTrue);
+    // orange samples lie on the very polyline that green and blue ones do
+    for (var i = 0; i < g.sampleYs.length; i++) {
+      if (g.sampleStates[i] == RouteSegmentState.recovered) {
+        expect(g.distanceToRoute(Offset(g.sampleXs[i], g.sampleYs[i])), lessThan(1e-6));
+      }
+    }
   });
 
-  test('a missed stop stays at its planned position; the route moves past it on its own (bypassed, not a skip)', () {
+  test('A recovered, B normal, C normal: only the stretch into A changes colour', () {
+    final g = geo([item('a', completed: true), item('b', completed: true, recovered: true), item('c'), item('d')], now: 'c');
+    final states = g.sampleStates.toSet();
+    expect(states, containsAll([RouteSegmentState.traveled, RouteSegmentState.recovered, RouteSegmentState.ahead]));
+  });
+
+  test('a missed stop stays at its planned position and on the road; only its node says it was missed', () {
     final all = geo([item('a'), item('m'), item('c')]);
     final g = geo([item('a'), item('m', missed: true), item('c')]);
     final m = g.stopById('m');
     expect(m.role, StopRouteRole.bypassed);
-    expect(g.distanceToRoute(m.center), greaterThanOrEqualTo(DayRouteGeometry.bypassClearance - 3));
     expect(g.stops.map((s) => s.id).toList(), ['a', 'm', 'c'], reason: 'chronological order is preserved');
     expect(m.center, all.stopById('m').center, reason: 'the node does not move');
-    for (final id in ['a', 'c']) {
-      expect(g.distanceToRoute(g.stopById(id).center), lessThan(0.5), reason: 'the route still reaches its neighbours');
-    }
+    expectSameRoad(g, all);
   });
 
-  test('failed bypasses the route (red is reserved for true failure)', () {
+  test('failed is a red node on the same road (red is reserved for true failure)', () {
     final g = geo([item('a'), item('f', failed: true), item('c')]);
     expect(g.stopById('f').role, StopRouteRole.failed);
-    expect(g.distanceToRoute(g.stopById('f').center), greaterThanOrEqualTo(DayRouteGeometry.bypassClearance - 3));
+    expectSameRoad(g, geo([item('a'), item('f'), item('c')]));
   });
 
   test('a commitment is a normal stop on the route', () {
@@ -135,10 +156,36 @@ void main() {
     expect(g.stopById('go').role, StopRouteRole.onRoute);
   });
 
-  test('skipping the first and the last stop still yields a route that clears them', () {
+  test('skipping the first and the last stop still leaves one continuous road through them', () {
     final g = geo([item('a', skipped: true), item('b'), item('c', skipped: true)]);
-    for (final id in ['a', 'c']) {
-      expect(g.distanceToRoute(g.stopById(id).center), greaterThanOrEqualTo(DayRouteGeometry.bypassClearance - 3));
+    expectSameRoad(g, geo([item('a'), item('b'), item('c')]));
+    expect(g.sampleYs.first, g.stopById('a').center.dy);
+    expect(g.sampleYs.last, g.stopById('c').center.dy);
+  });
+
+  test('every state at once: one continuous, gap-free route through all stops', () {
+    final items = [
+      item('a', completed: true),
+      item('b', skipped: true),
+      item('c', completed: true, recovered: true),
+      item('d', missed: true),
+      item('e', failed: true),
+      item('f'),
+    ];
+    final g = geo(items, now: 'f');
+    expectSameRoad(g, geo([for (final i in items) item(i.id)]));
+    for (var i = 0; i + 1 < g.sampleYs.length; i++) {
+      expect(g.sampleYs[i + 1] - g.sampleYs[i], lessThanOrEqualTo(DayRouteGeometry.sampleStep + 0.01), reason: 'no gap');
+    }
+  });
+
+  test('deleting a stop recomputes the road around the remaining stops', () {
+    final four = geo([item('a'), item('b'), item('c'), item('d')]);
+    final three = geo([item('a'), item('c'), item('d')]);
+    expect(three.stops.map((s) => s.id), ['a', 'c', 'd']);
+    expect(three.height, lessThan(four.height));
+    for (final s in three.stops) {
+      expect(three.distanceToRoute(s.center), lessThan(0.5));
     }
   });
 
@@ -164,18 +211,18 @@ void main() {
     expect(a.sampleXs.length, b.sampleXs.length);
   });
 
-  test('skipping or recovering a stop never moves any stop: same stops, different road', () {
+  test('skipping or recovering a stop never moves any stop or the road: same stops, same line, new colours', () {
     final base = geo([item('a'), item('b'), item('c'), item('d')]);
     final skipped = geo([item('a', completed: true), item('b', skipped: true), item('c'), item('d')]);
     final recovered = geo([item('a', completed: true), item('b', completed: true, recovered: true), item('c'), item('d')]);
     for (final other in [skipped, recovered]) {
       for (var i = 0; i < base.stops.length; i++) {
         expect(other.stops[i].center, base.stops[i].center);
-        if (other.stops[i].onRoute) expect(other.stops[i].labelOnLeft, base.stops[i].labelOnLeft);
+        expect(other.stops[i].labelOnLeft, base.stops[i].labelOnLeft);
       }
+      expect(other.sampleXs, base.sampleXs, reason: 'the line itself is identical');
+      expect(base.sameRoute(other), isFalse, reason: 'only the colours / node state differ');
     }
-    expect(base.sameRoute(skipped), isFalse); // the road did change
-    expect(recovered.detours, isNotEmpty);
   });
 
   test('the road begins at the first stop and ends at the last stop', () {
@@ -195,5 +242,37 @@ void main() {
       }
       expect(g.stops.every((s) => s.center.dy > 0 && s.center.dy < g.height), isTrue);
     }
+  });
+
+  group('the finish (Trophy) at the end of the road', () {
+    test('without a finish there is none', () {
+      expect(geo([item('a'), item('b')]).finish, isNull);
+    });
+
+    test('a finish sits below the last stop on the same road, which is green into it', () {
+      final plain = geo([item('a', completed: true), item('b', completed: true)]);
+      final g = geo([item('a', completed: true), item('b', completed: true)], finish: true);
+      final end = g.finish!;
+      expect(g.stops.length, 2, reason: 'the finish is not a task stop');
+      expect(end.center.dy, greaterThan(g.stops.last.center.dy));
+      expect(end.center.dy - g.stops.last.center.dy, DayRouteGeometry.farSpacing);
+      expect(g.distanceToRoute(end.center), lessThan(0.5));
+      expect(g.sampleYs.last, closeTo(end.center.dy, 0.01), reason: 'the road ends at the finish');
+      expect(allAre(between(g, g.stops.last, end), RouteSegmentState.traveled), isTrue);
+      expect(g.height, greaterThan(plain.height));
+      for (var i = 0; i < plain.stops.length; i++) {
+        expect(g.stops[i].center, plain.stops[i].center, reason: 'adding the finish moves no stop');
+      }
+      expect(g.sampleXs.sublist(0, plain.sampleXs.length - 1), plain.sampleXs.sublist(0, plain.sampleXs.length - 1));
+    });
+
+    test('a finish after skipped / recovered stops still follows the one road', () {
+      final items = [item('a', completed: true), item('b', skipped: true), item('c', completed: true, recovered: true)];
+      final g = geo(items, finish: true);
+      expect(g.distanceToRoute(g.finish!.center), lessThan(0.5));
+      for (final s in g.stops) {
+        expect(g.distanceToRoute(s.center), lessThan(0.5));
+      }
+    });
   });
 }

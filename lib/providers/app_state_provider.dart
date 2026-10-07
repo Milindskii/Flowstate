@@ -83,6 +83,23 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   DateTime _selectedCalendarDate = DateTime.now();
   int _calendarDayRequestId = 0;
 
+  /// Task-list reads are numbered like Calendar day reads: an older answer never replaces a newer one.
+  int _tasksRequestId = 0;
+  int _tasksAppliedId = 0;
+
+  /// Edits the user made that the server has not confirmed yet. A read that was already in flight when the edit
+  /// was made predates it, so every task-list and day read is re-checked against these before it is adopted
+  /// (one source of truth: the server answer, with the unconfirmed edits laid on top until it catches up).
+  final Set<String> _pendingCompletions = {};
+
+  /// taskId -> the day strings it is being removed from (deleted: [_everyDay]; moved to another day: that day).
+  final Map<String, Set<String>> _pendingRemovals = {};
+  static const String _everyDay = '*';
+
+  /// Trophy claims in flight / done this session, by day: a repeated tap shares the one request.
+  final Map<String, Future<Map<String, dynamic>?>> _claimsInFlight = {};
+  final Set<String> _claimedDays = {};
+
   TodayResponseModel? _todaySnapshot;
   DateTime? _lastUpdatedAt;
   DateTime? _lastBackendSyncAt;  // guards local recomputation
@@ -210,6 +227,39 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       refreshTodayData(),
       loadCalendarDay(_selectedCalendarDate, silent: true),
     ]);
+  }
+
+  /// A task-list read with the unconfirmed edits laid back on top (see [_pendingCompletions]).
+  List<TaskItem> _withPendingTaskEdits(List<TaskItem> remote) {
+    if (_pendingCompletions.isEmpty && _pendingRemovals.isEmpty) return remote;
+    return [
+      for (final t in remote)
+        if (!(_pendingRemovals[t.id]?.contains(_everyDay) ?? false))
+          _pendingCompletions.contains(t.id) && !t.isCompleted
+              ? t.copyWith(isCompleted: true, completedAt: t.completedAt ?? DateTime.now(), status: TaskStatus.completed)
+              : t,
+    ];
+  }
+
+  /// A day read with the unconfirmed removals (a delete, a move to another day) applied again: a read that was in
+  /// flight when the user acted still lists the task.
+  DayScheduleResponse _withPendingDayEdits(DayScheduleResponse day) {
+    if (_pendingRemovals.isEmpty) return day;
+    var out = day;
+    _pendingRemovals.forEach((taskId, days) {
+      final everywhere = days.contains(_everyDay);
+      if (everywhere || days.contains(day.date)) out = out.withoutTask(taskId, includeHistory: everywhere);
+    });
+    return out;
+  }
+
+  /// The selected day without [taskId], shown at once (the server confirms and the day is re-read after).
+  void _removeFromSelectedDay(String taskId, {required bool includeHistory}) {
+    final day = _selectedDateSchedule;
+    if (day == null) return;
+    final next = day.withoutTask(taskId, includeHistory: includeHistory);
+    _selectedDateSchedule = next;
+    _dayScheduleCache[day.date] = next;
   }
 
   void _recordAnchors(String dateStr, DayScheduleResponse day) {
@@ -724,6 +774,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     String taskId, {
     required DateTime targetDate,
     TimeOfDay? targetTime,
+    bool leaveDayAtOnce = true,
   }) async {
     final index = _tasks.indexWhere((t) => t.id == taskId);
     if (index == -1) return false;
@@ -777,6 +828,20 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     _tasks[index] = updated;
     _forgetAnchor(taskId); // an explicit new time/day: the stop takes its new place
 
+    // Moved to another day: it leaves the day on screen now, not after the server answers. A read already in flight
+    // still lists it, so the removal stays pending (and is re-applied to those reads) until the save is confirmed.
+    final shownDay = DateFormat('yyyy-MM-dd').format(_selectedCalendarDate);
+    final leavesShownDay = leaveDayAtOnce &&
+        !_isDemoMode &&
+        isAuthenticated &&
+        shownDay != DateFormat('yyyy-MM-dd').format(normalizedDate);
+    if (leavesShownDay) {
+      _pendingRemovals[taskId] = {shownDay};
+      _dayScheduleCache.clear();
+      _removeFromSelectedDay(taskId, includeHistory: false);
+      notifyListeners();
+    }
+
     if (_preferredActiveTaskId == taskId) {
       _preferredActiveTaskId = null;
     }
@@ -803,14 +868,17 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (i != -1) _tasks[i] = task; // revert: never show a time the server did not accept
         _deferredTaskIds.remove(taskId);
         _lastSyncError = "Couldn't save the new time for \u201c${task.title}\u201d. Nothing was changed.";
+        _pendingRemovals.remove(taskId);
         _dayScheduleCache.clear();
         _recalculateSchedule();
         notifyListeners();
+        if (leavesShownDay) await loadCalendarDay(_selectedCalendarDate, silent: true); // the node comes back
         return false;
       }
     }
 
     await recordOverride(reason: 'reschedule');
+    _pendingRemovals.remove(taskId); // the server has the move: the day read below is authoritative
     _dayScheduleCache.clear();
     _lastBackendSyncAt = null; // Force fresh schedule recalculation
     _recalculateSchedule();
@@ -829,7 +897,8 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     final target = nextWindow ?? DateTime.now().add(const Duration(days: 1));
     final targetDate = DateTime(target.year, target.month, target.day);
     final targetTime = TimeOfDay(hour: target.hour, minute: target.minute);
-    await rescheduleTask(taskId, targetDate: targetDate, targetTime: targetTime);
+    // "Later" is a deviation, not a move: the stop keeps its place on today's path as history.
+    await rescheduleTask(taskId, targetDate: targetDate, targetTime: targetTime, leaveDayAtOnce: false);
   }
 
   /// Get easier alternative for What Should I Do Now screen
@@ -1035,13 +1104,16 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       final task = _tasks[index];
       final willComplete = !task.isCompleted;
       _tasks[index] = task.copyWith(isCompleted: willComplete, completedAt: willComplete ? DateTime.now() : null);
+      if (!willComplete) _pendingCompletions.remove(task.id); // taken back: no unconfirmed completion to protect
 
       if (willComplete) {
         if (_preferredActiveTaskId == task.id || _preferredActiveTaskId == taskId) {
           _preferredActiveTaskId = null;
         }
         // If this task was skipped or deferred, mark it as completed after deviation (recovery)
-        if (_skippedTaskIds.contains(task.id) || _deferredTaskIds.contains(task.id)) {
+        final wasSkipped = _skippedTaskIds.contains(task.id);
+        final wasDeferred = _deferredTaskIds.contains(task.id);
+        if (wasSkipped || wasDeferred) {
           _completedAfterDeviationTaskIds.add(task.id);
           _skippedTaskIds.remove(task.id);
           _deferredTaskIds.remove(task.id);
@@ -1059,7 +1131,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
             // Task creation is still in-flight; will be completed once created
             debugPrint('Task ${task.id} creation in-flight; backend completion queued.');
           } else {
-            _sendCompleteToBackend(task);
+            unawaited(_sendCompleteToBackend(task, wasSkipped: wasSkipped, wasDeferred: wasDeferred));
           }
         }
         _recalculateReadiness();
@@ -1075,33 +1147,68 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _sendCompleteToBackend(TaskItem task) {
-    taskService
-        .completeTask(task.id)
-        .then((_) {
-      // Authoritative sync after backend confirms quest & task persistence (no second local bump)
-      onFlowNeedsRefresh?.call();
-      return _afterTaskMutation();
-    }).catchError((e) {
+  /// Stores a completion the user just made. Until the server answers the completion is a pending edit: any read
+  /// that was already in flight is re-checked against it. Confirmed: the day and Today are re-read once. Rejected:
+  /// the task is put back as it was (never a "done" the server does not have) and the day is re-read.
+  Future<void> _sendCompleteToBackend(TaskItem task, {bool wasSkipped = false, bool wasDeferred = false}) async {
+    _pendingCompletions.add(task.id);
+    try {
+      await taskService.completeTask(task.id);
+    } catch (e) {
       debugPrint('Error completing task on backend: $e');
-    });
+      _pendingCompletions.remove(task.id);
+      // Without an account (guest / offline) there is no server copy to agree with: the local completion stands.
+      if (!isAuthenticated) return;
+      final i = _tasks.indexWhere((t) => t.id == task.id);
+      if (i != -1) _tasks[i] = task.isCompleted ? task.copyWith(isCompleted: false, status: TaskStatus.todo) : task;
+      _completedAfterDeviationTaskIds.remove(task.id);
+      if (wasSkipped) _skippedTaskIds.add(task.id);
+      if (wasDeferred) _deferredTaskIds.add(task.id);
+      unawaited(_saveRouteStates());
+      _lastSyncError = "Couldn't save \u201c${task.title}\u201d as done. It was put back.";
+      _recalculateReadiness();
+      _recalculateSchedule();
+      _dayScheduleCache.clear();
+      notifyListeners();
+      await _afterTaskMutation();
+      return;
+    }
+    _pendingCompletions.remove(task.id);
+    // Authoritative sync after backend confirms quest & task persistence (no second local bump)
+    onFlowNeedsRefresh?.call();
+    await _afterTaskMutation();
   }
 
   /// The trophy at the end of a finished day: Noya's XP, granted once per day by the server.
-  Future<Map<String, dynamic>?> claimDayComplete(DateTime date) async {
-    if (_isDemoMode || !isAuthenticated) return null;
+  ///
+  /// Safe to call repeatedly: taps while a claim is in flight share that one request, a day already claimed in this
+  /// session sends nothing, and the server itself grants a day's XP only once (a repeat reports `already_claimed`),
+  /// so a restart or a second device can never claim twice either.
+  Future<Map<String, dynamic>?> claimDayComplete(DateTime date) {
+    if (_isDemoMode || !isAuthenticated) return Future.value(null);
     final dateStr = DateFormat('yyyy-MM-dd').format(date);
+    if (_claimedDays.contains(dateStr)) {
+      return Future.value({'date': dateStr, 'claimed': true, 'already_claimed': true, 'xp_awarded': 0});
+    }
+    return _claimsInFlight[dateStr] ??= _claimDay(dateStr).whenComplete(() {
+      // a block body: returning the removed future would make it wait on itself
+      _claimsInFlight.remove(dateStr);
+    });
+  }
+
+  Future<Map<String, dynamic>?> _claimDay(String dateStr) async {
     final tz = await _localTimezone();
     final res = await apiService.post('/api/v1/flow/day-complete/claim', body: {
       'date': dateStr,
       if (tz != null) 'timezone': tz,
     });
+    _claimedDays.add(dateStr);
     final day = _selectedDateSchedule;
     if (day != null && day.date == dateStr) {
       _selectedDateSchedule = day.withDayComplete(day.dayComplete.copyWith(claimed: true));
       _dayScheduleCache[dateStr] = _selectedDateSchedule!;
-      notifyListeners();
     }
+    notifyListeners();
     onFlowNeedsRefresh?.call(); // Flow/Noya progression re-reads its overview
     return res is Map<String, dynamic> ? res : null;
   }
@@ -1158,7 +1265,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
           final wasCompleted = _tasks[idx].isCompleted;
           _tasks[idx] = persisted.copyWith(isCompleted: wasCompleted);
           if (wasCompleted) {
-            _sendCompleteToBackend(_tasks[idx]);
+            unawaited(_sendCompleteToBackend(_tasks[idx]));
           }
           _dayScheduleCache.clear();
           if (_selectedDateSchedule != null) {
@@ -1216,18 +1323,48 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// Deletes a task. The node leaves Calendar at once and stays gone: a read that was already in flight is
+  /// re-checked against the pending delete, and the day is re-read once the server has actually deleted it.
   void removeTask(String taskId) {
+    final removed = _tasks.where((t) => t.id == taskId).firstOrNull;
     _tasks.removeWhere((t) => t.id == taskId);
     _dayScheduleCache.clear();
-    if (!_isDemoMode) {
-      taskService.deleteTask(taskId).catchError((_) {});
-    }
     _recalculateReadiness();
     _recalculateSchedule();
-    if (_selectedDateSchedule != null) {
-      loadCalendarDay(_selectedCalendarDate, silent: true);
+    if (_isDemoMode || !isAuthenticated) {
+      // No account to confirm against (demo / guest): the local list is the truth, the server call is best-effort.
+      if (!_isDemoMode) taskService.deleteTask(taskId).catchError((_) {});
+      if (_selectedDateSchedule != null) loadCalendarDay(_selectedCalendarDate, silent: true);
+      notifyListeners();
+      return;
     }
+    _pendingCompletions.remove(taskId);
+    _pendingRemovals[taskId] = {_everyDay};
+    _removeFromSelectedDay(taskId, includeHistory: true);
     notifyListeners();
+    unawaited(_deleteOnServer(taskId, removed));
+  }
+
+  Future<void> _deleteOnServer(String taskId, TaskItem? removed) async {
+    var deleted = true;
+    try {
+      await taskService.deleteTask(taskId);
+    } on ApiException catch (e) {
+      deleted = e.statusCode == 404; // already gone is as good as deleted
+      if (!deleted) debugPrint('Error deleting task $taskId: $e');
+    } catch (e) {
+      deleted = false;
+      debugPrint('Error deleting task $taskId: $e');
+    }
+    _pendingRemovals.remove(taskId);
+    if (!deleted && removed != null && !_tasks.any((t) => t.id == taskId)) {
+      _tasks.insert(0, removed); // the server still has it: never show it gone
+      _lastSyncError = "Couldn't delete \u201c${removed.title}\u201d. It was put back.";
+      _recalculateReadiness();
+      _recalculateSchedule();
+      notifyListeners();
+    }
+    await _afterTaskMutation();
   }
 
   // Optimization Trigger
@@ -1269,7 +1406,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // Instant restoration from cache if available (eliminates flicker/reload flash)
     if (_dayScheduleCache.containsKey(dateStr)) {
-      _selectedDateSchedule = _dayScheduleCache[dateStr];
+      _selectedDateSchedule = _withPendingDayEdits(_dayScheduleCache[dateStr]!);
       _isLoadingCalendarDay = false;
       notifyListeners();
     } else if (silent && _selectedDateSchedule != null && _selectedDateSchedule!.date == dateStr) {
@@ -1309,10 +1446,11 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     try {
       // Only a blocking load (nothing cached to show) is "thinking"; a background refresh stays silent.
       final blocking = _selectedDateSchedule == null;
-      final remoteSchedule = blocking
+      final fetched = blocking
           ? await busy.track(() => calendarService.getDaySchedule(dateStr), label: 'Loading your day')
           : await calendarService.getDaySchedule(dateStr);
       if (requestId == _calendarDayRequestId) {
+        final remoteSchedule = _withPendingDayEdits(fetched); // a read from before a delete / move still lists it
         _dayScheduleCache[dateStr] = remoteSchedule;
         _selectedDateSchedule = remoteSchedule;
         _lastCalendarFetchAt = FlowClock().now;
@@ -2129,6 +2267,9 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     _isDemoMode = false;
 
     if (isSwitchingUser) {
+      _claimedDays.clear();
+      _pendingCompletions.clear();
+      _pendingRemovals.clear();
       _reflections.clear();
       _reflectionsReady = _loadReflections();
       _tasks = [];
@@ -2226,9 +2367,13 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Fetches real tasks belonging exclusively to the authenticated user from the database.
   Future<void> loadUserTasks() async {
+    final requestId = ++_tasksRequestId;
     try {
       final remoteTasks = await taskService.getTasks();
-      _tasks = remoteTasks;
+      // A newer read already landed: this one is older than what is on screen.
+      if (requestId < _tasksAppliedId) return;
+      _tasksAppliedId = requestId;
+      _tasks = _withPendingTaskEdits(remoteTasks);
       _recalculateReadiness();
       _recalculateSchedule();
       notifyListeners();
@@ -2247,6 +2392,9 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Sign out current user, wipe in-memory tasks & schedule, clear persistent onboarding state.
   Future<void> logout() async {
     await authService.logout();
+    _claimedDays.clear();
+    _pendingCompletions.clear();
+    _pendingRemovals.clear();
     _currentUser = null;
     _tasks = [];
     _schedule = [];

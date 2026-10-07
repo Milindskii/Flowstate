@@ -241,6 +241,8 @@ void main() {
     await pump(tester, server);
     await tester.scrollUntilVisible(find.byKey(const Key('path_trophy')), 200, scrollable: find.byType(Scrollable).first);
     expect(find.byKey(const Key('path_trophy')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('path_trophy'))); // the Trophy opens the compact claim sheet
+    await tester.pumpAndSettle();
     final claim = find.byKey(const Key('path_trophy_claim'));
     expect(tester.getSize(claim).height, greaterThanOrEqualTo(48));
     await tester.tap(claim);

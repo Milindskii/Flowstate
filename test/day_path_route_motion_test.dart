@@ -43,49 +43,64 @@ Widget _host(List<ScheduleItem> items, {bool reduced = false}) => MaterialApp(
 DayRoutePainter _painter(WidgetTester tester) => tester.widget<CustomPaint>(find.byKey(const Key('flow_day_route'))).painter as DayRoutePainter;
 
 void main() {
-  testWidgets('skipping a task morphs the route itself (not a recolor) over a restrained duration', (tester) async {
+  testWidgets('skipping a task never moves the road: only the node changes', (tester) async {
     await tester.pumpWidget(_host([_it('a'), _it('b'), _it('c'), _it('d')]));
     await tester.pumpAndSettle();
     final before = List<double>.from(_painter(tester).geometry.sampleXs);
     expect(tester.binding.transientCallbackCount, 0);
 
     await tester.pumpWidget(_host([_it('a'), _it('b', skipped: true), _it('c'), _it('d')]));
+    await tester.pumpAndSettle();
+    final after = _painter(tester).geometry;
+    expect(after.sampleXs, before, reason: 'the winding line is identical');
+    expect(after.stopById('b').role, StopRouteRole.skipped);
+    expect(after.distanceToRoute(after.stopById('b').center), lessThan(0.5));
+    expect(find.byKey(const Key('path_skipped_b')), findsOneWidget);
+    expect(_painter(tester).fromXs, isNull, reason: 'nothing had to morph');
+  });
+
+  testWidgets('completing a stop colours the road in (green creeping down it) over a restrained duration', (tester) async {
+    await tester.pumpWidget(_host([_it('a'), _it('b'), _it('c')]));
+    await tester.pumpAndSettle();
+    expect(tester.binding.transientCallbackCount, 0);
+
+    await tester.pumpWidget(_host([_it('a'), _it('b', done: true), _it('c')]));
     await tester.pump(const Duration(milliseconds: 150));
-    expect(tester.binding.transientCallbackCount, greaterThan(0), reason: 'the route is morphing');
+    expect(tester.binding.transientCallbackCount, greaterThan(0), reason: 'the new colour is drawing in');
     final mid = _painter(tester);
-    expect(mid.fromXs, isNotNull);
+    expect(mid.fromStates, isNotNull);
     expect(mid.t, inInclusiveRange(0.01, 0.99));
 
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
     expect(tester.binding.transientCallbackCount, 0);
-    final after = _painter(tester).geometry;
-    final yB = after.stopById('b').center.dy;
-    expect((after.routeXAt(yB) - before[((yB - after.sampleYs.first) / DayRouteGeometry.sampleStep).round()]).abs(), greaterThan(1),
-        reason: 'the route really moved around B');
-    expect(after.distanceToRoute(after.stopById('b').center), greaterThanOrEqualTo(DayRouteGeometry.bypassClearance - 3));
+    final g = _painter(tester).geometry;
+    expect(g.sampleStates, contains(RouteSegmentState.traveled));
   });
 
-  testWidgets('reduced motion: the route changes at once, nothing animates', (tester) async {
+  testWidgets('reduced motion: the road recolours at once, nothing animates', (tester) async {
     await tester.pumpWidget(_host([_it('a'), _it('b'), _it('c')], reduced: true));
     await tester.pumpAndSettle();
-    await tester.pumpWidget(_host([_it('a'), _it('b', skipped: true), _it('c')], reduced: true));
+    await tester.pumpWidget(_host([_it('a'), _it('b', done: true), _it('c')], reduced: true));
     await tester.pump();
     expect(tester.binding.transientCallbackCount, 0);
     expect(_painter(tester).fromXs, isNull);
-    final g = _painter(tester).geometry;
-    expect(g.distanceToRoute(g.stopById('b').center), greaterThanOrEqualTo(DayRouteGeometry.bypassClearance - 3));
+    expect(_painter(tester).fromStates, isNull);
+    expect(_painter(tester).geometry.sampleStates, contains(RouteSegmentState.traveled));
   });
 
-  testWidgets('recovering a skipped task adds a real orange detour and keeps the node marked recovered', (tester) async {
+  testWidgets('recovering a skipped task turns the road into it orange, on the same line, and marks the node recovered',
+      (tester) async {
     await tester.pumpWidget(_host([_it('a', done: true), _it('b', skipped: true), _it('c')]));
     await tester.pumpAndSettle();
-    expect(_painter(tester).geometry.detours, isEmpty);
+    final skippedXs = List<double>.from(_painter(tester).geometry.sampleXs);
+    expect(_painter(tester).geometry.sampleStates, isNot(contains(RouteSegmentState.recovered)));
 
     await tester.pumpWidget(_host([_it('a', done: true), _it('b', done: true, recovered: true), _it('c')]));
     await tester.pumpAndSettle();
     final g = _painter(tester).geometry;
-    expect(g.detours.single.stopId, 'b');
+    expect(g.sampleStates, contains(RouteSegmentState.recovered));
+    expect(g.sampleXs, skippedXs, reason: 'no new line: the same road, recoloured');
     expect(find.byKey(const Key('path_check_b')), findsOneWidget);
     expect(find.textContaining('Recovered'), findsOneWidget);
   });

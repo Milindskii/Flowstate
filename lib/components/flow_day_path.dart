@@ -23,10 +23,10 @@ import 'noya_motion_view.dart';
 /// the viewer and shrink with distance; labels sit beside the road on the side opposite its bend and stay
 /// secondary.
 ///
-/// The route is not a decoration: [DayRouteGeometry] derives it from the items' real state, and the painter draws
-/// exactly that. The stretch already travelled is green, the road ahead blue; a skipped or deferred stop (yellow)
-/// makes the route physically bend around it, a recovered one keeps that history and gets an orange detour, and
-/// red is only for a true failure.
+/// The route is not a decoration: [DayRouteGeometry] derives ONE road through every stop, and the painter draws
+/// exactly that. The stretch already travelled is green, the road ahead blue, the way into a recovered stop orange;
+/// a skipped (yellow) or failed (red) stop changes its own node, never the road, which runs on through it. When the
+/// day is complete the road ends in the day's Trophy.
 class FlowDayPath extends StatefulWidget {
   final List<ScheduleItem> items;
   final String? nowItemId;
@@ -90,7 +90,17 @@ class _FlowDayPathState extends State<FlowDayPath> {
   final GlobalKey _targetKey = GlobalKey();
   String? _revealedFor;
 
-  /// Where the traveller is: NOW, else the next unfinished stop, else the start of the road.
+  /// The day's Trophy sits at the end of the road once nothing live is open on the day (the server's verdict, which
+  /// the Calendar day carries) and at least one task was done. A day whose tasks are merely hidden never gets one.
+  bool get _trophyReady {
+    final status = widget.dayComplete;
+    if (status == null || !status.eligible) return false;
+    final items = widget.items;
+    if (!items.any((i) => i.isCompleted && !i.isCommitment)) return false;
+    return !items.any((i) => i.deviation == null && !i.isCompleted && !i.isCommitment);
+  }
+
+  /// Where the traveller is: NOW, else the next unfinished stop, else the Trophy (unclaimed), else the road's start.
   String? get _targetId {
     final items = widget.items;
     if (items.isEmpty) return null;
@@ -98,6 +108,7 @@ class _FlowDayPathState extends State<FlowDayPath> {
     for (final i in items) {
       if (!i.isCompleted && !i.isSkipped && !i.isFailed && !i.isMissed && i.deviation == null) return i.id;
     }
+    if (_trophyReady && !(widget.dayComplete?.claimed ?? false)) return DayRouteGeometry.finishId;
     return items.first.id;
   }
 
@@ -132,17 +143,19 @@ class _FlowDayPathState extends State<FlowDayPath> {
   @override
   Widget build(BuildContext context) {
     final items = widget.items;
-    final dayDone = items.isNotEmpty &&
-        (items.every((i) => i.isCompleted) || (widget.dayComplete?.eligible ?? false));
+    final status = widget.dayComplete;
+    final trophy = _trophyReady;
+    final dayDone = items.isNotEmpty && (items.every((i) => i.isCompleted) || (status?.eligible ?? false));
     _revealTarget();
 
+    final finished = [for (final i in items) if (i.isCompleted) i];
     return Column(
       key: const Key('flow_day_path_line'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         LayoutBuilder(builder: (context, constraints) {
           final width = constraints.maxWidth.isFinite ? constraints.maxWidth : MediaQuery.of(context).size.width;
-          final geo = DayRouteGeometry.compute(items, widget.nowItemId, width);
+          final geo = DayRouteGeometry.compute(items, widget.nowItemId, width, finish: trophy);
           final targetId = _targetId;
           return SizedBox(
             width: width,
@@ -173,25 +186,36 @@ class _FlowDayPathState extends State<FlowDayPath> {
                       onTap: () => widget.onTap(items[stop.index]),
                     ),
                   ),
+                // The end of the road: the day's Trophy, drawn like any other stop.
+                if (geo.finish != null && status != null)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: geo.finish!.center.dy - FlowDayPath.rowHeight / 2,
+                    height: FlowDayPath.rowHeight,
+                    child: _TrophyStop(
+                      key: const Key('path_trophy_stop'),
+                      rowKey: targetId == DayRouteGeometry.finishId ? _targetKey : null,
+                      stop: geo.finish!,
+                      width: width,
+                      status: status,
+                      summary: _DaySummary.of(finished, widget.reflectionFor),
+                      onClaim: widget.onClaimTrophy,
+                    ),
+                  ),
               ],
             ),
           );
         }),
-        // The finish of a completed day sits at the end of the road, at the bottom.
-        if (dayDone)
-          _DayComplete(
-            items: [for (final i in items) if (i.isCompleted) i],
-            reflectionFor: widget.reflectionFor,
-            status: widget.dayComplete,
-            onClaim: widget.onClaimTrophy,
-          ),
+        // Without a Trophy a finished day still ends with Noya's one milestone, at the bottom.
+        if (dayDone && !trophy) _DaySummary(items: finished, reflectionFor: widget.reflectionFor),
       ],
     );
   }
 }
 
-/// Paints the route and, when the geometry changes for the same stops (a skip, a recovery, a completion),
-/// morphs the route itself — the sampled x positions interpolate — over 400 ms. Reduced motion snaps.
+/// Paints the route and, when the geometry changes for the same stops (a skip, a recovery, a completion), eases the
+/// change in: the sampled x positions interpolate and a newly coloured stretch draws in over 400 ms. Reduced motion snaps.
 class _AnimatedRoute extends StatefulWidget {
   final DayRouteGeometry geometry;
   final DayRoutePalette palette;
@@ -206,8 +230,7 @@ class _AnimatedRouteState extends State<_AnimatedRoute> with SingleTickerProvide
   static const Duration morph = Duration(milliseconds: 400);
   late final AnimationController _c = AnimationController(vsync: this, duration: morph, value: 1);
   List<double>? _fromXs;
-  List<bool>? _fromTraveled;
-  bool _extrasFade = false;
+  List<RouteSegmentState>? _fromStates;
 
   @override
   void didUpdateWidget(_AnimatedRoute old) {
@@ -216,8 +239,7 @@ class _AnimatedRouteState extends State<_AnimatedRoute> with SingleTickerProvide
     final comparable = old.geometry.layoutSignature == widget.geometry.layoutSignature && old.geometry.hasRoute;
     if (!comparable || FlowMotion.isReducedMotion(context)) {
       _fromXs = null;
-      _fromTraveled = null;
-      _extrasFade = false;
+      _fromStates = null;
       _c.value = 1;
       return;
     }
@@ -228,8 +250,7 @@ class _AnimatedRouteState extends State<_AnimatedRoute> with SingleTickerProvide
         _fromXs == null ? old.geometry.sampleXs[i] : _fromXs![i] + (old.geometry.sampleXs[i] - _fromXs![i]) * eased,
     ];
     _fromXs = shown;
-    _fromTraveled = old.geometry.sampleTraveled;
-    _extrasFade = old.geometry.spurs.length != widget.geometry.spurs.length || old.geometry.detours.length != widget.geometry.detours.length;
+    _fromStates = old.geometry.sampleStates;
     _c.forward(from: 0);
   }
 
@@ -251,9 +272,8 @@ class _AnimatedRouteState extends State<_AnimatedRoute> with SingleTickerProvide
             geometry: widget.geometry,
             palette: widget.palette,
             fromXs: _c.isCompleted ? null : _fromXs,
-            fromTraveled: _c.isCompleted ? null : _fromTraveled,
+            fromStates: _c.isCompleted ? null : _fromStates,
             t: t,
-            extrasOpacity: _extrasFade ? t : 1,
           ),
         );
       },
@@ -261,37 +281,222 @@ class _AnimatedRouteState extends State<_AnimatedRoute> with SingleTickerProvide
   }
 }
 
-/// The one milestone on a finished day: Noya's thumbs-up, what the day added up to and, at the very end of the road,
-/// the day's trophy: Noya's XP for finishing everything, collected once (the server decides it is earned).
-class _DayComplete extends StatefulWidget {
+/// The one milestone on a finished day (when there is no Trophy to claim): Noya's thumbs-up and what the day added
+/// up to.
+class _DaySummary extends StatelessWidget {
   final List<ScheduleItem> items;
   final TaskReflection? Function(ScheduleItem item) reflectionFor;
-  final DayCompleteStatus? status;
-  final Future<void> Function()? onClaim;
 
-  const _DayComplete({required this.items, required this.reflectionFor, this.status, this.onClaim});
+  const _DaySummary({required this.items, required this.reflectionFor});
+
+  /// "3 tasks" and "1h 52m" for the stops that were done.
+  static (String count, String total) of(List<ScheduleItem> items, TaskReflection? Function(ScheduleItem item) reflectionFor) {
+    final minutes = items.fold<int>(0, (sum, i) => sum + (reflectionFor(i)?.actualMinutes ?? i.durationMinutes));
+    final hours = minutes ~/ 60;
+    final rest = minutes % 60;
+    final total = hours == 0 ? '$rest min' : (rest == 0 ? '${hours}h' : '${hours}h ${rest}m');
+    return (items.length == 1 ? '1 task' : '${items.length} tasks', total);
+  }
 
   @override
-  State<_DayComplete> createState() => _DayCompleteState();
+  Widget build(BuildContext context) {
+    final (count, total) = of(items, reflectionFor);
+    return Padding(
+      key: const Key('path_day_complete'),
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 96,
+            child: Center(child: NoyaCompanionView(state: NoyaState.goodJob, size: 56)),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Day complete',
+                  style: FlowTypography.bodyLarge(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w700),
+                ),
+                Text('$count · $total', style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context))),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-class _DayCompleteState extends State<_DayComplete> {
+const Color _trophyGold = Color(0xFFF2B233);
+
+/// The destination at the end of a finished day's road: a gold node like the other stops, labelled beside the road.
+/// Tapping it opens the compact claim sheet; the XP itself is granted once by the server.
+class _TrophyStop extends StatelessWidget {
+  final Key? rowKey;
+  final StopGeometry stop;
+  final double width;
+  final DayCompleteStatus status;
+  final (String count, String total) summary;
+  final Future<void> Function()? onClaim;
+
+  const _TrophyStop({
+    super.key,
+    this.rowKey,
+    required this.stop,
+    required this.width,
+    required this.status,
+    required this.summary,
+    required this.onClaim,
+  });
+
+  static const double _nodeBox = 56;
+
+  Future<void> _open(BuildContext context) {
+    FlowHaptics.selection();
+    return showTrophyClaimSheet(
+      context,
+      count: summary.$1,
+      total: summary.$2,
+      xp: status.xp,
+      claimed: status.claimed,
+      onClaim: onClaim,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final x = stop.center.dx;
+    final labelOnLeft = stop.labelOnLeft;
+    final claimed = status.claimed;
+    final dark = FlowColors.isDark(context);
+    final surface = FlowColors.surface(context);
+    final muted = FlowColors.textMutedOf(context);
+    final align = labelOnLeft ? TextAlign.end : TextAlign.start;
+
+    return Semantics(
+      container: true,
+      button: true,
+      label: claimed
+          ? 'Day complete trophy, ${status.xp} XP collected'
+          : 'Day complete trophy, tap to collect ${status.xp} XP for Noya',
+      onTap: () => _open(context),
+      excludeSemantics: true,
+      child: InkWell(
+        key: rowKey,
+        onTap: () => _open(context),
+        borderRadius: FlowRadii.chipRadius,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: labelOnLeft ? 12 : x + _nodeBox / 2 + 4,
+              right: labelOnLeft ? width - (x - _nodeBox / 2 - 4) : 12,
+              child: Align(
+                alignment: labelOnLeft ? Alignment.centerRight : Alignment.centerLeft,
+                child: Column(
+                  crossAxisAlignment: labelOnLeft ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Day complete',
+                      textAlign: align,
+                      style: FlowTypography.bodyLarge(color: FlowColors.textPrimaryOf(context))
+                          .copyWith(fontWeight: FontWeight.w700, height: 1.25, fontSize: 15),
+                    ),
+                    const SizedBox(height: 2),
+                    Text('${summary.$1} · ${summary.$2}', textAlign: align, maxLines: 1, style: FlowTypography.bodySmall(color: muted)),
+                    const SizedBox(height: 2),
+                    Text(
+                      claimed ? '+${status.xp} XP collected' : 'Collect +${status.xp} XP',
+                      key: const Key('path_trophy_tag'),
+                      textAlign: align,
+                      maxLines: 1,
+                      style: FlowTypography.labelSmall(color: claimed ? muted : _trophyGold)
+                          .copyWith(fontWeight: FontWeight.w800),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              top: (FlowDayPath.rowHeight - _nodeBox) / 2,
+              left: x - _nodeBox / 2,
+              width: _nodeBox,
+              height: _nodeBox,
+              child: Center(
+                child: Container(
+                  key: const Key('path_trophy'),
+                  width: FlowDayPath.nowNodeSize,
+                  height: FlowDayPath.nowNodeSize,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Color.alphaBlend(_trophyGold.withValues(alpha: claimed ? 0.28 : (dark ? 0.2 : 0.16)), surface),
+                    border: Border.all(color: _trophyGold, width: 2.5),
+                    boxShadow: claimed ? null : [BoxShadow(color: _trophyGold.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 3))],
+                  ),
+                  child: const Icon(Icons.emoji_events_rounded, color: _trophyGold, size: 22),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The compact reward sheet: what the day added up to and one clear action. Claiming is safe to repeat (the server
+/// grants a day's XP once); the button is off while the request is out and gone once it is collected.
+Future<void> showTrophyClaimSheet(
+  BuildContext context, {
+  required String count,
+  required String total,
+  required int xp,
+  required bool claimed,
+  required Future<void> Function()? onClaim,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: FlowColors.surface(context),
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(FlowRadii.cardLarge))),
+    builder: (_) => _TrophyClaimSheet(count: count, total: total, xp: xp, claimed: claimed, onClaim: onClaim),
+  );
+}
+
+class _TrophyClaimSheet extends StatefulWidget {
+  final String count;
+  final String total;
+  final int xp;
+  final bool claimed;
+  final Future<void> Function()? onClaim;
+
+  const _TrophyClaimSheet({required this.count, required this.total, required this.xp, required this.claimed, required this.onClaim});
+
+  @override
+  State<_TrophyClaimSheet> createState() => _TrophyClaimSheetState();
+}
+
+class _TrophyClaimSheetState extends State<_TrophyClaimSheet> {
   bool _claiming = false;
-  bool _claimedHere = false;
+  late bool _claimed = widget.claimed;
+  bool _failed = false;
 
   Future<void> _claim() async {
     final onClaim = widget.onClaim;
-    if (onClaim == null || _claiming) return;
-    setState(() => _claiming = true);
+    if (onClaim == null || _claiming || _claimed) return;
+    setState(() {
+      _claiming = true;
+      _failed = false;
+    });
     try {
       await onClaim();
-      if (mounted) setState(() => _claimedHere = true);
+      if (mounted) setState(() => _claimed = true);
     } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          const SnackBar(content: Text("Couldn't collect the trophy right now. Try again in a moment.")),
-        );
-      }
+      if (mounted) setState(() => _failed = true);
     } finally {
       if (mounted) setState(() => _claiming = false);
     }
@@ -299,89 +504,68 @@ class _DayCompleteState extends State<_DayComplete> {
 
   @override
   Widget build(BuildContext context) {
-    final items = widget.items;
-    final minutes = items.fold<int>(0, (sum, i) => sum + (widget.reflectionFor(i)?.actualMinutes ?? i.durationMinutes));
-    final hours = minutes ~/ 60;
-    final rest = minutes % 60;
-    final total = hours == 0 ? '$rest min' : (rest == 0 ? '${hours}h' : '${hours}h ${rest}m');
-    final count = items.length == 1 ? '1 task' : '${items.length} tasks';
-    final status = widget.status;
-    final claimed = (status?.claimed ?? false) || _claimedHere;
-    final xp = status?.xp ?? 0;
-    const gold = Color(0xFFF2B233);
-
-    return Column(
-      key: const Key('path_day_complete'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: Row(
-            children: [
-              const SizedBox(
-                width: 96,
-                child: Center(child: NoyaCompanionView(state: NoyaState.goodJob, size: 56)),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Day complete',
-                      style: FlowTypography.bodyLarge(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w700),
-                    ),
-                    Text('$count · $total', style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context))),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (status != null && status.eligible)
-          Padding(
-            padding: const EdgeInsets.only(top: 14),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 96,
-                  child: Center(
-                    child: Container(
-                      key: const Key('path_trophy'),
-                      width: 52,
-                      height: 52,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Color.alphaBlend(gold.withValues(alpha: claimed ? 0.28 : 0.16), FlowColors.surface(context)),
-                        border: Border.all(color: gold, width: 2.5),
-                      ),
-                      child: const Icon(Icons.emoji_events_rounded, color: gold, size: 26),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Semantics(
-                    liveRegion: claimed,
-                    child: Text(
-                      claimed ? '+$xp XP earned for Noya' : 'Every task done. Noya earned a trophy.',
-                      style: FlowTypography.bodySmall(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ),
-                if (!claimed && widget.onClaim != null)
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
-                    child: FilledButton.tonal(
-                      key: const Key('path_trophy_claim'),
-                      onPressed: _claiming ? null : _claim,
-                      child: Text(_claiming ? 'Claiming…' : 'Claim +$xp XP'),
-                    ),
-                  ),
-              ],
+    final muted = FlowColors.textMutedOf(context);
+    return SafeArea(
+      child: Padding(
+        key: const Key('path_trophy_sheet'),
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(color: FlowColors.border(context), borderRadius: FlowRadii.pillRadius),
             ),
-          ),
-      ],
+            const SizedBox(height: 16),
+            const NoyaCompanionView(state: NoyaState.goodJob, size: 72),
+            const SizedBox(height: 8),
+            Text(
+              'Day complete',
+              style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 2),
+            Text('${widget.count} · ${widget.total}', style: FlowTypography.bodySmall(color: muted)),
+            const SizedBox(height: 16),
+            Semantics(
+              liveRegion: true,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.emoji_events_rounded, color: _trophyGold, size: 22),
+                  const SizedBox(width: 8),
+                  Text(
+                    _claimed ? '+${widget.xp} XP earned for Noya' : '+${widget.xp} XP for Noya',
+                    key: const Key('path_trophy_xp'),
+                    style: FlowTypography.bodyLarge(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+            ),
+            if (_failed) ...[
+              const SizedBox(height: 8),
+              Text("Couldn't collect it right now. Try again in a moment.",
+                  key: const Key('path_trophy_error'), style: FlowTypography.bodySmall(color: FlowColors.errorOf(context))),
+            ],
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: _claimed
+                  ? OutlinedButton(
+                      key: const Key('path_trophy_done'),
+                      onPressed: () => Navigator.of(context).maybePop(),
+                      child: const Text('Done'),
+                    )
+                  : FilledButton(
+                      key: const Key('path_trophy_claim'),
+                      onPressed: (_claiming || widget.onClaim == null) ? null : _claim,
+                      child: Text(_claiming ? 'Claiming…' : 'Claim +${widget.xp} XP'),
+                    ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
