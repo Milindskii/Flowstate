@@ -94,14 +94,14 @@ void main() {
       expect(find.text("You're clear for now ✨"), findsOneWidget);
       expect(find.text("Nice work. What's next?"), findsOneWidget);
 
-      // Verify primary action is "+ Add Task"
-      expect(find.text('+ Add Task'), findsOneWidget);
+      // Verify primary action is "Add Task"
+      expect(find.text('Add Task'), findsOneWidget);
 
-      // Verify secondary action is "✨ Build My Day"
-      expect(find.text('✨ Build My Day'), findsOneWidget);
+      // Verify secondary action is "Build My Day"
+      expect(find.text('Build My Day'), findsOneWidget);
     });
 
-    testWidgets('2. Tapping "+ Add Task" on completed clear-for-now state opens Add Task modal', (tester) async {
+    testWidgets('2. Tapping "Add Task" on completed clear-for-now state opens Add Task modal', (tester) async {
       final appState = AppStateProvider();
       appState.updatePersonalData(appState.personalData.copyWith(bedtime: '23:59'));
       appState.clearAllTasksForNewUserState();
@@ -117,8 +117,8 @@ void main() {
       await tester.pumpWidget(buildTestableWidget(appState: appState));
       await tester.pumpAndSettle();
 
-      // Tap primary action "+ Add Task"
-      await tester.tap(find.text('+ Add Task'));
+      // Tap primary action "Add Task"
+      await tester.tap(find.text('Add Task'));
       await tester.pumpAndSettle();
 
       // Verify AddTaskSheet is opened
@@ -126,7 +126,7 @@ void main() {
       expect(find.text('What needs to get done?'), findsOneWidget);
     });
 
-    testWidgets('3. Tapping "✨ Build My Day" on clear-for-now state opens AI planner', (tester) async {
+    testWidgets('3. Tapping "Build My Day" on clear-for-now state opens AI planner', (tester) async {
       final appState = AppStateProvider();
       appState.updatePersonalData(appState.personalData.copyWith(bedtime: '23:59'));
       appState.clearAllTasksForNewUserState();
@@ -142,8 +142,8 @@ void main() {
       await tester.pumpWidget(buildTestableWidget(appState: appState));
       await tester.pumpAndSettle();
 
-      // Tap secondary action "✨ Build My Day"
-      await tester.tap(find.text('✨ Build My Day'));
+      // Tap secondary action "Build My Day"
+      await tester.tap(find.text('Build My Day'));
       await tester.pumpAndSettle();
 
       // Verify Brain Dump sheet is opened

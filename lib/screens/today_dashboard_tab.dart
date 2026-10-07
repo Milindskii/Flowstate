@@ -380,7 +380,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
       case TodayState.completed:
         return isDayActuallyFinished
             ? "Nice work today. Time to wind down."
-            : "You're clear for now. What's next?";
+            : "All scheduled tasks completed for today";
     }
   }
 
@@ -898,12 +898,12 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
       // All planned tasks complete, but day is still active
       headline = "You're clear for now ✨";
       subtitle = "Nice work. What's next?";
-      primaryButtonLabel = '+ Add Task';
+      primaryButtonLabel = 'Add Task';
       primaryButtonAction = () {
         FlowHaptics.selection();
         _openAddTaskSheet(context);
       };
-      secondaryButtonLabel = '✨ Build My Day';
+      secondaryButtonLabel = 'Build My Day';
       secondaryButtonAction = () {
         FlowHaptics.lightTap();
         showBrainDumpSheet(context);
@@ -1012,20 +1012,24 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                 ),
               ),
               if (secondaryButtonLabel != null) ...[
-                const SizedBox(height: 8),
-                Center(
-                  child: TextButton.icon(
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: OutlinedButton.icon(
                     key: const Key('completed_state_secondary_button'),
                     onPressed: secondaryButtonAction,
-                    icon: secondaryButtonLabel.contains('Build')
-                        ? const Icon(Icons.auto_awesome_rounded, size: 16, color: FlowColors.accentCyan)
-                        : null,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: FlowColors.accentCyan,
+                      side: BorderSide(color: FlowColors.accentCyan.withValues(alpha: 0.5), width: 1.2),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(FlowRadii.button)),
+                      backgroundColor: FlowColors.accentCyan.withValues(alpha: 0.06),
+                    ),
+                    icon: const Icon(Icons.auto_awesome_rounded, size: 18, color: FlowColors.accentCyan),
                     label: Text(
                       secondaryButtonLabel,
                       style: FlowTypography.labelMedium(
-                        color: secondaryButtonLabel.contains('Build')
-                            ? FlowColors.accentCyan
-                            : FlowColors.textMutedOf(context),
+                        color: FlowColors.accentCyan,
                       ).copyWith(
                         fontWeight: FontWeight.w700,
                       ),

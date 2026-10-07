@@ -91,6 +91,16 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// save landed is re-projected from the live task list, so the stop never flickers back to its old slot.
   final Set<String> _unsyncedTaskIds = {};
 
+  /// Unsynced tasks leaving their day by a skip / defer: until the server answers, their old stop stays drawn
+  /// (it becomes the history node). An explicit move to another day leaves the day at once instead.
+  final Set<String> _keptStopTaskIds = {};
+
+  /// Today and the Calendar day both write [_schedule] from network reads. Each read takes a ticket when it is
+  /// issued; an answer may replace [_schedule] only if no later-issued read has written it already.
+  int _scheduleWriteSeq = 0;
+  int _scheduleAppliedSeq = 0;
+  int _todayRequestId = 0;
+
   TodayResponseModel? _todaySnapshot;
   DateTime? _lastUpdatedAt;
   DateTime? _lastBackendSyncAt;  // guards local recomputation
@@ -235,9 +245,10 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// [day] with task [id] drawn from the LIVE task list: a deleted / cancelled task leaves, a created or edited one
-  /// takes the slot it has now. A task that is not on this day any more is left exactly as the server drew it (a
-  /// defer keeps its stop and its history; only the server decides what the day keeps), and so is a finished one
-  /// (completion is drawn onto the existing stop). History nodes are never touched, so a stop keeps its anchor.
+  /// takes the slot it has now, and one explicitly moved to another day leaves this day's live projection at once.
+  /// A skip / defer ([_keptStopTaskIds]) is left exactly as the server drew it (its stop becomes history; only the
+  /// server decides what the day keeps), and so is a finished one (completion is drawn onto the existing stop).
+  /// History nodes are never touched, so a stop keeps its anchor.
   DayScheduleResponse _projectTask(DayScheduleResponse day, String id) {
     TaskItem? task;
     for (final t in _tasks) {
@@ -250,7 +261,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     final local = _buildLocalScheduleForDate(DateTime(date.year, date.month, date.day), allowCachedToday: false)
         .where((i) => i.taskId == id)
         .toList();
-    if (local.isEmpty) return day;
+    if (local.isEmpty) return _keptStopTaskIds.contains(id) ? day : _stripTasks(day, {id}, history: false);
     final stripped = _stripTasks(day, {id}, history: false);
     return stripped.withItems(
       timeline: orderDayPathItems([...stripped.timeline, ...local.where((i) => !isUnscheduledItem(i))]),
@@ -292,6 +303,24 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// The user explicitly moved [taskId] (a new time/day): its stop may take its new place.
   void _forgetAnchor(String taskId) {
     if (_anchorStore.forgetTask(taskId)) unawaited(_anchorStore.save());
+  }
+
+  /// See [_scheduleWriteSeq]: true (and recorded) when the read holding [ticket] may write [_schedule].
+  bool _claimScheduleWrite(int ticket) {
+    if (ticket < _scheduleAppliedSeq) return false;
+    _scheduleAppliedSeq = ticket;
+    return true;
+  }
+
+  static bool _sameMoment(DateTime? a, DateTime? b) => a == null ? b == null : b != null && a.isAtSameMomentAs(b);
+
+  /// [after] (what the server stored) sits somewhere else than [before]: another time, length or day.
+  static bool _scheduleChanged(TaskItem before, TaskItem after) {
+    final p = before.plannedDate, q = after.plannedDate;
+    final sameDay = p == null ? q == null : q != null && p.year == q.year && p.month == q.month && p.day == q.day;
+    return !_sameMoment(before.scheduledStart, after.scheduledStart) ||
+        !_sameMoment(before.scheduledEnd, after.scheduledEnd) ||
+        !sameDay;
   }
 
   @override
@@ -790,6 +819,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     String taskId, {
     required DateTime targetDate,
     TimeOfDay? targetTime,
+    bool keepStop = false, // a defer: the old stop stays until the server draws it as history
   }) async {
     final index = _tasks.indexWhere((t) => t.id == taskId);
     if (index == -1) return false;
@@ -857,6 +887,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (!_isDemoMode && isAuthenticated) {
       // The stop takes its new time on Calendar now; the server read after the save only confirms it.
       _unsyncedTaskIds.add(taskId);
+      if (keepStop) _keptStopTaskIds.add(taskId);
       _dayScheduleCache.clear();
       _projectIntoSelectedDay([taskId]);
       notifyListeners();
@@ -875,6 +906,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         _deferredTaskIds.remove(taskId);
         _lastSyncError = "Couldn't save the new time for \u201c${task.title}\u201d. Nothing was changed.";
         _unsyncedTaskIds.remove(taskId);
+        _keptStopTaskIds.remove(taskId);
         _projectIntoSelectedDay([taskId]);
         _dayScheduleCache.clear();
         _recalculateSchedule();
@@ -892,6 +924,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     await loadCalendarDay(_selectedCalendarDate, silent: true);
     _unsyncedTaskIds.remove(taskId);
+    _keptStopTaskIds.remove(taskId);
     if (!_isDemoMode) {
       await refreshTodayData();
     }
@@ -903,7 +936,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     final target = nextWindow ?? DateTime.now().add(const Duration(days: 1));
     final targetDate = DateTime(target.year, target.month, target.day);
     final targetTime = TimeOfDay(hour: target.hour, minute: target.minute);
-    await rescheduleTask(taskId, targetDate: targetDate, targetTime: targetTime);
+    await rescheduleTask(taskId, targetDate: targetDate, targetTime: targetTime, keepStop: true);
   }
 
   /// Get easier alternative for What Should I Do Now screen
@@ -1452,6 +1485,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     _calendarRefreshInFlight = true;
+    final scheduleTicket = ++_scheduleWriteSeq;
     try {
       // Only a blocking load (nothing cached to show) is "thinking"; a background refresh stays silent.
       final blocking = _selectedDateSchedule == null;
@@ -1465,7 +1499,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         _selectedDateSchedule = day;
         _lastCalendarFetchAt = FlowClock().now;
         _recordAnchors(dateStr, day);
-        if (isToday) {
+        if (isToday && _claimScheduleWrite(scheduleTicket)) {
           _schedule = day.timeline.where((t) => !t.isCompleted).toList();
         }
         _isLoadingCalendarDay = false;
@@ -1566,18 +1600,27 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     try {
       final res = await calendarService.applyReplan(request);
       if (res.success) {
+        final intents = (request.raw?['intents'] as Map?) ?? const {};
+        // Skips/defers keep their stop (history) until the re-read draws it as such.
+        final keptStops = <String>{
+          for (final e in intents.entries)
+            if (const {'skipped', 'deferred'}.contains(e.value)) e.key.toString(),
+        };
         // Adopt exactly what the server stored before reloading everything else.
         for (final raw in res.persistedTasks) {
           final persisted = TaskItem.fromJson(raw);
           final i = _tasks.indexWhere((t) => t.id == persisted.id);
           if (i != -1) {
+            // Every task the new plan placed somewhere else (asked for or collateral) takes its new stop.
+            if (!keptStops.contains(persisted.id) && _scheduleChanged(_tasks[i], persisted)) {
+              _forgetAnchor(persisted.id);
+            }
             _tasks[i] = persisted;
           } else if (persisted.status != TaskStatus.cancelled) {
             _tasks.insert(0, persisted);
           }
         }
-        // An explicit move ("move gym to 8") gives the stop its new place; skips/defers keep it (history).
-        final intents = (request.raw?['intents'] as Map?) ?? const {};
+        // An explicit move ("move gym to 8") gives the stop its new place even when the slot looks unchanged.
         intents.forEach((id, intent) {
           if (const {'rescheduled', 'preference_shift', 'delayed'}.contains(intent)) _forgetAnchor(id.toString());
         });
@@ -1593,6 +1636,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         final cancelled = {for (final c in diff.cancelledTasks) c.taskId};
         _tasks.removeWhere((t) => cancelled.contains(t.id));
         _unsyncedTaskIds.addAll(replanned);
+        _keptStopTaskIds.addAll(keptStops.intersection(replanned));
         _dayScheduleCache.clear();
         final shown = _selectedDateSchedule;
         if (shown != null) {
@@ -1610,6 +1654,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
           refreshTodayData(authoritative: true), // 3. Today (Up Next & Rhythm); never a stale cached snapshot
         ]);
         _unsyncedTaskIds.removeAll(replanned);
+        _keptStopTaskIds.removeAll(replanned);
         // 4. Recalculate local schedule and readiness
         _recalculateSchedule();
         _recalculateReadiness();
@@ -2213,6 +2258,10 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// that would show the pre-write schedule as if it were current. On failure the stale snapshot is dropped and
   /// Today is rebuilt from the already-adopted local tasks.
   Future<void> refreshTodayData({bool authoritative = false}) async {
+    // Only the newest Today read is applied, and its schedule only if no later Calendar read wrote one (see
+    // _scheduleWriteSeq): an older answer arriving last can never put a stale, differently-shaped list back.
+    final requestId = ++_todayRequestId;
+    final scheduleTicket = ++_scheduleWriteSeq;
     // A refresh with Today already on screen is silent: the content stays put instead of flashing a skeleton
     // on every resume / edit / pull-to-refresh. Only the very first load shows the loading state.
     if (_todaySnapshot == null) {
@@ -2224,11 +2273,12 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     try {
       final today = await todayService.getTodayExperience(allowCachedFallback: !authoritative);
+      if (requestId != _todayRequestId) return; // a newer Today read owns the state
       _todaySnapshot = today;
       _lastUpdatedAt = today.lastUpdatedAt;
       _lastBackendSyncAt = DateTime.now();
       _readiness = today.readiness;
-      _schedule = today.upcomingTimeline;
+      if (_claimScheduleWrite(scheduleTicket)) _schedule = today.upcomingTimeline;
       if (today.readiness.focusWindowRange.contains('14:00') ||
           today.readiness.focusWindowRange.toLowerCase().contains('2:00 pm') ||
           today.readiness.focusWindowRange.toLowerCase().contains('afternoon')) {
@@ -2242,6 +2292,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
       _flushPendingReflections();
     } catch (e) {
+      if (requestId != _todayRequestId) return;
       if (authoritative) {
         _todaySnapshot = null;
         _lastBackendSyncAt = null;
@@ -2255,11 +2306,12 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       // Check for cached offline data
       final cached = await todayService.getCachedToday();
+      if (requestId != _todayRequestId) return;
       if (cached != null) {
         _todaySnapshot = cached;
         _lastUpdatedAt = cached.lastUpdatedAt;
         _readiness = cached.readiness;
-        _schedule = cached.upcomingTimeline;
+        if (_claimScheduleWrite(scheduleTicket)) _schedule = cached.upcomingTimeline;
         _isOffline = true;
         _isLoading = false;
         _todayNetworkState = TodayNetworkState.networkFailure;

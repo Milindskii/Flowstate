@@ -51,6 +51,7 @@ class _CalendarTabState extends State<CalendarTab> {
   NoyaReactionController? _localReactions;
   DateTime? _shownDate;
   bool _slideForward = true;
+  bool _replanSheetOpen = false;
 
   // The route moves past a slot that ended on its own: re-derive against the clock every minute (and on resume).
   void _onClockTick() {
@@ -134,13 +135,52 @@ class _CalendarTabState extends State<CalendarTab> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      floatingActionButton: hasTimeline
+          ? Padding(
+              padding: const EdgeInsets.only(bottom: 8.0, right: 4.0),
+              child: Material(
+                elevation: 4,
+                shadowColor: accent.withValues(alpha: 0.25),
+                borderRadius: BorderRadius.circular(FlowRadii.pill),
+                color: FlowColors.surfaceElevated(context),
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(FlowRadii.pill),
+                    border: Border.all(color: accent.withValues(alpha: 0.35), width: 1.5),
+                  ),
+                  child: TextButton.icon(
+                    key: const Key('calendar_replan_button'),
+                    onPressed: () {
+                      if (_replanSheetOpen) return; // taps before the sheet's barrier exists: one sheet
+                      _replanSheetOpen = true;
+                      FlowHaptics.lightTap();
+                      showReplanDaySheet(
+                        context,
+                        selectedDate: selectedDate,
+                        currentSchedule: state.selectedDateSchedule,
+                      ).whenComplete(() => _replanSheetOpen = false);
+                    },
+                    style: TextButton.styleFrom(
+                      foregroundColor: accent,
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(FlowRadii.pill)),
+                      textStyle: FlowTypography.labelMedium().copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    icon: const Icon(Icons.auto_awesome_rounded, size: 18),
+                    label: const Text('Replan'),
+                  ),
+                ),
+              ),
+            )
+          : null,
       body: SafeArea(
         child: SingleChildScrollView(
           padding: EdgeInsets.symmetric(horizontal: pageMargin, vertical: 16.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header: title + selected date, Replan as the compact header action (B2.2, D4)
+              // Header: title + selected date, month picker alone in top right
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -186,33 +226,6 @@ class _CalendarTabState extends State<CalendarTab> {
                       ),
                     ),
                   ),
-                  if (hasTimeline)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8, top: 2),
-                      child: TextButton.icon(
-                        key: const Key('calendar_replan_button'),
-                        onPressed: () {
-                          FlowHaptics.lightTap();
-                          showReplanDaySheet(
-                            context,
-                            selectedDate: selectedDate,
-                            currentSchedule: state.selectedDateSchedule,
-                          );
-                        },
-                        style: TextButton.styleFrom(
-                          foregroundColor: accent,
-                          backgroundColor: accent.withValues(alpha: 0.12),
-                          // same 44pt height as the month button beside it, never a shorter chip
-                          minimumSize: const Size(0, 44),
-                          tapTargetSize: MaterialTapTargetSize.padded,
-                          padding: const EdgeInsets.symmetric(horizontal: 14),
-                          shape: const RoundedRectangleBorder(borderRadius: FlowRadii.chipRadius),
-                          textStyle: FlowTypography.labelMedium().copyWith(fontWeight: FontWeight.w700),
-                        ),
-                        icon: const Icon(Icons.auto_awesome_rounded, size: 18),
-                        label: const Text('Replan'),
-                      ),
-                    ),
                 ],
               ),
               const SizedBox(height: 16),

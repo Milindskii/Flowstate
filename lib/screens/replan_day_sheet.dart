@@ -16,13 +16,13 @@ import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
 
-/// Opens the dedicated Replan My Day modal sheet.
-void showReplanDaySheet(
+/// Opens the dedicated Replan My Day modal sheet; completes when it closes.
+Future<void> showReplanDaySheet(
   BuildContext context, {
   required DateTime selectedDate,
   DayScheduleResponse? currentSchedule,
 }) {
-  showModalBottomSheet(
+  return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     backgroundColor: FlowColors.surface(context),

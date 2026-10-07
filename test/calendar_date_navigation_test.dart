@@ -1409,7 +1409,7 @@ void main() {
       expect(find.textContaining('Replan'), findsNothing);
     });
 
-    testWidgets('Replan is a compact tonal header action when the day has items', (tester) async {
+    testWidgets('Replan is placed in bottom right when the day has items', (tester) async {
       await pumpCalendar(tester, (r) async => ok(dayJson(r.url.queryParameters['date']!, [row('a', 'Write outline', '9:30', 'AM')])));
       final replan = find.byKey(const Key('calendar_replan_button'));
       expect(replan, findsOneWidget);
@@ -1417,8 +1417,8 @@ void main() {
       expect(find.descendant(of: replan, matching: find.byIcon(Icons.auto_awesome_rounded)), findsOneWidget);
       expect(find.textContaining('✨'), findsNothing);
       expect(find.byType(PrimaryButton), findsNothing);
-      // Header row: level with the "Calendar" title, right-aligned.
-      expect((tester.getCenter(replan).dy - tester.getCenter(find.text('Calendar')).dy).abs(), lessThan(24));
+      // Stuck in bottom right: vertical center below Calendar title, horizontal right-aligned
+      expect(tester.getCenter(replan).dy, greaterThan(tester.getCenter(find.text('Calendar')).dy));
       expect(tester.getTopRight(replan).dx, greaterThan(tester.getTopRight(find.text('Calendar')).dx));
       expect(find.text('Flowstate detects changes/conflicts and builds a new feasible schedule.'), findsNothing);
     });

@@ -10,6 +10,7 @@ Orchestration only. Placement decisions are made by the shared pure planner
 4. maps the planner's result to a PlanDiff (with a server-authored apply request),
 5. applies a confirmed diff atomically, idempotently, and re-validated server-side.
 """
+import hashlib
 import re
 import uuid
 from dataclasses import replace
@@ -106,6 +107,12 @@ _CLAUSE_VERB_START = re.compile(rf"^(?:{_CLAUSE_VERBS})\b", re.IGNORECASE)
 _CANT_SPLIT = re.compile(
     r"(?:,|;|\band)\s+(?=(?:i\s+|i'?m\s+)?(?:can'?t|cannot|won'?t|not able|unable|no time|"
     r"(?:don'?t|do not) have (?:the |enough |any )?time)\b)", re.IGNORECASE)
+
+
+def _gateway_refusal(refusal) -> HTTPException:
+    """An ai_gateway.GatewayError (409 in flight / 429 burst) as a user-safe HTTP error with Retry-After."""
+    return HTTPException(status_code=refusal.http_status, detail={"code": refusal.code, "message": refusal.message},
+                         headers=refusal.headers or None)
 
 
 def _invalid_request(field: str, code: str, message: str) -> HTTPException:
@@ -653,18 +660,33 @@ class CalendarService:
             return None
         if not replan_ai.allow_request(str(user.id)):
             return None
+        # One AI request in flight per user across all instances (the slot Build My Day uses): 409 while taken.
         try:
-            is_pro = effective_is_pro(AIEconomyService.get_or_create_usage(db, user.id))
-            cap = replan_ai.PRO_REPLAN_AI_PER_DAY if is_pro else replan_ai.FREE_REPLAN_AI_PER_DAY
-            allowed = ai_gateway.consume_period(db, user.id, "replan_day", cap)
-            db.commit()  # also ends the transaction: no pooled connection is held during the provider call
-        except Exception as exc:
-            db.rollback()
-            logger.warning(f"replan_ai budget check failed: {type(exc).__name__}")
-            return None
-        if not allowed:
-            return None
-        return replan_ai.interpret(message, entities, now_local, tz, request_id=uuid.uuid4().hex[:12])
+            slot = ai_gateway.claim_slot(db, user_id=user.id, kind="replan",
+                                         fingerprint=hashlib.sha256(message.encode("utf-8")).hexdigest())
+        except ai_gateway.GatewayError as refusal:
+            raise _gateway_refusal(refusal)
+        understood = None
+        try:
+            try:
+                is_pro = effective_is_pro(AIEconomyService.get_or_create_usage(db, user.id))
+                cap = replan_ai.PRO_REPLAN_AI_PER_DAY if is_pro else replan_ai.FREE_REPLAN_AI_PER_DAY
+                allowed = ai_gateway.consume_period(db, user.id, "replan_day", cap)
+                db.commit()  # also ends the transaction: no pooled connection is held during the provider call
+            except Exception as exc:
+                db.rollback()
+                logger.warning(f"replan_ai budget check failed: {type(exc).__name__}")
+                return None
+            if not allowed:
+                return None
+            understood = replan_ai.interpret(message, entities, now_local, tz, request_id=uuid.uuid4().hex[:12])
+            return understood
+        finally:
+            try:
+                ai_gateway.release_slot(db, slot, user.id, ok=understood is not None, code="no_understanding")
+            except Exception as exc:  # the deadline expiry frees it anyway
+                db.rollback()
+                logger.warning(f"replan_ai slot release failed: {type(exc).__name__}")
 
     # words that never name new work on their own ("ugh, behind schedule again")
     _JUNK_TITLE_WORDS = frozenset({"schedule", "again", "behind", "ugh", "hmm", "everything", "stuff", "things",
@@ -776,6 +798,12 @@ class CalendarService:
     # ── 3. GENERATE REPLAN (dry run; never writes) ───────────────────────────
 
     def generate_replan(self, db: Session, user: User, request: ReplanRequest) -> ReplanResponse:
+        from . import ai_gateway
+
+        try:
+            ai_gateway.admit_replan_burst(db, user.id)  # every dry run, AI or not; never charges AI usage
+        except ai_gateway.GatewayError as refusal:
+            raise _gateway_refusal(refusal)
         tz, tz_name = self.resolve(user, request.timezone)
         now_local = self._now(tz, request.current_local_time)
         try:

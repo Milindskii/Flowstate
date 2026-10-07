@@ -14,6 +14,14 @@ class Settings(BaseSettings):
 
     # Database: SQLite default fallback for local zero-config testing; PostgreSQL via Supabase in production
     DATABASE_URL: str = "sqlite:///./flowstate.db"
+    # Per-process pool (PostgreSQL only). Max connections = workers x (DB_POOL_SIZE + DB_MAX_OVERFLOW).
+    # DATABASE_URL uses the Supabase pooler in SESSION mode (:5432): each client connection holds a database
+    # connection, and the smallest compute tier's pool is ~15. Defaults: 3 workers x (3 + 2) = 15. More workers
+    # => lower these, or move to transaction mode (:6543) after checking the plan's limits.
+    DB_POOL_SIZE: int = 3
+    DB_MAX_OVERFLOW: int = 2
+    DB_POOL_TIMEOUT_SECONDS: float = 10.0
+    DB_POOL_RECYCLE_SECONDS: int = 300
 
     # Supabase / Auth credentials (configured via .env)
     SUPABASE_URL: str = "https://drfjprhnynktjkiplbzy.supabase.co"
@@ -54,6 +62,7 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-3.5-flash-lite"
     # Replan: language-model understanding for messages the deterministic rules cannot read (metered, never writes)
     REPLAN_AI_ENABLED: bool = True
+    REPLAN_BURST_PER_MINUTE: int = 20  # Replan dry runs per user per minute, AI or not (shared DB counter)
 
     # --- AI gateway (see services/ai_gateway.py) -------------------------------------------------------------
     AI_MAX_CONCURRENCY: int = 8                 # simultaneous provider calls per API instance

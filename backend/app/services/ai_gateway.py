@@ -320,6 +320,45 @@ def fail(db: Session, ticket: Ticket, code: str) -> bool:
     return _release(db, ticket.request_id, ticket.user_id, ticket.charge_source, "failed", code, latency)
 
 
+def claim_slot(db: Session, *, user_id: str, kind: str, fingerprint: str) -> str:
+    """Take the user's single in-flight AI slot (shared with Build My Day) without charging anything.
+
+    For metered calls that keep their own budget (Replan). 409 another_request_in_flight while any AI request of
+    this user is reserved on any instance; a crashed claim is expired by its deadline. Commits."""
+    expire_stale(db, user_id)
+    now = _utcnow()
+    req = AIRequest(user_id=user_id, idempotency_key=f"{kind}:{uuid.uuid4().hex}", kind=kind, status="reserved",
+                    charge_source="none", request_sha256=fingerprint, created_at=now,
+                    deadline_at=now + timedelta(
+                        seconds=settings.AI_REQUEST_DEADLINE_SECONDS + settings.AI_RESERVATION_MARGIN_SECONDS))
+    db.add(req)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise GatewayError(409, "another_request_in_flight",
+                           "Another AI request is already in progress. Please wait for it to finish.",
+                           {"Retry-After": "3"})
+    return req.id
+
+
+def release_slot(db: Session, request_id: str, user_id: str, *, ok: bool, code: Optional[str] = None) -> None:
+    """Free a slot taken by claim_slot (at most once; an already-expired claim stays expired). Commits."""
+    if ok:
+        db.execute(update(AIRequest).where(AIRequest.id == request_id, AIRequest.status == "reserved")
+                   .values(status="succeeded", finished_at=_utcnow()))
+        db.commit()
+    else:
+        _release(db, request_id, user_id, "none", "failed", code or "failed")
+
+
+def admit_replan_burst(db: Session, user_id: str) -> None:
+    """Per-user burst limit on Replan dry runs, counted in the shared rate-limit table (every instance). Commits."""
+    if hit_window(db, f"replan:{user_id}", 60) > settings.REPLAN_BURST_PER_MINUTE:
+        raise GatewayError(429, "rate_limited", "Too many replans in a row. Please wait a moment and try again.",
+                           {"Retry-After": "60"})
+
+
 def call_provider(fn: Callable[..., Any], *args, **kwargs) -> Any:
     """Run the provider call under admission control (breaker + concurrency slot) and the request deadline.
 
