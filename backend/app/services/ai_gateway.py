@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from ..core.ai_limits import provider_admission, request_deadline, breaker
 from ..core.config import settings
+from ..core.economy_config import SHIELD_COST_BUILD_MY_DAY
 from ..core.logging import logger
 from ..models.ai_usage import AIRequest, AIUsagePeriod, AIUsageRecord, RateLimitWindow
 from ..models.flow_progression import FlowProfile
@@ -65,6 +66,7 @@ class Ticket:
     charge_source: str  # pro | free | shield
     idempotency_key: str
     started_at: float
+    charge_units: int = 1  # Shields taken when charge_source == "shield"
 
 
 @dataclass
@@ -136,8 +138,11 @@ def consume_parse_budget(db: Session, user_id: str, cap: int) -> bool:
 
 # ---- charging --------------------------------------------------------------------------------------------------
 
-def _charge(db: Session, user_id: str, is_pro: bool, consume_shield: bool, today: date) -> str:
-    """Spend exactly one allowance unit atomically; raises QuotaExceeded when none is available."""
+def _charge(db: Session, user_id: str, is_pro: bool, consume_shield: bool, today: date) -> "tuple[str, int]":
+    """Spend the allowance for one plan atomically -> (source, units); raises QuotaExceeded when none is available.
+
+    Order: Pro cap, else the free use, else Shields (only with the user's explicit consent, and only when the whole
+    price is available: one conditional UPDATE, so it never goes partial or negative). Nothing here calls the provider."""
     if is_pro:
         if not consume_period(db, user_id, "day", settings.AI_PRO_DAILY_CAP, today):
             raise QuotaExceeded(status.HTTP_402_PAYMENT_REQUIRED,
@@ -147,7 +152,7 @@ def _charge(db: Session, user_id: str, is_pro: bool, consume_shield: bool, today
             raise QuotaExceeded(status.HTTP_402_PAYMENT_REQUIRED,
                                 "You've reached this month's fair-use limit for Flowstate AI planning.",
                                 "pro_cap_month")
-        return "pro"
+        return "pro", 1
 
     free = db.execute(
         update(AIUsageRecord)
@@ -155,35 +160,38 @@ def _charge(db: Session, user_id: str, is_pro: bool, consume_shield: bool, today
         .values(free_uses_consumed=AIUsageRecord.free_uses_consumed + 1)
     )
     if free.rowcount == 1:
-        return "free"
+        return "free", 1
 
+    cost = SHIELD_COST_BUILD_MY_DAY
     if not consume_shield:
         raise QuotaExceeded(
             status.HTTP_402_PAYMENT_REQUIRED,
-            "You have used your free AI plan. Using an additional AI planning session requires 1 Flow Shield. "
+            f"You have used your free AI plan. Using an additional AI planning session requires {cost} Flow Shields. "
             "Confirm shield consumption to proceed.",
         )
     shield = db.execute(
         update(FlowProfile)
-        .where(FlowProfile.user_id == user_id, FlowProfile.shields_available > 0)
-        .values(shields_available=FlowProfile.shields_available - 1)
+        .where(FlowProfile.user_id == user_id, FlowProfile.shields_available >= cost)
+        .values(shields_available=FlowProfile.shields_available - cost)
     )
     if shield.rowcount != 1:
         raise QuotaExceeded(
             status.HTTP_403_FORBIDDEN,
-            "No Flow Shields available. Earn more shields by maintaining a 7-day focus streak, or upgrade to Flowstate Pro.",
+            f"Not enough Flow Shields: an AI plan needs {cost}. Earn more by keeping a 7-day focus streak, "
+            "or upgrade to Flowstate Pro.",
+            "insufficient_shields",
         )
-    return "shield"
+    return "shield", cost
 
 
-def _refund(db: Session, user_id: str, charge_source: str, today: date) -> None:
+def _refund(db: Session, user_id: str, charge_source: str, today: date, units: int = 1) -> None:
     if charge_source == "free":
         db.execute(update(AIUsageRecord)
                    .where(AIUsageRecord.user_id == user_id, AIUsageRecord.free_uses_consumed > 0)
                    .values(free_uses_consumed=AIUsageRecord.free_uses_consumed - 1))
     elif charge_source == "shield":
         db.execute(update(FlowProfile).where(FlowProfile.user_id == user_id)
-                   .values(shields_available=FlowProfile.shields_available + 1))
+                   .values(shields_available=FlowProfile.shields_available + units))
     elif charge_source == "pro":
         _refund_period(db, user_id, "day", today)
         _refund_period(db, user_id, "month", today)
@@ -192,7 +200,7 @@ def _refund(db: Session, user_id: str, charge_source: str, today: date) -> None:
 # ---- lifecycle -------------------------------------------------------------------------------------------------
 
 def _release(db: Session, req_id: str, user_id: str, charge_source: str, new_status: str, code: str,
-             latency_ms: Optional[int] = None) -> bool:
+             latency_ms: Optional[int] = None, units: int = 1) -> bool:
     """reserved -> failed/expired and refund, in one transaction. True only for the caller that won the flip."""
     now = _utcnow()
     won = db.execute(
@@ -200,20 +208,22 @@ def _release(db: Session, req_id: str, user_id: str, charge_source: str, new_sta
         .values(status=new_status, error_code=code, finished_at=now, latency_ms=latency_ms)
     ).rowcount == 1
     if won:
-        _refund(db, user_id, charge_source, now.date())
+        _refund(db, user_id, charge_source, now.date(), units)
+        logger.info("ai_gateway.release request=%s user=%s source=%s units=%s status=%s code=%s",
+                    req_id, user_id, charge_source, units, new_status, code)
     db.commit()
     return won
 
 
 def expire_stale(db: Session, user_id: Optional[str] = None, limit: int = 50) -> int:
     """Refund reservations whose deadline passed (a crashed worker or a lost connection)."""
-    q = select(AIRequest.id, AIRequest.user_id, AIRequest.charge_source).where(
+    q = select(AIRequest.id, AIRequest.user_id, AIRequest.charge_source, AIRequest.charge_units).where(
         AIRequest.status == "reserved", AIRequest.deadline_at < _utcnow())
     if user_id:
         q = q.where(AIRequest.user_id == user_id)
     released = 0
-    for req_id, uid, source in db.execute(q.limit(limit)).all():
-        released += int(_release(db, req_id, uid, source, "expired", "expired"))
+    for req_id, uid, source, units in db.execute(q.limit(limit)).all():
+        released += int(_release(db, req_id, uid, source, "expired", "expired", units=units))
     return released
 
 
@@ -260,7 +270,7 @@ def begin(db: Session, *, user_id: str, idempotency_key: str, fingerprint: str, 
         if reuse_id:
             flipped = db.execute(
                 update(AIRequest).where(AIRequest.id == reuse_id, AIRequest.status.in_(("failed", "expired")))
-                .values(status="reserved", charge_source="none", request_sha256=fingerprint, deadline_at=deadline,
+                .values(status="reserved", charge_source="none", charge_units=1, request_sha256=fingerprint, deadline_at=deadline,
                         error_code=None, finished_at=None, response_json=None, latency_ms=None, created_at=now)
             ).rowcount
             if flipped != 1:
@@ -272,8 +282,8 @@ def begin(db: Session, *, user_id: str, idempotency_key: str, fingerprint: str, 
             db.add(req)
             db.flush()
             req_id = req.id
-        source = _charge(db, user_id, is_pro, consume_shield, now.date())
-        db.execute(update(AIRequest).where(AIRequest.id == req_id).values(charge_source=source))
+        source, units = _charge(db, user_id, is_pro, consume_shield, now.date())
+        db.execute(update(AIRequest).where(AIRequest.id == req_id).values(charge_source=source, charge_units=units))
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -285,11 +295,17 @@ def begin(db: Session, *, user_id: str, idempotency_key: str, fingerprint: str, 
                            else "another_request_in_flight",
                            "Another AI planning request is already in progress. Please wait for it to finish.",
                            {"Retry-After": "3"})
+    except QuotaExceeded as refusal:
+        db.rollback()
+        logger.info("ai_gateway.refused user=%s code=%s pro=%s", user_id, refusal.code, is_pro)
+        raise
     except Exception:
         db.rollback()
         raise
+    logger.info("ai_gateway.reserve request=%s user=%s source=%s units=%s retry=%s",
+                req_id, user_id, source, units, bool(reuse_id))
     return Ticket(request_id=req_id, user_id=user_id, charge_source=source, idempotency_key=idempotency_key,
-                  started_at=time.perf_counter())
+                  started_at=time.perf_counter(), charge_units=units)
 
 
 def succeed(db: Session, ticket: Ticket, payload: Dict[str, Any]) -> bool:
@@ -306,8 +322,10 @@ def succeed(db: Session, ticket: Ticket, payload: Dict[str, Any]) -> bool:
         if ticket.charge_source == "shield":
             values["shield_uses_consumed"] = AIUsageRecord.shield_uses_consumed + 1
             db.execute(update(FlowProfile).where(FlowProfile.user_id == ticket.user_id)
-                       .values(shields_used_count=FlowProfile.shields_used_count + 1))
+                       .values(shields_used_count=FlowProfile.shields_used_count + ticket.charge_units))
         db.execute(update(AIUsageRecord).where(AIUsageRecord.user_id == ticket.user_id).values(**values))
+        logger.info("ai_gateway.succeed request=%s user=%s source=%s units=%s latency_ms=%s",
+                    ticket.request_id, ticket.user_id, ticket.charge_source, ticket.charge_units, latency)
     else:
         logger.warning("ai_gateway.succeed_after_expiry request=%s", ticket.request_id)
     db.commit()
@@ -317,7 +335,8 @@ def succeed(db: Session, ticket: Ticket, payload: Dict[str, Any]) -> bool:
 def fail(db: Session, ticket: Ticket, code: str) -> bool:
     """The attempt did not produce a plan: refund the reservation (at most once)."""
     latency = round((time.perf_counter() - ticket.started_at) * 1000)
-    return _release(db, ticket.request_id, ticket.user_id, ticket.charge_source, "failed", code, latency)
+    return _release(db, ticket.request_id, ticket.user_id, ticket.charge_source, "failed", code, latency,
+                    ticket.charge_units)
 
 
 def claim_slot(db: Session, *, user_id: str, kind: str, fingerprint: str) -> str:

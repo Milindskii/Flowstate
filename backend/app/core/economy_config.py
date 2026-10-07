@@ -37,6 +37,11 @@ SHIELD_EARN_DAYS: int = 7
 MAX_FREE_SHIELDS: int = 3
 INITIAL_SHIELDS: int = 2
 
+# AI economy: Shields a free-tier user pays for one Build My Day plan once the free allowance is used up.
+# Server-authoritative (ai_gateway charges exactly this many in one conditional UPDATE); /ai/status reports it
+# so the app never hard-codes the price.
+SHIELD_COST_BUILD_MY_DAY: int = 2
+
 # Level Progression Table (Deterministic XP thresholds)
 # Level 1: 0, Level 2: 60, Level 3: 150, Level 4: 270, Level 5: 420 (Young evolution)
 LEVEL_THRESHOLDS: List[int] = [

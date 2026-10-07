@@ -29,6 +29,8 @@ class AIUsageStatus(BaseModel):
     shields_available: int = 2
     can_plan_free: bool = True
     requires_shield: bool = False
+    shield_cost: int = 2          # Shields one AI plan costs once the free use is gone (server-owned)
+    can_afford_shield_plan: bool = False
     subscription_tier: str = "free"
     subscription_status: str = "inactive"
     subscription_expires_at: Optional[datetime] = None

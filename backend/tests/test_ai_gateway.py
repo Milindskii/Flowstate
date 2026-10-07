@@ -20,6 +20,7 @@ from app.models.ai_usage import AIRequest, AIUsagePeriod, AIUsageRecord
 from app.models.flow_progression import FlowProfile
 from app.schemas.task import (FieldProvenance, TaskCandidateResponse, TaskDifficulty, TaskPriority, TaskSource,
                               TaskType)
+from app.core.economy_config import SHIELD_COST_BUILD_MY_DAY
 from app.services import ai_gateway
 from app.services.ai_economy_service import AIEconomyService
 from app.services.ai_service import AIService, GeminiFailure
@@ -119,13 +120,15 @@ async def test_concurrent_requests_never_double_spend_a_shield(high_rate_limit):
     uid, headers = make_user()
     _exhaust_free(uid)
     with SessionLocal() as db:
-        AIEconomyService.get_or_create_profile(db, uid).shields_available = 1
+        AIEconomyService.get_or_create_profile(db, uid).shields_available = SHIELD_COST_BUILD_MY_DAY
         db.commit()
+    calls = []
     async with client() as ac:
-        with patch.object(AIService, "extract_structured_plan_with_gemini", side_effect=_slow(0.3)):
+        with patch.object(AIService, "extract_structured_plan_with_gemini", side_effect=_slow(0.3, calls)):
             results = await asyncio.gather(*[_post(ac, headers, consume_shield=True) for _ in range(6)])
     codes = [r.status_code for r in results]
     assert codes.count(200) == 1, codes
+    assert len(calls) == 1, "only the winner may reach the provider"
     assert _shields(uid) == 0, "shields must never go negative or be spent twice"
     assert _usage(uid)[1] == 1
 
@@ -559,14 +562,13 @@ async def test_free_user_flow_trial_then_shield_then_blocked(high_rate_limit):
         with patch.object(AIService, "extract_structured_plan_with_gemini", return_value=_ok()):
             r1 = await _post(ac, headers)
             r2 = await _post(ac, headers)  # no consent to spend a shield
-            r3 = await _post(ac, headers, consume_shield=True)
+            r3 = await _post(ac, headers, consume_shield=True)  # a new user's 2 Shields pay for exactly one plan
             r4 = await _post(ac, headers, consume_shield=True)
-            r5 = await _post(ac, headers, consume_shield=True)  # 2 shields only
     assert (r1.status_code, r1.json()["free_consumed"]) == (200, True)
     assert r2.status_code == 402 and r2.json()["failure_code"] == "quota_exhausted"
-    assert r3.status_code == r4.status_code == 200 and r3.json()["shield_consumed"] is True
-    assert r5.status_code == 403
-    assert _shields(uid) == 0 and _usage(uid)[:2] == (1, 2)
+    assert r3.status_code == 200 and r3.json()["shield_consumed"] is True
+    assert r4.status_code == 403 and r4.json()["failure_code"] == "insufficient_shields"
+    assert _shields(uid) == 0 and _usage(uid)[:2] == (1, 1)
 
 
 @pytest.mark.asyncio

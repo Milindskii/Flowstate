@@ -100,7 +100,8 @@ async def test_second_ai_use_requires_shield():
             json={"raw_text": "Task two", "consume_shield": False},
         )
         assert res2.status_code == 402
-        assert "requires 1 Flow Shield" in res2.json()["detail"]
+        assert "requires 2 Flow Shields" in res2.json()["detail"]
+        assert res2.json()["failure_code"] == "quota_exhausted"
 
 # ── Test 3: Shield count decreases exactly once ──────────────────────────
 @pytest.mark.asyncio
@@ -128,9 +129,9 @@ async def test_shield_count_decreases_exactly_once():
             assert plan_res.status_code == 200
             assert plan_res.json()["shield_consumed"] is True
 
-        # Check shields: decreased by exactly 1
+        # Check shields: decreased by exactly the Build My Day price (2)
         st_res2 = await ac.get("/api/v1/ai/status", headers=headers)
-        assert st_res2.json()["shields_available"] == initial_shields - 1
+        assert st_res2.json()["shields_available"] == initial_shields - 2
 
 # ── Test 4: Failed Gemini request does not permanently consume Shield ────
 @pytest.mark.asyncio

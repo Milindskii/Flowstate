@@ -97,6 +97,7 @@ class AIRequest(Base):
     kind = Column(String, nullable=False, default="plan")
     status = Column(String, nullable=False, default="reserved")
     charge_source = Column(String, nullable=False, default="none")  # none | pro | free | shield
+    charge_units = Column(Integer, nullable=False, default=1, server_default="1")  # Shields taken when charge_source = shield
     request_sha256 = Column(String(64), nullable=False)
     deadline_at = Column(UTCDateTime(), nullable=False)
     finished_at = Column(UTCDateTime(), nullable=True)

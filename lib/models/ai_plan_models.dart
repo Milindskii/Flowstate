@@ -422,6 +422,13 @@ class AIUsageStatus {
   final bool requiresShield;
   final int hourlyRequestsRemaining;
 
+  /// Shields one AI plan costs once the free use is gone. Owned by the server (`shield_cost`); the app only
+  /// displays it, so a price change never needs an app release.
+  final int shieldCost;
+
+  /// True when the Shield price can be paid right now (Pro never pays Shields).
+  bool get canAffordShieldPlan => shieldsAvailable >= shieldCost;
+
   const AIUsageStatus({
     required this.isPro,
     required this.subscriptionTier,
@@ -432,7 +439,10 @@ class AIUsageStatus {
     required this.canUseAi,
     required this.requiresShield,
     required this.hourlyRequestsRemaining,
+    this.shieldCost = defaultShieldCost,
   });
+
+  static const int defaultShieldCost = 2;
 
   factory AIUsageStatus.fromJson(Map<String, dynamic> json) {
     final freeRemaining = json['free_uses_remaining'] as int?;
@@ -455,6 +465,7 @@ class AIUsageStatus {
       canUseAi: json['can_use_ai'] as bool? ?? (canPlanFree ?? true),
       requiresShield: json['requires_shield'] as bool? ?? (!freeAvailable),
       hourlyRequestsRemaining: json['hourly_requests_remaining'] as int? ?? 5,
+      shieldCost: json['shield_cost'] as int? ?? defaultShieldCost,
     );
   }
 

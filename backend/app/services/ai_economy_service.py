@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
+from ..core.economy_config import SHIELD_COST_BUILD_MY_DAY
 from ..models.ai_usage import AIUsageRecord, AIPlanningAttempt
 from ..models.flow_progression import FlowProfile
 from ..models.user import User
@@ -41,7 +42,7 @@ def effective_is_pro(usage: AIUsageRecord, now: Optional[datetime] = None) -> bo
 class AIEconomyService:
     """
     Authoritative server-side management of:
-    1. AI Economy (1 Free plan, subsequent plans cost 1 Flow Shield, Pro gets unlimited allowance)
+    1. AI Economy (1 Free plan, subsequent plans cost SHIELD_COST_BUILD_MY_DAY Flow Shields, Pro gets a fair-use allowance)
     2. Atomic usage consumption & safe rollback on failures
     3. Status/usage reads (reservation, rate limits and idempotency live in ai_gateway)
     4. Idempotency guarantees to prevent double-charging (see ai_gateway)
@@ -114,10 +115,12 @@ class AIEconomyService:
             free_uses_total=usage.free_uses_total,
             free_uses_consumed=usage.free_uses_consumed,
             free_use_available=can_plan_free,
-            can_use_ai=(can_plan_free or shields > 0 or is_pro),
+            can_use_ai=(can_plan_free or shields >= SHIELD_COST_BUILD_MY_DAY or is_pro),
             shields_available=shields,
             can_plan_free=can_plan_free,
             requires_shield=requires_shield,
+            shield_cost=SHIELD_COST_BUILD_MY_DAY,
+            can_afford_shield_plan=shields >= SHIELD_COST_BUILD_MY_DAY,
             subscription_tier=usage.subscription_tier,
             subscription_status=usage.subscription_status,
             subscription_expires_at=usage.subscription_expires_at,

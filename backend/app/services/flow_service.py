@@ -3,7 +3,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Tuple, Optional, List
 import zoneinfo
 from fastapi import HTTPException, status
-from sqlalchemy import func
+from sqlalchemy import func, or_, update
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -761,7 +761,8 @@ class FlowService:
                     profile.shield_progress_days += 1
                     if profile.shield_progress_days >= SHIELD_EARN_DAYS:
                         if profile.shields_available < MAX_FREE_SHIELDS:
-                            profile.shields_available += 1
+                            # SQL expression, not read-modify-write: a concurrent AI charge/refund is never overwritten
+                            profile.shields_available = FlowProfile.shields_available + 1
                             shield_awarded = True
                         profile.shield_progress_days = 0
                 elif days_diff > 1:
@@ -1221,9 +1222,23 @@ class FlowService:
                 detail="Flow Shield already active for today.",
             )
 
-        profile.shields_available -= 1
-        profile.shields_used_count += 1
-        profile.last_shield_used_date = today_str
+        # One conditional UPDATE decides: a concurrent AI plan or a second tap cannot spend the same Shield, and the
+        # balance cannot go below zero. The loser changes nothing.
+        spent = db.execute(
+            update(FlowProfile)
+            .where(FlowProfile.user_id == user.id, FlowProfile.shields_available > 0,
+                   or_(FlowProfile.last_shield_used_date.is_(None), FlowProfile.last_shield_used_date != today_str))
+            .values(shields_available=FlowProfile.shields_available - 1,
+                    shields_used_count=FlowProfile.shields_used_count + 1,
+                    last_shield_used_date=today_str)
+        )
+        if spent.rowcount != 1:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No Flow Shields available to consume.",
+            )
+        db.refresh(profile)
 
         # Protect streak: if user missed yesterday, keep streak chain alive
         yesterday_str = (datetime.now(user_tz) - timedelta(days=1)).strftime("%Y-%m-%d")

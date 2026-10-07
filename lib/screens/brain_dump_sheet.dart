@@ -273,26 +273,27 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         return;
       }
 
+      // The Shield decision is made here, BEFORE any AI request: no free allowance left means either a confirmed
+      // Shield payment or no AI call at all. The server re-checks everything; this only avoids a pointless call.
       final usageStatus = await aiService.getUsageStatus();
       bool consumeShield = false;
 
       if (!usageStatus.isPro && !usageStatus.freeUseAvailable) {
-        if (usageStatus.shieldsAvailable > 0) {
-          if (!mounted) return;
-          final confirmedShield = await showShieldConfirmationSheet(
-            context,
-            shieldsAvailable: usageStatus.shieldsAvailable,
-            freeRemaining: 0,
-          );
-          if (!confirmedShield) {
-            _showAiFailure('quota_exhausted');
-            return;
-          }
-          consumeShield = true;
-        } else {
-          _showAiFailure('quota_exhausted');
+        if (!usageStatus.canAffordShieldPlan) {
+          _showAiFailure('insufficient_shields');
           return;
         }
+        if (!mounted) return;
+        final confirmedShield = await showShieldConfirmationSheet(
+          context,
+          shieldsAvailable: usageStatus.shieldsAvailable,
+          shieldCost: usageStatus.shieldCost,
+        );
+        if (!confirmedShield) {
+          _showAiFailure('shield_declined');
+          return;
+        }
+        consumeShield = true;
       }
 
       final result = await aiService.generatePlan(
@@ -342,9 +343,6 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     if (!mounted) return;
     setState(() {
       _aiFailureCode = code;
-      _aiFailureMessage = code == 'auth_required'
-          ? 'Sign in to use AI planning'
-          : "Noya's taking a little nap";
       _isLoading = false;
       _viewMode = _BrainDumpViewMode.input;
     });
@@ -898,6 +896,15 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       noyaTitle = 'Fine-tune with $name';
       noyaMessage = '$name will adapt the schedule to your edits';
       noyaState = NoyaState.focusing;
+    } else if (_aiFailureCode != null && _aiFailureCode != 'auth_required') {
+      // AI could not run (no Shields, declined, provider trouble): Noya rests, the text stays, nothing is lost.
+      phase = 'rest';
+      noyaTitle = '$name is resting';
+      noyaMessage = _aiFailureCode == 'insufficient_shields' ||
+              _aiFailureCode == 'quota_exhausted'
+          ? "AI planning isn't available right now. $name can still build a basic plan."
+          : "$name couldn't plan this one with AI. Your text is safe.";
+      noyaState = NoyaState.sleepy;
     } else {
       phase = 'input';
       noyaTitle = 'Build My Day with $name';
@@ -1104,7 +1111,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
               height: 1.35,
             ),
           ),
-          if (!isPro && !freeAvailable && shields > 0) ...[
+          if (status != null && !isPro && !freeAvailable) ...[
             const SizedBox(height: 6),
             Row(
               children: [
@@ -1113,7 +1120,9 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
-                    'Free plan used today. Next AI plan will ask to consume 1 Shield.',
+                    status.canAffordShieldPlan
+                        ? 'Free plan used. Next AI plan uses ${status.shieldCost} Shields, and Noya asks first.'
+                        : 'Free plan used. An AI plan needs ${status.shieldCost} Shields; you have $shields.',
                     style: FlowTypography.labelSmall(
                             color: FlowColors.textMutedOf(context))
                         .copyWith(
@@ -1197,14 +1206,27 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
 
   Widget _buildAiFailureCard() {
     final isAuth = _aiFailureCode == 'auth_required';
+    
+    String title = "Noya's taking a little nap";
+    String body = 'Something went wrong while planning your day. Your existing tasks are safe.';
+    bool hideRetry = false;
+    
+    if (isAuth) {
+      title = 'Sign in to use AI planning';
+      body = 'Sign in to let Noya organize your day with AI. Your text is safe.';
+    } else if (_aiFailureCode == 'shield_declined') {
+      body = 'No Shields were used. Your existing tasks are safe.';
+    } else if (_aiFailureCode == 'insufficient_shields') {
+      body = "You don't have enough Shields for another AI plan. Keep your streak going to earn more.";
+      hideRetry = true;
+    }
+
     return NoyaFailureState(
       key: const Key('ai_failure_card'),
       compact: true,
-      title: isAuth ? 'Sign in to use AI planning' : "Noya's taking a little nap",
-      body: isAuth
-          ? 'Sign in to let Noya organize your day with AI. Your text is safe.'
-          : 'Something went wrong while planning your day. Your existing tasks are safe.',
-      onRetry: isAuth ? _signInForAi : _retryWithAi,
+      title: title,
+      body: body,
+      onRetry: hideRetry ? null : (isAuth ? _signInForAi : _retryWithAi),
       retryLabel: isAuth ? 'Sign in' : 'Try again',
       retryKey: isAuth
           ? const Key('sign_in_for_ai_button')
