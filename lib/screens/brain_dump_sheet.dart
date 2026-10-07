@@ -260,26 +260,27 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         return;
       }
 
+      // The Shield decision is made here, BEFORE any AI request: no free allowance left means either a confirmed
+      // Shield payment or no AI call at all. The server re-checks everything; this only avoids a pointless call.
       final usageStatus = await aiService.getUsageStatus();
       bool consumeShield = false;
 
       if (!usageStatus.isPro && !usageStatus.freeUseAvailable) {
-        if (usageStatus.shieldsAvailable > 0) {
-          if (!mounted) return;
-          final confirmedShield = await showShieldConfirmationSheet(
-            context,
-            shieldsAvailable: usageStatus.shieldsAvailable,
-            freeRemaining: 0,
-          );
-          if (!confirmedShield) {
-            _showAiFailure('quota_exhausted');
-            return;
-          }
-          consumeShield = true;
-        } else {
-          _showAiFailure('quota_exhausted');
+        if (!usageStatus.canAffordShieldPlan) {
+          _showAiFailure('insufficient_shields');
           return;
         }
+        if (!mounted) return;
+        final confirmedShield = await showShieldConfirmationSheet(
+          context,
+          shieldsAvailable: usageStatus.shieldsAvailable,
+          shieldCost: usageStatus.shieldCost,
+        );
+        if (!confirmedShield) {
+          _showAiFailure('shield_declined');
+          return;
+        }
+        consumeShield = true;
       }
 
       final result = await aiService.generatePlan(
@@ -346,7 +347,10 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     'malformed': "Flowstate AI's answer couldn't be read.",
     'empty': "Flowstate AI didn't find any tasks in your text.",
     'scheduling_failed': "the tasks couldn't be fitted into your schedule.",
-    'quota_exhausted': "you've used your free AI plans.",
+    'quota_exhausted': "you've used your free AI plan.",
+    'insufficient_shields':
+        "you don't have enough Shields for another AI plan. Keep your streak going to earn more.",
+    'shield_declined': 'no Shields were used.',
     'privacy_declined': 'you chose not to send this to Flowstate AI.',
     'rate_limited':
         "you've reached the planning limit for now. Try again later.",
@@ -365,7 +369,11 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       _aiFailureCode = code;
       _aiFailureMessage = code == 'auth_required'
           ? 'Sign in to use AI planning'
-          : 'AI planning failed: ${_aiFailureReasons[code] ?? "something went wrong. Please try again."}';
+          : code == 'shield_declined'
+              ? 'No Shields were used.'
+              : code == 'insufficient_shields'
+                  ? "AI planning isn't available: ${_aiFailureReasons[code]}"
+                  : 'AI planning failed: ${_aiFailureReasons[code] ?? "something went wrong. Please try again."}';
       _isLoading = false;
       _viewMode = _BrainDumpViewMode.input;
     });
@@ -912,6 +920,15 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       noyaTitle = 'Fine-tune with $name';
       noyaMessage = '$name will adapt the schedule to your edits';
       noyaState = NoyaState.focusing;
+    } else if (_aiFailureCode != null && _aiFailureCode != 'auth_required') {
+      // AI could not run (no Shields, declined, provider trouble): Noya rests, the text stays, nothing is lost.
+      phase = 'rest';
+      noyaTitle = '$name is resting';
+      noyaMessage = _aiFailureCode == 'insufficient_shields' ||
+              _aiFailureCode == 'quota_exhausted'
+          ? "AI planning isn't available right now. $name can still build a basic plan."
+          : "$name couldn't plan this one with AI. Your text is safe.";
+      noyaState = NoyaState.sleepy;
     } else {
       phase = 'input';
       noyaTitle = 'Build My Day with $name';
@@ -1118,7 +1135,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
               height: 1.35,
             ),
           ),
-          if (!isPro && !freeAvailable && shields > 0) ...[
+          if (status != null && !isPro && !freeAvailable) ...[
             const SizedBox(height: 6),
             Row(
               children: [
@@ -1127,7 +1144,9 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
-                    'Free plan used today. Next AI plan will ask to consume 1 Shield.',
+                    status.canAffordShieldPlan
+                        ? 'Free plan used. Next AI plan uses ${status.shieldCost} Shields, and Noya asks first.'
+                        : 'Free plan used. An AI plan needs ${status.shieldCost} Shields; you have $shields.',
                     style: FlowTypography.labelSmall(
                             color: FlowColors.textMutedOf(context))
                         .copyWith(
@@ -1247,7 +1266,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                   onPressed: _isLoading ? null : _signInForAi,
                   child: const Text('Sign in'),
                 )
-              else
+              else if (_aiFailureCode != 'insufficient_shields')
                 OutlinedButton(
                   key: const Key('retry_ai_button'),
                   onPressed: _isLoading ? null : _retryWithAi,

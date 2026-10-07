@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import text
 
+from app.core.economy_config import SHIELD_COST_BUILD_MY_DAY
 from app.db.session import SessionLocal, engine
 from app.models.ai_usage import AIRequest, AIUsagePeriod, AIUsageRecord
 from app.models.flow_progression import FlowProfile
@@ -82,13 +83,13 @@ def test_conditional_charge_never_overspends_the_free_trial_or_shields():
     uid, _ = make_user()
     with SessionLocal() as db:
         AIEconomyService.get_or_create_usage(db, uid)
-        AIEconomyService.get_or_create_profile(db, uid).shields_available = 3
+        AIEconomyService.get_or_create_profile(db, uid).shields_available = 3 * SHIELD_COST_BUILD_MY_DAY + 1
         db.commit()
 
     def charge(_i):
         with SessionLocal() as db:
             try:
-                src = ai_gateway._charge(db, uid, False, True, datetime.now(timezone.utc).date())
+                src, _units = ai_gateway._charge(db, uid, False, True, datetime.now(timezone.utc).date())
                 db.commit()
                 return src
             except ai_gateway.QuotaExceeded:
@@ -98,7 +99,8 @@ def test_conditional_charge_never_overspends_the_free_trial_or_shields():
     got = _race(charge)
     assert got.count("free") == 1 and got.count("shield") == 3 and got.count("none") == N - 4, got
     with SessionLocal() as db:
-        assert db.query(FlowProfile).filter(FlowProfile.user_id == uid).one().shields_available == 0
+        # 3 whole prices were taken; the odd leftover Shield is never taken as a partial price, nor driven negative
+        assert db.query(FlowProfile).filter(FlowProfile.user_id == uid).one().shields_available == 1
     assert _usage(uid)[0] == 1
 
 
@@ -241,3 +243,24 @@ def test_unprivileged_role_cannot_read_gateway_tables():
             c.execute(text("revoke all on ai_requests, ai_usage_periods, rate_limit_windows from flowstate_test_anon"))
             c.execute(text("revoke usage on schema public from flowstate_test_anon"))
             c.execute(text("drop role if exists flowstate_test_anon"))
+
+
+def test_40_way_race_for_exactly_one_price_of_shields_has_one_winner_and_never_goes_negative():
+    uid, _ = make_user()
+    with SessionLocal() as db:
+        usage = AIEconomyService.get_or_create_usage(db, uid)
+        usage.free_uses_consumed = usage.free_uses_total
+        AIEconomyService.get_or_create_profile(db, uid).shields_available = SHIELD_COST_BUILD_MY_DAY
+        db.commit()
+
+    got = _race(lambda i: _begin(uid, f"shield-race-{i}", shield=True))
+    winners = [g for g in got if isinstance(g, ai_gateway.Ticket)]
+    assert len(winners) == 1 and winners[0].charge_source == "shield" and winners[0].charge_units == SHIELD_COST_BUILD_MY_DAY
+    assert all(isinstance(g, Exception) for g in got if g not in winners), "every loser is refused, none gets AI"
+    with SessionLocal() as db:
+        assert db.query(FlowProfile).filter(FlowProfile.user_id == uid).one().shields_available == 0
+        assert db.query(AIRequest).filter(AIRequest.user_id == uid, AIRequest.status == "reserved").count() == 1
+
+    with SessionLocal() as db:  # the winner's failure gives the whole price back once, however often it is reported
+        assert [ai_gateway.fail(db, winners[0], "timeout") for _ in range(3)] == [True, False, False]
+        assert db.query(FlowProfile).filter(FlowProfile.user_id == uid).one().shields_available == SHIELD_COST_BUILD_MY_DAY

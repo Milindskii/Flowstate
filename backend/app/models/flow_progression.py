@@ -5,6 +5,7 @@ from sqlalchemy import (
     String,
     Integer,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Text,
@@ -61,6 +62,11 @@ class FlowProfile(Base):
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
     user = relationship("User", backref="flow_profile", uselist=False)
+
+    # Defence in depth: whatever code path touches the balance, the database refuses a negative one.
+    __table_args__ = (
+        CheckConstraint("shields_available >= 0", name="ck_flow_profiles_shields_nonneg"),
+    )
 
 class FlowFocusSession(Base):
     __tablename__ = "flow_focus_sessions"

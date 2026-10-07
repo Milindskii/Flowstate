@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/ai_plan_models.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
@@ -150,13 +151,23 @@ class _GeminiPrivacyDisclosureSheet extends StatelessWidget {
   }
 }
 
-/// Confirmation sheet when spending 1 Flowstate Shield for an additional AI planning session
+bool _shieldSheetOpen = false;
+
+String _shieldCount(int n) => '$n Shield${n == 1 ? '' : 's'}';
+
+/// Confirmation sheet shown BEFORE the AI request when an AI plan is paid with Shields.
+/// Only one can be open at a time: a second call while one is showing returns false without stacking another.
 Future<bool> showShieldConfirmationSheet(
   BuildContext context, {
   required int shieldsAvailable,
+  int shieldCost = AIUsageStatus.defaultShieldCost,
   int freeRemaining = 0,
 }) async {
-  final result = await showModalBottomSheet<bool>(
+  if (_shieldSheetOpen) return false;
+  _shieldSheetOpen = true;
+  final bool? result;
+  try {
+    result = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
     backgroundColor: FlowColors.surface(context),
@@ -165,23 +176,57 @@ Future<bool> showShieldConfirmationSheet(
     ),
     builder: (ctx) => _ShieldConfirmationSheet(
       shieldsAvailable: shieldsAvailable,
+      shieldCost: shieldCost,
       freeRemaining: freeRemaining,
     ),
-  );
+    );
+  } finally {
+    _shieldSheetOpen = false;
+  }
   return result == true;
 }
 
-class _ShieldConfirmationSheet extends StatelessWidget {
+class _ShieldConfirmationSheet extends StatefulWidget {
   final int shieldsAvailable;
+  final int shieldCost;
   final int freeRemaining;
 
   const _ShieldConfirmationSheet({
     required this.shieldsAvailable,
+    this.shieldCost = AIUsageStatus.defaultShieldCost,
     this.freeRemaining = 0,
   });
 
   @override
+  State<_ShieldConfirmationSheet> createState() =>
+      _ShieldConfirmationSheetState();
+}
+
+class _ShieldConfirmationSheetState extends State<_ShieldConfirmationSheet> {
+  bool _answered = false;
+
+  @override
+  void dispose() {
+    _shieldSheetOpen = false; // however the sheet goes away (answer, back swipe, teardown), the guard is released
+    super.dispose();
+  }
+
+  /// A double tap (or Confirm + Not now) answers exactly once.
+  void _answer(bool confirmed) {
+    if (_answered) return;
+    _answered = true;
+    if (confirmed) {
+      FlowHaptics.selection();
+    } else {
+      FlowHaptics.lightTap();
+    }
+    Navigator.of(context).pop(confirmed);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final shieldsAvailable = widget.shieldsAvailable;
+    final cost = widget.shieldCost;
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.only(
@@ -218,7 +263,7 @@ class _ShieldConfirmationSheet extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Use a Shield?',
+                    'Use ${_shieldCount(cost)}?',
                     style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context))
                         .copyWith(fontWeight: FontWeight.w700),
                   ),
@@ -237,13 +282,14 @@ class _ShieldConfirmationSheet extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'You have $freeRemaining free AI plans remaining today.',
+                    'Noya can plan this for you using ${_shieldCount(cost)}.',
+                    key: const Key('shield_reason_text'),
                     style: FlowTypography.bodyMedium(color: FlowColors.textPrimaryOf(context))
                         .copyWith(fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Using a Shield unlocks this AI planning session to organize your brain dump.\nShields also protect your Flow streak if you ever miss a day.',
+                    'Your free AI plan is used up. Nothing is charged if Noya can\'t finish the plan.\nShields also protect your Flow streak if you ever miss a day.',
                     style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(height: 1.4),
                   ),
                   const SizedBox(height: 10),
@@ -269,10 +315,7 @@ class _ShieldConfirmationSheet extends StatelessWidget {
                 Expanded(
                   child: OutlinedButton(
                     key: const Key('shield_not_now_button'),
-                    onPressed: () {
-                      FlowHaptics.lightTap();
-                      Navigator.of(context).pop(false);
-                    },
+                    onPressed: () => _answer(false),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: FlowColors.textMutedOf(context),
                       side: BorderSide(color: FlowColors.border(context)),
@@ -286,11 +329,8 @@ class _ShieldConfirmationSheet extends StatelessWidget {
                 Expanded(
                   flex: 2,
                   child: ElevatedButton(
-                    key: const Key('use_1_shield_button'),
-                    onPressed: () {
-                      FlowHaptics.selection();
-                      Navigator.of(context).pop(true);
-                    },
+                    key: const Key('use_shields_button'),
+                    onPressed: () => _answer(true),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: FlowColors.accentCyan,
                       foregroundColor: FlowColors.textInverse,
@@ -299,7 +339,7 @@ class _ShieldConfirmationSheet extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
                     child: Text(
-                      'Use 1 Shield',
+                      'Use ${_shieldCount(cost)}',
                       style: FlowTypography.labelLarge(color: FlowColors.textInverse)
                           .copyWith(fontWeight: FontWeight.w700),
                     ),
