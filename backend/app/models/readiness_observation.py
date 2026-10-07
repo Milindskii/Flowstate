@@ -45,6 +45,8 @@ class ReadinessObservation(Base):
 
     # Provenance tracking: self_report vs observed vs inferred vs imported
     source = Column(String, default=ObservationSource.observed.value, nullable=False, index=True)
+    # reflection (a real post-task rating) | onboarding (questionnaire baseline) | legacy (before 2026-10-07)
+    provenance = Column(String(20), nullable=False, default="reflection", server_default="legacy")
 
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 

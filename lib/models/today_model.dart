@@ -102,12 +102,19 @@ class WorkloadSummaryModel {
   final bool isOverloaded;
   final int availableMinutes;
 
+  /// Time whose slot already ended unstarted: never part of [plannedMinutes] (what can still be done),
+  /// kept apart for history/analytics.
+  final int missedMinutes;
+  final int missedCount;
+
   const WorkloadSummaryModel({
     this.plannedMinutes = 0,
     this.formattedWorkload = '0m planned',
     this.message = "Let's build your day.",
     this.isOverloaded = false,
     this.availableMinutes = 390,
+    this.missedMinutes = 0,
+    this.missedCount = 0,
   });
 
   factory WorkloadSummaryModel.fromJson(Map<String, dynamic> json) {
@@ -117,6 +124,8 @@ class WorkloadSummaryModel {
       message: json['message'] as String? ?? "Let's build your day.",
       isOverloaded: json['is_overloaded'] as bool? ?? false,
       availableMinutes: (json['available_minutes'] as num?)?.toInt() ?? 390,
+      missedMinutes: (json['missed_minutes'] as num?)?.toInt() ?? 0,
+      missedCount: (json['missed_count'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -126,6 +135,8 @@ class WorkloadSummaryModel {
         'message': message,
         'is_overloaded': isOverloaded,
         'available_minutes': availableMinutes,
+        'missed_minutes': missedMinutes,
+        'missed_count': missedCount,
       };
 }
 
@@ -157,6 +168,40 @@ class CurrentRecommendationModel {
       };
 }
 
+/// One open task planned for tomorrow (backend `tomorrow_tasks`). A section of its own on Today:
+/// never part of [TodayResponseModel.upcomingTimeline] or the day path.
+class TomorrowTask {
+  final String id;
+  final String title;
+  final DateTime? startTime; // null: no time chosen yet
+  final int durationMinutes;
+  final bool isCommitment;
+
+  const TomorrowTask({
+    required this.id,
+    required this.title,
+    this.startTime,
+    this.durationMinutes = 45,
+    this.isCommitment = false,
+  });
+
+  factory TomorrowTask.fromJson(Map<String, dynamic> json) => TomorrowTask(
+        id: json['id']?.toString() ?? '',
+        title: json['title'] as String? ?? '',
+        startTime: json['start_time'] == null ? null : DateTime.tryParse(json['start_time'].toString())?.toLocal(),
+        durationMinutes: (json['duration_minutes'] as num?)?.toInt() ?? 45,
+        isCommitment: json['is_commitment'] as bool? ?? false,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        if (startTime != null) 'start_time': startTime!.toUtc().toIso8601String(),
+        'duration_minutes': durationMinutes,
+        'is_commitment': isCommitment,
+      };
+}
+
 class TodayResponseModel {
   final TodayUserContextModel user;
   final String date;
@@ -167,6 +212,8 @@ class TodayResponseModel {
   final WorkloadSummaryModel workloadSummary;
   final TaskItem? activeTask;
   final List<ScheduleItem> upcomingTimeline;
+  /// Tomorrow's open tasks, shown as their own section. Empty when tomorrow has none.
+  final List<TomorrowTask> tomorrowTasks;
   final DateTime lastUpdatedAt;
   final int completedCount;
   final bool hasActionableTasks;
@@ -183,6 +230,7 @@ class TodayResponseModel {
     required this.workloadSummary,
     this.activeTask,
     this.upcomingTimeline = const [],
+    this.tomorrowTasks = const [],
     required this.lastUpdatedAt,
     this.completedCount = 0,
     this.hasActionableTasks = false,
@@ -224,6 +272,12 @@ class TodayResponseModel {
             .toList() ??
         [];
 
+    final tomorrowList = (json['tomorrow_tasks'] as List?)
+            ?.whereType<Map<String, dynamic>>()
+            .map(TomorrowTask.fromJson)
+            .toList() ??
+        const <TomorrowTask>[];
+
     final rawState = json['state'] as String? ?? json['lifecycle_state'] as String?;
     final count = json['completed_count'] as int? ?? 0;
     final hasTasks = json['has_actionable_tasks'] as bool? ?? false;
@@ -238,6 +292,7 @@ class TodayResponseModel {
       workloadSummary: workload,
       activeTask: active,
       upcomingTimeline: timelineList,
+      tomorrowTasks: tomorrowList,
       lastUpdatedAt: fetchedAt ?? DateTime.now(),
       completedCount: count,
       hasActionableTasks: hasTasks,
@@ -258,6 +313,7 @@ class TodayResponseModel {
         'workload_summary': workloadSummary.toJson(),
         'active_task': activeTask?.toJson(),
         'upcoming_timeline': upcomingTimeline.map((s) => s.toJson()).toList(),
+        'tomorrow_tasks': tomorrowTasks.map((t) => t.toJson()).toList(),
         'last_updated_at': lastUpdatedAt.toIso8601String(),
       };
 }

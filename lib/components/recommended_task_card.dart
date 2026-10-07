@@ -30,9 +30,9 @@ class RecommendedTaskCard extends StatelessWidget {
         const SizedBox(height: 14),
         Container(
           decoration: BoxDecoration(
-            color: FlowColors.darkCard,
+            color: FlowColors.surface(context),
             borderRadius: FlowRadii.cardLargeRadius,
-            border: Border.all(color: FlowColors.darkBorder, width: 1.0),
+            border: Border.all(color: FlowColors.border(context), width: 1.0),
           ),
           child: Padding(
             padding: const EdgeInsets.all(22.0),
@@ -88,7 +88,7 @@ class RecommendedTaskCard extends StatelessWidget {
                     Expanded(
                       child: Text(
                         '${task.durationMinutes} min • ${task.deadline}',
-                        style: FlowTypography.bodyMedium(color: FlowColors.textSecondary),
+                        style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'auth_screen.dart';
 import '../components/companion/companion_graphic.dart';
 import '../components/companion/flow_companion_view.dart';
 import '../components/flow_ambient_background.dart';
@@ -11,6 +12,7 @@ import '../models/flow_daily_quest.dart';
 import '../providers/flow_provider.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
+import '../theme/flow_motion.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_spacing.dart';
 import '../theme/flow_typography.dart';
@@ -222,6 +224,76 @@ class _FlowScreenState extends State<FlowScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
+                if (flow.isAuthRequired) ...[
+                  // Signed out: a friendly invitation, not a raw auth error.
+                  Container(
+                    key: const Key('flow_hub_sign_in_prompt'),
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+                    decoration: BoxDecoration(
+                      color: FlowColors.surfaceElevated(context),
+                      borderRadius: BorderRadius.circular(FlowRadii.card),
+                      border: Border.all(color: FlowColors.border(context)),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.cloud_sync_rounded, color: Theme.of(context).colorScheme.primary, size: 18),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Sign in to sync your progress',
+                            style: FlowTypography.bodyMedium(color: FlowColors.textPrimaryOf(context)),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const AuthScreen()),
+                          ),
+                          child: Text(
+                            'Sign in',
+                            style: FlowTypography.labelLarge(color: Theme.of(context).colorScheme.primary).copyWith(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else if (flow.errorMessage != null) ...[
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: FlowColors.surfaceElevated(context),
+                      borderRadius: BorderRadius.circular(FlowRadii.card),
+                      border: Border.all(color: FlowColors.accentAmber.withValues(alpha: 0.4)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.cloud_off_rounded, color: FlowColors.accentAmber, size: 18),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            flow.errorMessage!,
+                            style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => flow.loadOverview(),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: Text(
+                            'Retry',
+                            style: FlowTypography.labelSmall(color: FlowColors.mint).copyWith(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 // Top Quick Stats: Streak & Shields
                 Wrap(
                   alignment: WrapAlignment.center,
@@ -1062,6 +1134,24 @@ class _FlowScreenState extends State<FlowScreen> {
             final perk = item['perk'] as String? ?? '';
             final isCurrent = companion.species == species;
             final canAfford = currentBalance >= cost;
+            final comingSoon = !isOwned && !isCurrent && !CompanionAnimalInfo.isAvailable(species);
+
+            if (comingSoon) {
+              return _ComingSoonCompanionCard(
+                key: Key('companion_coming_soon_$species'),
+                species: species,
+                name: name,
+                onTap: () {
+                  FlowHaptics.selection();
+                  ScaffoldMessenger.of(context)
+                    ..hideCurrentSnackBar()
+                    ..showSnackBar(SnackBar(
+                      content: Text('$name is on the way. Noya will keep you company until then.'),
+                      duration: const Duration(seconds: 2),
+                    ));
+                },
+              );
+            }
 
             return GestureDetector(
               onTap: () => _handleCompanionTap(context, flow, species, name, isOwned, cost, canAfford, isCurrent),
@@ -1099,7 +1189,7 @@ class _FlowScreenState extends State<FlowScreen> {
                     Text(
                       perk,
                       style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
-                        fontSize: 9,
+                        fontSize: 11,
                       ),
                       textAlign: TextAlign.center,
                       maxLines: 1,
@@ -1117,7 +1207,8 @@ class _FlowScreenState extends State<FlowScreen> {
                           'ACTIVE',
                           style: FlowTypography.labelSmall(color: Colors.black).copyWith(
                             fontWeight: FontWeight.w900,
-                            fontSize: 9,
+                            fontSize: 10.5,
+                            letterSpacing: 0.4,
                           ),
                         ),
                       )
@@ -1133,7 +1224,8 @@ class _FlowScreenState extends State<FlowScreen> {
                           'TAP TO SWITCH',
                           style: FlowTypography.labelSmall(color: FlowColors.mint).copyWith(
                             fontWeight: FontWeight.w800,
-                            fontSize: 9,
+                            fontSize: 10.5,
+                            letterSpacing: 0.4,
                           ),
                         ),
                       )
@@ -1191,7 +1283,7 @@ class _FlowScreenState extends State<FlowScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Earn Flow Points by completing focus sessions, quests, and challenges.',
+                  'New companions are on their way. Earn Flow Points with focus sessions, quests and challenges.',
                   style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
                 ),
               ),
@@ -1416,6 +1508,137 @@ class _FlowScreenState extends State<FlowScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+
+/// A companion that is not ready yet: the existing card shape with a quiet, desaturated portrait, a one-time
+/// light sweep when it first appears (no endless loop) and a "Coming soon" pill in place of a price.
+class _ComingSoonCompanionCard extends StatefulWidget {
+  final String species;
+  final String name;
+  final VoidCallback onTap;
+
+  const _ComingSoonCompanionCard({super.key, required this.species, required this.name, required this.onTap});
+
+  @override
+  State<_ComingSoonCompanionCard> createState() => _ComingSoonCompanionCardState();
+}
+
+class _ComingSoonCompanionCardState extends State<_ComingSoonCompanionCard> with SingleTickerProviderStateMixin {
+  late final AnimationController _sweep =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 1400));
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (FlowMotion.loopsEnabled(context) && _sweep.status == AnimationStatus.dismissed) {
+      _sweep.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _sweep.dispose();
+    super.dispose();
+  }
+
+  static const _greyscale = ColorFilter.matrix(<double>[
+    0.2126, 0.7152, 0.0722, 0, 0,
+    0.2126, 0.7152, 0.0722, 0, 0,
+    0.2126, 0.7152, 0.0722, 0, 0,
+    0, 0, 0, 1, 0,
+  ]);
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = FlowColors.textMutedOf(context);
+    return Semantics(
+      button: true,
+      label: '${widget.name}, coming soon',
+      excludeSemantics: true,
+      onTap: widget.onTap,
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: FlowColors.surfaceElevated(context),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: FlowColors.border(context)),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ClipOval(
+                child: AnimatedBuilder(
+                  animation: _sweep,
+                  builder: (context, child) {
+                    final t = Curves.easeInOut.transform(_sweep.value);
+                    return ShaderMask(
+                      blendMode: BlendMode.srcATop,
+                      shaderCallback: (rect) => LinearGradient(
+                        begin: Alignment(-1.6 + 3.2 * t, -0.4),
+                        end: Alignment(-0.6 + 3.2 * t, 0.4),
+                        colors: [
+                          Colors.white.withValues(alpha: 0),
+                          Colors.white.withValues(alpha: _sweep.isAnimating ? 0.35 : 0),
+                          Colors.white.withValues(alpha: 0),
+                        ],
+                      ).createShader(rect),
+                      child: child,
+                    );
+                  },
+                  child: Opacity(
+                    opacity: 0.5,
+                    child: ColorFiltered(
+                      colorFilter: _greyscale,
+                      child: CompanionGraphic(species: widget.species, size: 64, animate: false),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                widget.name,
+                style: FlowTypography.titleMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'On the way',
+                style: FlowTypography.labelSmall(color: muted).copyWith(fontSize: 11),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: FlowColors.surfaceContainer(context),
+                  borderRadius: BorderRadius.circular(FlowRadii.pill),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.auto_awesome_rounded, size: 11, color: muted),
+                    const SizedBox(width: 4),
+                    Text(
+                      'COMING SOON',
+                      style: FlowTypography.labelSmall(color: muted).copyWith(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 10.5,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

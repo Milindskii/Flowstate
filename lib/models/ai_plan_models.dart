@@ -12,6 +12,7 @@ class ExtractedTaskItem {
   final String prioritySource; // 'explicit', 'inferred', or 'unspecified'
   final String? deadline; // e.g. "2026-09-26" or "tomorrow"
   final String? fixedStart; // e.g. "18:00"
+  final String? targetDate; // e.g. "2026-10-02" — calendar day for fixed_start
   final bool isDurationExplicit;
   final bool isRecurring;
   final List<String> dependencies;
@@ -22,6 +23,26 @@ class ExtractedTaskItem {
   final String? recommendedSlotDisplay;
   final String? schedulingExplanation;
   final Map<String, dynamic>? schedulingReasons;
+  /// Server verdict: the user stated this exact clock time (lock source L1). Never true for
+  /// scheduler recommendations.
+  final bool timeLocked;
+  final bool isCommitment; // server-persisted fixed block ("Going out 6:30-8:30")
+  final String? recommendedSlotDate; // user-local YYYY-MM-DD of the recommended slot
+  final String? unscheduledReason; // e.g. explicit_time_in_past, no_capacity
+  final List<Map<String, dynamic>> validationIssues; // [{code, field, message}]
+  final DateTime? suggestedSlotStart; // roll-over proposal, never auto-applied
+  final String? suggestedSlotDisplay;
+  final DateTime? deadlineAt; // full deadline instant from the backend (keeps the time, e.g. 23:00)
+  final String? plannedDate; // backend-chosen owning day, YYYY-MM-DD
+  final String? candidateId; // stable id; depends_on refers to it
+  final String? durationSource;
+  final String? focusLevel;
+  final String? focusSource;
+  final String? deadlineKind;
+  final List<String> dependsOn;
+  final DateTime? preferredStart; // top-level preferred times are user-stated only
+  final DateTime? preferredWindowStart;
+  final DateTime? preferredWindowEnd;
 
   const ExtractedTaskItem({
     required this.title,
@@ -33,6 +54,7 @@ class ExtractedTaskItem {
     required this.prioritySource,
     this.deadline,
     this.fixedStart,
+    this.targetDate,
     this.isDurationExplicit = false,
     this.isRecurring = false,
     this.dependencies = const [],
@@ -43,6 +65,24 @@ class ExtractedTaskItem {
     this.recommendedSlotDisplay,
     this.schedulingExplanation,
     this.schedulingReasons,
+    this.timeLocked = false,
+    this.isCommitment = false,
+    this.recommendedSlotDate,
+    this.unscheduledReason,
+    this.validationIssues = const [],
+    this.suggestedSlotStart,
+    this.suggestedSlotDisplay,
+    this.deadlineAt,
+    this.plannedDate,
+    this.candidateId,
+    this.durationSource,
+    this.focusLevel,
+    this.focusSource,
+    this.deadlineKind,
+    this.dependsOn = const [],
+    this.preferredStart,
+    this.preferredWindowStart,
+    this.preferredWindowEnd,
   });
 
   bool get isPriorityExplicit => prioritySource == 'explicit';
@@ -65,23 +105,58 @@ class ExtractedTaskItem {
 
     DateTime? recStart;
     if (json['recommended_slot_start'] != null) {
-      recStart = DateTime.tryParse(json['recommended_slot_start'].toString());
+      recStart = DateTime.tryParse(json['recommended_slot_start'].toString())?.toLocal();
     }
     DateTime? recEnd;
     if (json['recommended_slot_end'] != null) {
-      recEnd = DateTime.tryParse(json['recommended_slot_end'].toString());
+      recEnd = DateTime.tryParse(json['recommended_slot_end'].toString())?.toLocal();
+    }
+
+    final temporal = json['temporal'] as Map<String, dynamic>?;
+
+    String? targetDate = json['target_date'] as String? ?? temporal?['target_date'] as String?;
+    String? fixedStart = json['fixed_start'] as String?;
+    if (fixedStart == null) {
+      final temporalFixed = temporal?['fixed_start']?.toString();
+      final schedStart = json['scheduled_start']?.toString();
+      final rawFixed = temporalFixed ?? schedStart;
+      if (rawFixed != null) {
+        final parsed = DateTime.tryParse(rawFixed);
+        if (parsed != null) {
+          fixedStart = DateFormat('HH:mm').format(parsed.toLocal());
+          targetDate ??= DateFormat('yyyy-MM-dd').format(parsed.toLocal());
+        }
+      }
+    }
+    if (targetDate == null && json['scheduled_start'] != null) {
+      final parsed = DateTime.tryParse(json['scheduled_start'].toString());
+      if (parsed != null) {
+        targetDate = DateFormat('yyyy-MM-dd').format(parsed.toLocal());
+      }
+    }
+
+    // deadline_at is the authoritative instant; `deadline` is only a display date (it has no time).
+    final DateTime? deadlineAt =
+        json['deadline_at'] != null ? DateTime.tryParse(json['deadline_at'].toString())?.toLocal() : null;
+    String? deadline = json['deadline'] as String?;
+    if (deadline == null && deadlineAt != null) {
+      deadline = DateFormat('yyyy-MM-dd').format(deadlineAt);
     }
 
     return ExtractedTaskItem(
       title: json['title'] as String? ?? 'Untitled Task',
       description: json['description'] as String?,
-      type: json['type'] as String? ?? 'deep_work',
+      // The backend field is `task_type`; `type` was the old Gemini-only name.
+      type: json['task_type'] as String? ?? json['type'] as String? ?? 'deep_work',
       estimatedMinutes: (json['estimated_minutes'] as num?)?.toInt() ?? 45,
       difficulty: json['difficulty'] as String? ?? 'medium',
       priority: rawPrio,
       prioritySource: prioSrc,
-      deadline: json['deadline'] as String?,
-      fixedStart: json['fixed_start'] as String?,
+      deadline: deadline,
+      deadlineAt: deadlineAt,
+      plannedDate: json['planned_date'] as String?,
+      fixedStart: fixedStart,
+      targetDate: targetDate,
       isDurationExplicit: durExplicit,
       isRecurring: json['is_recurring'] as bool? ?? false,
       dependencies: (json['dependencies'] as List<dynamic>?)
@@ -95,8 +170,31 @@ class ExtractedTaskItem {
       recommendedSlotDisplay: json['recommended_slot_display'] as String?,
       schedulingExplanation: json['scheduling_explanation'] as String?,
       schedulingReasons: json['scheduling_reasons'] as Map<String, dynamic>?,
+      timeLocked: json['time_locked'] as bool? ?? false,
+      isCommitment: json['is_commitment'] as bool? ?? false,
+      recommendedSlotDate: json['recommended_slot_date'] as String?,
+      unscheduledReason: json['unscheduled_reason'] as String?,
+      validationIssues: (json['validation_issues'] as List<dynamic>?)
+              ?.whereType<Map<String, dynamic>>()
+              .toList() ??
+          const [],
+      suggestedSlotStart: json['suggested_slot_start'] != null
+          ? DateTime.tryParse(json['suggested_slot_start'].toString())?.toLocal()
+          : null,
+      suggestedSlotDisplay: json['suggested_slot_display'] as String?,
+      candidateId: json['candidate_id'] as String?,
+      durationSource: json['duration_source'] as String?,
+      focusLevel: json['focus_level'] as String?,
+      focusSource: json['focus_source'] as String?,
+      deadlineKind: json['deadline_kind'] as String?,
+      dependsOn: (json['depends_on'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? const [],
+      preferredStart: _instant(json['preferred_start']),
+      preferredWindowStart: _instant(json['preferred_window_start']),
+      preferredWindowEnd: _instant(json['preferred_window_end']),
     );
   }
+
+  static DateTime? _instant(dynamic v) => v == null ? null : DateTime.tryParse(v.toString())?.toLocal();
 
   Map<String, dynamic> toJson() {
     return {
@@ -108,7 +206,10 @@ class ExtractedTaskItem {
       'priority': priority,
       'priority_source': prioritySource,
       'deadline': deadline,
+      'deadline_at': deadlineAt?.toUtc().toIso8601String(),
+      'planned_date': plannedDate,
       'fixed_start': fixedStart,
+      'target_date': targetDate,
       'is_recurring': isRecurring,
       'dependencies': dependencies,
       'confidence': confidence,
@@ -200,19 +301,33 @@ class ExtractedTaskItem {
       final parts = fixedStart!.split(':');
       final hour = int.tryParse(parts[0]) ?? 0;
       final minute = parts.length > 1 ? (int.tryParse(parts[1]) ?? 0) : 0;
-      scheduledStart = DateTime(now.year, now.month, now.day, hour, minute);
+
+      // Prefer the backend-supplied target day for the fixed slot;
+      // fall back to today when target_date is absent or unparseable.
+      final DateTime targetDay = (targetDate != null && targetDate!.isNotEmpty)
+          ? (DateTime.tryParse(targetDate!) ?? now)
+          : now;
+
+      scheduledStart = DateTime(
+        targetDay.year,
+        targetDay.month,
+        targetDay.day,
+        hour,
+        minute,
+      );
       scheduledTimeStr = DateFormat('h:mm a').format(scheduledStart);
     }
 
     // Deadline parsing
-    DateTime? deadlineAt;
+    DateTime? deadlineAt = this.deadlineAt;
     String deadlineStr = 'Today';
     if (deadline != null && deadline!.isNotEmpty) {
       deadlineStr = deadline!;
       try {
         final parsed = DateTime.tryParse(deadline!);
         if (parsed != null) {
-          deadlineAt = parsed;
+          // A date-only string is midnight; never let it replace the real deadline instant.
+          deadlineAt ??= parsed;
           deadlineStr = DateFormat('MMM d').format(parsed);
         }
       } catch (_) {}
@@ -228,11 +343,14 @@ class ExtractedTaskItem {
       ambiguities.add('priority_unspecified');
     }
 
+    // An explicit user time wins over the recommendation; the recommendation is NOT a user lock.
     final finalSchedStart = scheduledStart ?? recommendedSlotStart;
+    final lockedByUser = timeLocked && scheduledStart != null;
     final finalSchedEnd = finalSchedStart?.add(Duration(minutes: estimatedMinutes));
 
     return TaskItem(
-      id: customId ?? 'task-ai-${now.millisecondsSinceEpoch}',
+      // The candidate id doubles as the confirm client_ref so sibling depends_on references resolve.
+      id: customId ?? candidateId ?? 'task-ai-${now.millisecondsSinceEpoch}',
       title: title,
       description: description,
       durationMinutes: estimatedMinutes,
@@ -242,6 +360,7 @@ class ExtractedTaskItem {
       isPriority: prio == TaskPriority.high || prio == TaskPriority.urgent,
       deadline: deadlineStr,
       deadlineAt: deadlineAt,
+      plannedDate: plannedDate != null ? DateTime.tryParse(plannedDate!) : null,
       scheduledTime: scheduledTimeStr ?? recommendedSlotDisplay,
       scheduledStart: finalSchedStart,
       scheduledEnd: finalSchedEnd,
@@ -253,11 +372,42 @@ class ExtractedTaskItem {
       confidence: confidence,
       missingFields: isDurationExplicit ? const [] : const ['duration'],
       ambiguities: ambiguities,
-      schedulingExplanation: schedulingExplanation,
+      // An unplaced task explains why (the server's real reason), never a made-up slot.
+      schedulingExplanation: unscheduledReason != null
+          ? (validationIssues
+                  .where((i) => i['code'] == unscheduledReason)
+                  .map((i) => i['message']?.toString())
+                  .firstWhere((m) => m != null && m.isNotEmpty, orElse: () => null) ??
+              schedulingExplanation)
+          : schedulingExplanation,
       recommendedSlotDisplay: recommendedSlotDisplay,
       schedulingReasons: schedulingReasons,
+      timeLocked: lockedByUser,
+      isCommitment: isCommitment && lockedByUser,
+      candidateId: candidateId,
+      durationSource: durationSource ?? (isDurationExplicit ? 'explicit' : 'inferred'),
+      focusLevel: focusLevel,
+      focusSource: focusSource,
+      deadlineKind: deadlineKind,
+      dependsOn: dependsOn,
+      preferredStart: preferredStart,
+      preferredWindowStart: preferredWindowStart,
+      preferredWindowEnd: preferredWindowEnd,
+      unscheduledReason: unscheduledReason,
     );
   }
+}
+
+/// A preview edit made by the user: every field the user changed becomes `explicit`, and a changed
+/// start time becomes a user-fixed (locked) time. Untouched fields keep their original source.
+TaskItem applyPreviewEdit(TaskItem original, TaskItem edited) {
+  final startChanged = edited.scheduledStart != null && edited.scheduledStart != original.scheduledStart;
+  return edited.copyWith(
+    durationSource: edited.durationMinutes != original.durationMinutes ? 'explicit' : null,
+    prioritySource: edited.priority != original.priority ? 'explicit' : null,
+    focusSource: edited.focusLevel != original.focusLevel ? 'explicit' : null,
+    timeLocked: startChanged ? true : null,
+  );
 }
 
 /// Server-owned AI usage & entitlement state
@@ -285,15 +435,25 @@ class AIUsageStatus {
   });
 
   factory AIUsageStatus.fromJson(Map<String, dynamic> json) {
+    final freeRemaining = json['free_uses_remaining'] as int?;
+    final freeTotal = json['free_uses_total'] as int? ?? 1;
+    final canPlanFree = json['can_plan_free'] as bool?;
+
+    final freeAvailable = json['free_use_available'] as bool? ??
+        (canPlanFree ?? (freeRemaining != null ? freeRemaining > 0 : true));
+
+    final freeConsumed = json['free_uses_consumed'] as int? ??
+        (freeRemaining != null ? (freeTotal - freeRemaining) : 0);
+
     return AIUsageStatus(
       isPro: json['is_pro'] as bool? ?? false,
       subscriptionTier: json['subscription_tier'] as String? ?? 'free',
-      freeUseAvailable: json['free_use_available'] as bool? ?? true,
-      freeUsesConsumed: json['free_uses_consumed'] as int? ?? 0,
+      freeUseAvailable: freeAvailable,
+      freeUsesConsumed: freeConsumed,
       shieldsAvailable: json['shields_available'] as int? ?? 2,
       shieldFundedUses: json['shield_funded_uses'] as int? ?? 0,
-      canUseAi: json['can_use_ai'] as bool? ?? true,
-      requiresShield: json['requires_shield'] as bool? ?? false,
+      canUseAi: json['can_use_ai'] as bool? ?? (canPlanFree ?? true),
+      requiresShield: json['requires_shield'] as bool? ?? (!freeAvailable),
       hourlyRequestsRemaining: json['hourly_requests_remaining'] as int? ?? 5,
     );
   }
@@ -319,12 +479,18 @@ class AIPlanResult {
   final List<String> ambiguities;
   final bool needsConfirmation;
   final AIUsageStatus? usage;
+  final String? timezoneUsed; // IANA zone the server planned in
+  final String? schedulingError; // non-null => tasks came back without slots
+  final List<Map<String, dynamic>> conflicts;
 
   const AIPlanResult({
     required this.tasks,
     this.ambiguities = const [],
     this.needsConfirmation = false,
     this.usage,
+    this.timezoneUsed,
+    this.schedulingError,
+    this.conflicts = const [],
   });
 
   factory AIPlanResult.fromJson(Map<String, dynamic> json) {
@@ -352,6 +518,9 @@ class AIPlanResult {
       ambiguities: ambiguities,
       needsConfirmation: needsConfirmation,
       usage: usageStatus,
+      timezoneUsed: json['timezone_used'] as String?,
+      schedulingError: json['scheduling_error'] as String?,
+      conflicts: (json['conflicts'] as List<dynamic>?)?.whereType<Map<String, dynamic>>().toList() ?? const [],
     );
   }
 }

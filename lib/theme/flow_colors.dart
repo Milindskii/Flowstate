@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/task_item.dart';
 
 /// User Accent Customization Options
 enum FlowAccent {
@@ -176,6 +177,26 @@ class FlowColors {
   static Color warningOf(BuildContext context) => isDark(context) ? warningDark : warning;
   static Color errorOf(BuildContext context) => isDark(context) ? criticalDark : critical;
 
+  /// Day Path route colors: skipped/deferred = yellow, recovery detour = orange.
+  static Color routeSkippedOf(BuildContext context) => isDark(context) ? const Color(0xFFFACC15) : const Color(0xFFCA8A04);
+  static Color routeRecoveryOf(BuildContext context) => isDark(context) ? const Color(0xFFFB923C) : const Color(0xFFEA580C);
+
+  /// Priority system colors (Low: neutral/muted, Medium: calm sky blue, High: warm amber, Urgent: warning rose/red)
+  static Color priorityColorOf(BuildContext context, TaskPriority? priority, {bool isPriority = false}) {
+    final dark = isDark(context);
+    final eff = priority ?? (isPriority ? TaskPriority.high : TaskPriority.medium);
+    switch (eff) {
+      case TaskPriority.low:
+        return dark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+      case TaskPriority.medium:
+        return dark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7);
+      case TaskPriority.high:
+        return dark ? const Color(0xFFFBBF24) : const Color(0xFFD97706);
+      case TaskPriority.urgent:
+        return dark ? const Color(0xFFF87171) : const Color(0xFFDC2626);
+    }
+  }
+
   // ─────────────────────────────────────────────────────────
   // BACKWARDS-COMPATIBLE ALIASES
   // (Preserves existing legacy references safely defaulting to light values)
@@ -199,6 +220,7 @@ class FlowColors {
   static const Color mintLight = accentMint;
   static const Color iceBlue = accentBlue;
   static const Color deepTeal = Color(0xFF0E7490);
+  static const Color coral = Color(0xFFF97316);
 
   // Tag Colors (Clean Tinted Badges)
   static const Color tagDeepWorkBg = Color(0xFFF0F9FF);

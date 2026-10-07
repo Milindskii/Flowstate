@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import '../components/noya_motion_view.dart';
+import '../components/today_so_far.dart';
 import '../components/break_session_card.dart';
 import '../components/noya_companion_view.dart';
 import '../components/compact_readiness_card.dart';
@@ -24,6 +26,8 @@ import 'task_feedback_sheet.dart';
 import 'what_should_i_do_screen.dart';
 import 'flow_screen.dart';
 import '../components/skeleton_loaders.dart';
+import '../components/edit_task_sheet.dart';
+import '../components/reschedule_task_sheet.dart';
 import '../core/focus_navigation.dart';
 import '../models/today_model.dart';
 
@@ -55,10 +59,8 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
       try {
         final appState = Provider.of<AppStateProvider>(context, listen: false);
         final flowProvider = Provider.of<FlowProvider>(context, listen: false);
-        appState.onTaskCompletedForFlow = () {
-          flowProvider.recordTaskCompletionLocally();
-          flowProvider.loadOverview();
-        };
+        appState.onTaskCompletedForFlow = flowProvider.recordTaskCompletionLocally;
+        appState.onFlowNeedsRefresh = flowProvider.loadOverview;
       } catch (_) {}
     });
   }
@@ -67,7 +69,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: FlowColors.darkCard,
+      backgroundColor: FlowColors.surface(context),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(FlowRadii.cardLarge)),
       ),
@@ -144,10 +146,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(
-                              '✦',
-                              style: TextStyle(color: accent, fontSize: 12, fontWeight: FontWeight.bold),
-                            ),
+                            Icon(Icons.auto_awesome_rounded, color: accent, size: 14),
                             const SizedBox(width: 6),
                             Text(
                               'What now?',
@@ -239,46 +238,11 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                     const SizedBox(height: 28),
                   ] else if (recommended != null) ...[
                     // Case A: User completed at least 1 task, and pending tasks remain
-                    if (state.tasks.where((t) => t.isCompleted).isNotEmpty) ...[
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 14),
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: FlowColors.surface(context),
-                          borderRadius: BorderRadius.circular(FlowRadii.card),
-                          border: Border.all(color: FlowColors.mint.withValues(alpha: 0.35)),
-                        ),
-                        child: Row(
-                          children: [
-                            const NoyaCompanionView(
-                              state: NoyaState.proud,
-                              size: 36,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Nice work today 🦊',
-                                    style: FlowTypography.labelMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                  Text(
-                                    '${state.tasks.where((t) => t.isCompleted).length} ${state.tasks.where((t) => t.isCompleted).length == 1 ? 'task' : 'tasks'} completed · Up next',
-                                    style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)).copyWith(
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                    // Case A: finished moments so far, as calm history above what's next.
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 14),
+                      child: TodaySoFar(),
+                    ),
                     FramerMotionFadeSlide(
                       delay: const Duration(milliseconds: 120),
                       translateY: 12,
@@ -342,6 +306,11 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                                     feeling: feedback.feeling,
                                     durationFeedback: feedback.durationFeedback,
                                     blockerNote: feedback.blockerNote,
+                                    energyScore: feedback.energyScore,
+                                    focusScore: feedback.focusScore,
+                                    difficultyScore: feedback.difficultyScore,
+                                    distractionScore: feedback.distractionScore,
+                                    completedAt: feedback.completedAt,
                                   );
                                 },
                               );
@@ -372,6 +341,9 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                     child: _buildTimelineSection(context, state, accent, recommended),
                   ),
                 ],
+
+              // Tomorrow: its own section, only when tomorrow has open tasks. Never part of today's timeline.
+              _buildTomorrowSection(context, state),
 
               // Clearance so content never overlaps with floating What Now pill or nav bar
               const SizedBox(height: 72),
@@ -805,9 +777,11 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                const NoyaCompanionView(
-                  state: NoyaState.idle,
+                // Living Noya: hops on a completion, celebrates the last task of the day.
+                NoyaMotionView(
+                  mood: NoyaMood.rest,
                   size: 48,
+                  reactions: flowProvider?.animController.reactions,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -1073,128 +1047,91 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
     AppStateProvider state,
     Color accent,
   ) {
-    FlowHaptics.lightTap();
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: FlowColors.surface(context),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(FlowRadii.cardLarge)),
-      ),
-      builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: FlowSpacing.pageMargin(context),
-              vertical: 20,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: FlowColors.border(context),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  'Move it?',
-                  style: FlowTypography.headlineMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 20,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Next good window',
-                  style: FlowTypography.labelMedium(color: FlowColors.textSecondaryOf(context)),
-                ),
-                const SizedBox(height: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: FlowColors.surfaceElevated(context),
-                    borderRadius: FlowRadii.inputRadius,
-                    border: Border.all(color: FlowColors.border(context)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.schedule_rounded, size: 18, color: FlowColors.accentCyan),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Tomorrow · 9:30 AM',
-                        style: FlowTypography.titleSmall(color: FlowColors.textPrimaryOf(context)).copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  height: 46,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.of(ctx).pop();
-                      state.optimizeSchedule();
-                      state.refreshTodayData();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Moved "${task.title}" to tomorrow 9:30 AM · Replanning day...'),
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: accent,
-                      foregroundColor: FlowColors.textInverse,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(FlowRadii.button)),
-                    ),
-                    child: const Text('Move there'),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  height: 46,
-                  child: OutlinedButton(
-                    onPressed: () {
-                      Navigator.of(ctx).pop();
-                      state.optimizeSchedule();
-                      state.refreshTodayData();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Rescheduling to next available slot...'),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: FlowColors.textPrimaryOf(context),
-                      side: BorderSide(color: FlowColors.border(context)),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(FlowRadii.button)),
-                    ),
-                    child: const Text('Choose another time'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
+    RescheduleTaskSheet.show(context, task);
   }
+
 
   /// 4. Minimal Upcoming Timeline
   /// Time + subtle vertical line + Title + Duration
   /// Shows next 3-4 items, omitting the primary hero task to avoid repetition.
+  /// TOMORROW: tomorrow's open tasks (backend `tomorrow_tasks`), kept apart from today's execution view.
+  Widget _buildTomorrowSection(BuildContext context, AppStateProvider state) {
+    final tasks = state.todaySnapshot?.tomorrowTasks ?? const <TomorrowTask>[];
+    if (tasks.isEmpty) return const SizedBox.shrink();
+
+    const maxRows = 5;
+    final shown = tasks.take(maxRows).toList();
+    final more = tasks.length - shown.length;
+    final muted = FlowColors.textSecondaryOf(context);
+
+    return Padding(
+      key: const Key('today_tomorrow_section'),
+      padding: const EdgeInsets.only(top: 28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'TOMORROW',
+            style: FlowTypography.badgeText(color: muted).copyWith(
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.8,
+              fontSize: 11,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            decoration: BoxDecoration(
+              color: FlowColors.surface(context),
+              borderRadius: BorderRadius.circular(FlowRadii.cardLarge),
+              border: Border.all(color: FlowColors.border(context), width: 1.0),
+            ),
+            child: Column(
+              children: [
+                for (final t in shown)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 9),
+                    child: Row(
+                      key: Key('tomorrow_task_${t.id}'),
+                      children: [
+                        SizedBox(
+                          width: 72,
+                          child: Text(
+                            t.startTime == null ? 'Anytime' : DateFormat('h:mm a').format(t.startTime!),
+                            style: FlowTypography.labelSmall(color: muted).copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            t.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: FlowTypography.labelSmall(color: FlowColors.textPrimaryOf(context))
+                                .copyWith(fontWeight: FontWeight.w600, fontSize: 14),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text('${t.durationMinutes}m', style: FlowTypography.labelSmall(color: muted)),
+                      ],
+                    ),
+                  ),
+                if (more > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2, bottom: 10),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('+$more more', style: FlowTypography.labelSmall(color: muted)),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTimelineSection(
     BuildContext context,
     AppStateProvider state,
@@ -1203,8 +1140,19 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
   ) {
     if (state.schedule.isEmpty) return const SizedBox.shrink();
 
-    // Filter out the primary task so it is not repeated immediately
+    final completedIds = state.tasks.where((t) => t.isCompleted).map((t) => t.id).toSet();
+    final completedTitles = state.tasks.where((t) => t.isCompleted).map((t) => t.title.toLowerCase()).toSet();
+
+    // Filter out completed tasks and the primary task so it is not repeated immediately
     final filteredSchedule = state.schedule.where((item) {
+      final cleanId = item.id.startsWith('sched-') ? item.id.substring(6) : item.id;
+      final isItemDone = item.isCompleted ||
+          completedIds.contains(item.id) ||
+          completedIds.contains(cleanId) ||
+          (item.taskId != null && completedIds.contains(item.taskId)) ||
+          completedTitles.contains(item.title.toLowerCase());
+      if (isItemDone) return false;
+
       if (recommended == null) return true;
       return item.id != recommended.id &&
           item.title.toLowerCase() != recommended.title.toLowerCase();
@@ -1291,7 +1239,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
           children: [
             Text(
               'UP NEXT',
-              style: FlowTypography.badgeText(color: FlowColors.textSecondary).copyWith(
+              style: FlowTypography.badgeText(color: FlowColors.textSecondaryOf(context)).copyWith(
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0.8,
                 fontSize: 11,
@@ -1331,30 +1279,30 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
             return FramerMotionFadeSlide(
               delay: Duration(milliseconds: 200 + (index * 40)),
               translateY: 8,
-              child: TimelineItemWidget(
+              child: FlowTimelineRow(
                 item: item,
                 isLast: isLast,
                 onTap: () => _showTimelineInspection(context, item, state),
-                onComplete: () {
-                  FlowHaptics.success();
-                  state.toggleTaskCompletion(item.id);
-                  try {
-                    Provider.of<FlowProvider>(context, listen: false).completeSession(
-                      taskCompleted: true,
-                    );
-                  } catch (_) {}
+                onDoThisNow: () {
+                  FlowHaptics.selection();
+                  state.setPreferredActiveTask(item.id);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('Completed "${item.title}"'),
+                      content: Text('"${item.title}" is now your top task.'),
                       duration: const Duration(seconds: 2),
                     ),
                   );
                 },
+                onComplete: () => _confirmAndCompleteTimelineTask(context, item, state),
                 onStart: () {
                   TaskItem? matching;
                   try {
                     matching = state.tasks.firstWhere(
-                      (t) => t.id == item.id || t.title.toLowerCase() == item.title.toLowerCase(),
+                      (t) =>
+                          t.id == item.id ||
+                          (item.taskId != null && t.id == item.taskId) ||
+                          (item.id.startsWith('sched-') && t.id == item.id.substring(6)) ||
+                          t.title.toLowerCase() == item.title.toLowerCase(),
                     );
                   } catch (_) {}
                   openFocusRitual(context, task: matching);
@@ -1367,6 +1315,152 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
     );
   }
 
+  Future<void> _confirmAndCompleteTimelineTask(
+    BuildContext context,
+    ScheduleItem item,
+    AppStateProvider state,
+  ) async {
+    FlowHaptics.selection();
+
+    // Resolve matching task item
+    TaskItem matchingTask;
+    try {
+      matchingTask = state.tasks.firstWhere(
+        (t) =>
+            t.id == item.id ||
+            (item.taskId != null && t.id == item.taskId) ||
+            (item.id.startsWith('sched-') && t.id == item.id.substring(6)) ||
+            t.title.toLowerCase() == item.title.toLowerCase(),
+      );
+    } catch (_) {
+      matchingTask = TaskItem(
+        id: item.taskId ?? (item.id.startsWith('sched-') ? item.id.substring(6) : item.id),
+        title: item.title,
+        durationMinutes: item.durationMinutes,
+        difficulty: TaskDifficulty.medium,
+        deadline: 'Today',
+        category: item.type,
+        isCompleted: false,
+      );
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: FlowColors.surface(context),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(FlowRadii.cardLarge),
+          side: BorderSide(color: FlowColors.border(context)),
+        ),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: FlowColors.mint.withValues(alpha: 0.15),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.check_circle_rounded, color: FlowColors.mint, size: 22),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Complete Task?',
+                style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Mark "${matchingTask.title}" as completed?',
+          style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
+        ),
+        actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            ),
+            child: Text(
+              'Cancel',
+              style: FlowTypography.labelMedium(color: FlowColors.textMutedOf(context)),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: FlowColors.mint,
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+              shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
+              elevation: 0,
+            ),
+            child: Text(
+              'Mark Done',
+              style: FlowTypography.buttonPrimary(color: Colors.black).copyWith(fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    FlowHaptics.success();
+    state.toggleTaskCompletion(matchingTask.id);
+
+    try {
+      Provider.of<FlowProvider>(this.context, listen: false).completeSession(
+        taskCompleted: true,
+      );
+    } catch (_) {}
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(this.context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle_rounded, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Completed "${matchingTask.title}"',
+                style: FlowTypography.bodyMedium(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: FlowColors.mint,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+
+    showTaskFeedbackSheet(
+      this.context,
+      taskId: matchingTask.id,
+      actualMinutes: matchingTask.durationMinutes,
+      onSubmit: (feedback) {
+        state.recordTaskFeedback(
+          taskId: matchingTask.id,
+          actualMinutes: feedback.actualMinutes,
+          feeling: feedback.feeling,
+          durationFeedback: feedback.durationFeedback,
+          blockerNote: feedback.blockerNote,
+          energyScore: feedback.energyScore,
+          focusScore: feedback.focusScore,
+          difficultyScore: feedback.difficultyScore,
+          distractionScore: feedback.distractionScore,
+          completedAt: feedback.completedAt,
+        );
+      },
+    );
+  }
+
   void _showTimelineInspection(
     BuildContext context,
     ScheduleItem item,
@@ -1376,11 +1470,15 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
     TaskItem matchingTask;
     try {
       matchingTask = state.tasks.firstWhere(
-        (t) => t.id == item.id || t.title.toLowerCase() == item.title.toLowerCase(),
+        (t) =>
+            t.id == item.id ||
+            (item.taskId != null && t.id == item.taskId) ||
+            (item.id.startsWith('sched-') && t.id == item.id.substring(6)) ||
+            t.title.toLowerCase() == item.title.toLowerCase(),
       );
     } catch (_) {
       matchingTask = TaskItem(
-        id: item.id,
+        id: item.taskId ?? (item.id.startsWith('sched-') ? item.id.substring(6) : item.id),
         title: item.title,
         durationMinutes: item.durationMinutes,
         difficulty: TaskDifficulty.medium,
@@ -1389,6 +1487,11 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
         isCompleted: false,
       );
     }
+
+    Color accent = FlowColors.accentCyan;
+    try {
+      accent = Provider.of<ThemeProvider>(context, listen: false).resolveAccent(context);
+    } catch (_) {}
 
     showModalBottomSheet(
       context: context,
@@ -1454,7 +1557,13 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                       child: OutlinedButton(
                         onPressed: () {
                           Navigator.of(ctx).pop();
-                          state.optimizeSchedule();
+                          state.setPreferredActiveTask(matchingTask.id);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('"${matchingTask.title}" is now your top task.'),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
                         },
                         style: OutlinedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 14),
@@ -1464,8 +1573,10 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                           ),
                         ),
                         child: Text(
-                          'Reschedule',
-                          style: FlowTypography.labelMedium(color: FlowColors.textSecondaryOf(context)),
+                          'Do this now',
+                          style: FlowTypography.labelMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                     ),
@@ -1478,8 +1589,8 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                           openFocusRitual(context, task: matchingTask);
                         },
                         style: FilledButton.styleFrom(
-                          backgroundColor: FlowColors.mint,
-                          foregroundColor: Colors.black,
+                          backgroundColor: accent,
+                          foregroundColor: FlowColors.textInverse,
                           padding: const EdgeInsets.symmetric(vertical: 14),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(FlowRadii.button),
@@ -1487,8 +1598,8 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                         ),
                         icon: const Icon(Icons.play_arrow_rounded, size: 20),
                         label: Text(
-                          'Focus Ritual',
-                          style: FlowTypography.labelLarge(color: Colors.black).copyWith(
+                          'Start Focus',
+                          style: FlowTypography.labelLarge(color: FlowColors.textInverse).copyWith(
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -1496,11 +1607,122 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton.icon(
+                        key: const Key('timeline_task_later_button'),
+                        onPressed: () {
+                          Navigator.of(ctx).pop();
+                          RescheduleTaskSheet.show(context, matchingTask);
+                        },
+                        icon: const Icon(Icons.schedule_rounded, size: 16),
+                        label: const Text('Later'),
+                      ),
+                    ),
+                    Expanded(
+                      child: TextButton.icon(
+                        onPressed: () {
+                          Navigator.of(ctx).pop();
+                          EditTaskSheet.show(context, matchingTask);
+                        },
+                        icon: const Icon(Icons.edit_outlined, size: 16),
+                        label: const Text('Edit'),
+                      ),
+                    ),
+                    Expanded(
+                      child: TextButton.icon(
+                        onPressed: () {
+                          Navigator.of(ctx).pop();
+                          _confirmAndCompleteTimelineTask(context, item, state);
+                        },
+                        icon: const Icon(Icons.check_circle_outline_rounded, size: 16),
+                        label: const Text('Done'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Center(
+                  child: TextButton.icon(
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      _confirmAndDeleteTimelineTask(context, matchingTask, state);
+                    },
+                    icon: const Icon(Icons.delete_outline_rounded, size: 16, color: FlowColors.error),
+                    label: Text(
+                      'Delete Task',
+                      style: FlowTypography.labelSmall(color: FlowColors.error).copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
         );
       },
+    );
+  }
+
+  void _confirmAndDeleteTimelineTask(
+    BuildContext context,
+    TaskItem task,
+    AppStateProvider state,
+  ) {
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: FlowColors.surfaceElevated(context),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(FlowRadii.cardLarge)),
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: FlowColors.error, size: 24),
+            const SizedBox(width: 8),
+            Text(
+              'Delete Task?',
+              style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to delete "${task.title}"? This action cannot be undone.',
+          style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(),
+            child: Text(
+              'Cancel',
+              style: FlowTypography.labelLarge(color: FlowColors.textSecondaryOf(context)),
+            ),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(dialogCtx).pop();
+              FlowHaptics.selection();
+              state.removeTask(task.id);
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Task "${task.title}" deleted.'),
+                  duration: const Duration(seconds: 2),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: FlowColors.error,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
     );
   }
 }

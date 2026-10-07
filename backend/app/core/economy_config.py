@@ -303,3 +303,6 @@ DAILY_QUESTS_TEMPLATES: List[Dict[str, Any]] = [
         "reward_flow": 10,
     },
 ]
+
+# Every task of a day done: the trophy at the end of the day path (once per user per local date)
+DAY_COMPLETE_XP: int = 25

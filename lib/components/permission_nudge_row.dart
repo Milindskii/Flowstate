@@ -63,19 +63,19 @@ class _PermissionNudgeRowState extends State<PermissionNudgeRow>
         padding: const EdgeInsets.only(bottom: 12.0),
         child: Container(
           decoration: BoxDecoration(
-            color: FlowColors.darkCardElevated,
+            color: FlowColors.surfaceElevated(context),
             borderRadius: FlowRadii.cardRadius,
-            border: Border.all(color: FlowColors.darkBorder),
+            border: Border.all(color: FlowColors.border(context)),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
             children: [
-              const Icon(Icons.info_outline_rounded, color: FlowColors.textMuted, size: 16),
+              Icon(Icons.info_outline_rounded, color: FlowColors.textMutedOf(context), size: 16),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   widget.reason,
-                  style: FlowTypography.bodySmall(color: FlowColors.textSecondary),
+                  style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
                 ),
               ),
               const SizedBox(width: 10),
@@ -92,7 +92,7 @@ class _PermissionNudgeRowState extends State<PermissionNudgeRow>
               const SizedBox(width: 10),
               GestureDetector(
                 onTap: _dismiss,
-                child: const Icon(Icons.close_rounded, size: 16, color: FlowColors.textMuted),
+                child: Icon(Icons.close_rounded, size: 16, color: FlowColors.textMutedOf(context)),
               ),
             ],
           ),

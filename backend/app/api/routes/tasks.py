@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ...db.session import get_db
 from ...core.security import get_current_user
 from ...core.logging import logger
+from ...core.timezone import resolve_user_timezone
 from ...models.user import User
 from ...models.task import TaskStatus, TaskType
 from ...models.task_performance import TaskPerformance
@@ -54,6 +55,12 @@ def check_parse_rate_limit(user_id: str):
         )
     _PARSE_RATE_LIMITS[user_id].append(now)
 
+# Daily AI-parse budget (Postgres-backed via ai_usage_periods, shared by every instance). Over budget the parser
+# silently degrades to the local deterministic path, so the cloud call is never a free paywall bypass.
+FREE_PARSE_AI_PER_DAY = 10
+PRO_PARSE_AI_PER_DAY = 100
+
+
 @router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 def create_task(
     task_in: TaskCreate,
@@ -87,6 +94,7 @@ def list_tasks(
 
 @router.get("/today", response_model=List[TaskResponse])
 def get_today_tasks(
+    timezone: Optional[str] = Query(None, description="IANA zone of the device; falls back to the stored preference"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -96,12 +104,13 @@ def get_today_tasks(
     - Currently in progress
     - Due today and not scheduled for a future day
     """
-    return task_service.list_today_tasks(db, current_user)
+    return task_service.list_today_tasks(db, current_user, timezone)
 
 @router.post("/parse", response_model=List[TaskCandidateResponse])
 def parse_unstructured_tasks(
     request: TaskParseRequest,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """
     'What's on your plate?' Natural Language Task Parser.
@@ -115,13 +124,29 @@ def parse_unstructured_tasks(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
 
-    user_tz = current_user.preferences.timezone if current_user.preferences else "UTC"
+    _, user_tz = resolve_user_timezone(current_user, request.timezone)
+    from ...services import ai_gateway
+    from ...services.ai_economy_service import AIEconomyService, effective_is_pro
+
+    user_id = current_user.id
+    is_pro = effective_is_pro(AIEconomyService.get_or_create_usage(db, user_id))
+    granted = False
+
+    def ai_gate() -> bool:
+        # One unit of budget per request, however many cloud attempts the parser makes.
+        nonlocal granted
+        if not granted:
+            granted = ai_gateway.consume_parse_budget(
+                db, user_id, PRO_PARSE_AI_PER_DAY if is_pro else FREE_PARSE_AI_PER_DAY)
+        return granted
+
     start_time = time.perf_counter()
     try:
         candidates = ai_service.parse_task_dump(
             clean_text,
             user_timezone_str=user_tz,
             force_ai=bool(request.use_ai),
+            ai_gate=ai_gate,
         )
         latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
         # Safe audit logging: user_id, duration, candidate count — NEVER log private text content
@@ -132,7 +157,7 @@ def parse_unstructured_tasks(
     except Exception as e:
         latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
         logger.error(
-            f"Audit: /tasks/parse user={current_user.id} latency={latency_ms}ms error={e} status=failure"
+            f"Audit: /tasks/parse user={current_user.id} latency={latency_ms}ms error={type(e).__name__} status=failure"
         )
         raise
 
@@ -143,35 +168,18 @@ def batch_create_and_schedule_tasks(
     db: Session = Depends(get_db),
 ):
     """
-    Atomically creates tasks and applies their scheduled times in a single transaction.
-    Guarantees no duplicate tasks on double submission.
+    Build My Day confirm. Atomic (single transaction), idempotent per `plan_id`
+    (falls back to `idempotency_key`), server-validated, and slot-revalidated by the
+    shared planner. See docs/superpowers/specs/build-my-day-replan.md section 7.
+
+    422 `{detail: {code: "validation_failed", errors: [{index, client_ref, field, code, message}]}}`
+    means nothing was persisted; the client keeps the preview open and shows `message`.
     """
-    if not request.tasks:
-        return BatchCreateAndScheduleResponse(created_count=0, tasks=[], message="No tasks provided")
+    from ...services import plan_confirm_service
+    from ...services.ai_economy_service import AIEconomyService
 
-    created_tasks = []
-    for item in request.tasks:
-        task_create = TaskCreate(
-            title=item.title,
-            description=item.description,
-            category=item.category,
-            task_type=item.task_type,
-            difficulty=item.difficulty,
-            priority=item.priority,
-            estimated_minutes=item.estimated_minutes,
-            deadline_at=item.deadline_at,
-            scheduled_start=item.scheduled_start,
-            scheduled_end=item.scheduled_end,
-            source=item.source,
-        )
-        t = task_service.create_task(db, current_user, task_create)
-        created_tasks.append(t)
-
-    return BatchCreateAndScheduleResponse(
-        created_count=len(created_tasks),
-        tasks=created_tasks,
-        message=f"Successfully created and scheduled {len(created_tasks)} task{'s' if len(created_tasks) != 1 else ''}."
-    )
+    with AIEconomyService.get_user_request_lock(current_user.id):
+        return plan_confirm_service.batch_create(db, current_user, request)
 
 @router.get("/{task_id}", response_model=TaskResponse)
 def get_task(
@@ -190,7 +198,17 @@ def update_task_partial(
     db: Session = Depends(get_db),
 ):
     """Partially updates task fields. Returns 404 if not found or unauthorized."""
-    return task_service.update_task(db, task_id, current_user.id, task_update)
+    return task_service.update_task(db, task_id, current_user, task_update)
+
+@router.put("/{task_id}", response_model=TaskResponse)
+def update_task_put(
+    task_id: str,
+    task_update: TaskUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Updates task fields (supports HTTP PUT). Returns 404 if not found or unauthorized."""
+    return task_service.update_task(db, task_id, current_user, task_update)
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_task(
@@ -245,6 +263,9 @@ def record_task_feedback(
     task = task_service.get_task_or_404(db, task_id, current_user.id)
 
     actual_duration = feedback_in.actual_minutes or task.estimated_minutes
+    rated = any(v is not None for v in (feedback_in.focus_score, feedback_in.energy_score,
+                                         feedback_in.difficulty_score, feedback_in.distraction_score))
+    provenance = "reflection" if rated else "timestamps"
 
     performance = TaskPerformance(
         task_id=task.id,
@@ -259,6 +280,7 @@ def record_task_feedback(
         difficulty_score=feedback_in.difficulty_score,
         distraction_score=feedback_in.distraction_score,
         notes=feedback_in.notes,
+        provenance=provenance,
     )
     created_perf = performance_repo.create(db, performance)
 
@@ -277,9 +299,9 @@ def record_task_feedback(
             task_type=t_type,
             task_difficulty=t_diff,
             outcome="completed",
-            source=ObservationSource.observed,
+            source=ObservationSource.self_report if rated else ObservationSource.observed,
         )
-        saved_obs = observation_service.record_observation(db, current_user.id, obs_create)
+        saved_obs = observation_service.record_observation(db, current_user.id, obs_create, provenance=provenance)
         evaluation_service.record_evaluation(db, current_user.id, saved_obs)
 
         # Trigger Personalization Profile update to close the learning loop
@@ -292,7 +314,7 @@ def record_task_feedback(
             PersonalizationEngine().recompute_profile(user_prof, all_obs)
             db.commit()
     except Exception as e:
-        logger.warning(f"Non-critical feedback observation hook error: {e}")
+        logger.warning(f"Non-critical feedback observation hook error: {type(e).__name__}")
 
     return created_perf
 

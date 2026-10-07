@@ -1,17 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import '../components/primary_button.dart';
+import '../components/task_date_time_pickers.dart';
+import '../components/task_interactive_controls.dart';
 import '../models/task_item.dart';
 import '../providers/app_state_provider.dart';
 import '../theme/flow_colors.dart';
+import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_spacing.dart';
 import '../theme/flow_typography.dart';
-import '../components/primary_button.dart';
 import 'brain_dump_sheet.dart';
 
-/// Screen 6: Add Task Modal with AI Inferred Attributes
+/// Add Task Modal with real calendar date & clock time selection,
+/// energy & schedule attributes, and AI assist integration.
 class AddTaskSheet extends StatefulWidget {
-  const AddTaskSheet({super.key});
+  final DateTime? initialDate;
+
+  const AddTaskSheet({super.key, this.initialDate});
 
   @override
   State<AddTaskSheet> createState() => _AddTaskSheetState();
@@ -20,64 +27,174 @@ class AddTaskSheet extends StatefulWidget {
 class _AddTaskSheetState extends State<AddTaskSheet> {
   final TextEditingController _titleController = TextEditingController();
 
-  int _selectedDuration = 90;
+  int _selectedDuration = 60;
   TaskDifficulty _selectedDifficulty = TaskDifficulty.high;
+  TaskPriority _selectedPriority = TaskPriority.medium;
   String _selectedDeadline = 'Due Tomorrow';
-  String _selectedCategory = 'College';
-  bool _isPriority = true;
+  String _selectedCategory = 'Work';
+  bool _isPriority = false;
   bool _isSubmitting = false;
+
+  DateTime? _selectedDate;
+  TimeOfDay? _selectedTime;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedDate = widget.initialDate;
+    if (_selectedDate != null) {
+      _selectedDeadline = TaskDateTimePickers.formatDateDisplay(_selectedDate);
+    }
+  }
 
   // Auto-inferred suggestion as user types
   void _onTitleChanged(String val) {
     setState(() {
       final lower = val.toLowerCase();
-      if (lower.contains('gym') || lower.contains('run') || lower.contains('workout')) {
+      if (lower.contains('gym') ||
+          lower.contains('run') ||
+          lower.contains('workout')) {
         _selectedDifficulty = TaskDifficulty.physical;
         _selectedDuration = 60;
         _selectedCategory = 'Fitness';
-      } else if (lower.contains('mail') || lower.contains('call') || lower.contains('clean')) {
+      } else if (lower.contains('mail') ||
+          lower.contains('call') ||
+          lower.contains('clean')) {
         _selectedDifficulty = TaskDifficulty.light;
         _selectedDuration = 30;
         _selectedCategory = 'Personal';
-      } else if (lower.contains('exam') || lower.contains('study') || lower.contains('revision')) {
+      } else if (lower.contains('exam') ||
+          lower.contains('study') ||
+          lower.contains('revision')) {
         _selectedDifficulty = TaskDifficulty.medium;
         _selectedDuration = 45;
         _selectedCategory = 'Study';
       } else {
         _selectedDifficulty = TaskDifficulty.high;
-        _selectedDuration = 90;
+        _selectedDuration = 60;
         _selectedCategory = 'Work';
       }
     });
   }
 
-  void _saveTask() {
+  TaskType _mapDifficultyToType(TaskDifficulty difficulty) {
+    switch (difficulty) {
+      case TaskDifficulty.high:
+        return TaskType.deepWork;
+      case TaskDifficulty.medium:
+        return TaskType.study;
+      case TaskDifficulty.light:
+        return TaskType.shallowWork;
+      case TaskDifficulty.physical:
+        return TaskType.physical;
+    }
+  }
+
+  DateTime _getToday() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day);
+  }
+
+  DateTime _getTomorrow() {
+    return _getToday().add(const Duration(days: 1));
+  }
+
+  DateTime _getThisFriday() {
+    final today = _getToday();
+    final daysUntilFriday = (DateTime.friday - today.weekday + 7) % 7;
+    return today
+        .add(Duration(days: daysUntilFriday == 0 ? 7 : daysUntilFriday));
+  }
+
+  DateTime _getNextMonday() {
+    final today = _getToday();
+    final daysUntilMonday = (DateTime.monday - today.weekday + 7) % 7;
+    return today
+        .add(Duration(days: daysUntilMonday == 0 ? 7 : daysUntilMonday));
+  }
+
+  bool _isSameDay(DateTime? a, DateTime? b) {
+    if (a == null || b == null) return false;
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  Future<void> _saveTask() async {
     if (_isSubmitting) return;
     final title = _titleController.text.trim();
     if (title.isEmpty) return;
 
     setState(() => _isSubmitting = true);
+    FlowHaptics.selection();
+
+    DateTime? scheduledStart;
+    DateTime? scheduledEnd;
+    String? scheduledTimeStr;
+
+    if (_selectedDate != null && _selectedTime != null) {
+      scheduledStart = DateTime(
+        _selectedDate!.year,
+        _selectedDate!.month,
+        _selectedDate!.day,
+        _selectedTime!.hour,
+        _selectedTime!.minute,
+      );
+      scheduledEnd = scheduledStart.add(Duration(minutes: _selectedDuration));
+      scheduledTimeStr = DateFormat('h:mm a').format(scheduledStart);
+    } else if (_selectedDate != null) {
+      // Date selected without specific clock time
+      scheduledStart = DateTime(
+        _selectedDate!.year,
+        _selectedDate!.month,
+        _selectedDate!.day,
+      );
+    } else if (_selectedTime != null) {
+      // Time selected without date defaults to today
+      final today = _getToday();
+      scheduledStart = DateTime(
+        today.year,
+        today.month,
+        today.day,
+        _selectedTime!.hour,
+        _selectedTime!.minute,
+      );
+      scheduledEnd = scheduledStart.add(Duration(minutes: _selectedDuration));
+      scheduledTimeStr = DateFormat('h:mm a').format(scheduledStart);
+    }
+
+    String deadlineStr = _selectedDeadline;
+    if (_selectedDate != null) {
+      deadlineStr = TaskDateTimePickers.formatDateDisplay(_selectedDate);
+    }
 
     final provider = Provider.of<AppStateProvider>(context, listen: false);
-    provider.addTask(
+    await provider.addTask(
       title: title,
       durationMinutes: _selectedDuration,
       difficulty: _selectedDifficulty,
-      deadline: _selectedDeadline,
+      deadline: deadlineStr,
       category: _selectedCategory,
       isPriority: _isPriority,
+      priority: _selectedPriority,
+      scheduledStart: scheduledStart,
+      scheduledEnd: scheduledEnd,
+      deadlineAt: _selectedDate,
+      scheduledTime: scheduledTimeStr,
+      taskType: _mapDifficultyToType(_selectedDifficulty),
     );
 
     provider.optimizeSchedule();
 
-    Navigator.pop(context);
+    if (mounted) {
+      Navigator.pop(context);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Task added and scheduled!'),
-        duration: Duration(seconds: 2),
-      ),
-    );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Task "$title" created.'),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   @override
@@ -91,7 +208,8 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
     return Container(
       decoration: BoxDecoration(
         color: FlowColors.surfaceElevated(context),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(FlowRadii.cardLarge)),
+        borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(FlowRadii.cardLarge)),
         border: Border(
           top: BorderSide(color: FlowColors.border(context), width: 1.0),
         ),
@@ -99,261 +217,297 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
       padding: EdgeInsets.only(
         left: FlowSpacing.pageMargin(context),
         right: FlowSpacing.pageMargin(context),
-        top: 20,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 28,
+        top: 10,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 16,
       ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Handle Bar
-            Center(
-              child: Container(
-                width: 44,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: FlowColors.border(context),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            Text(
-              'Add Task',
-              style: FlowTypography.headlineMedium().copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 16),
-
-            // Large Title Input Field
-            TextField(
-              controller: _titleController,
-              autofocus: true,
-              style: FlowTypography.titleMedium(),
-              onChanged: _onTitleChanged,
-              decoration: const InputDecoration(
-                hintText: 'What needs to get done?',
-                prefixIcon: Icon(Icons.bolt_rounded, color: FlowColors.cyanLight),
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            // ✨ Build with AI Discovery Card
-            InkWell(
-              key: const Key('add_task_build_with_ai_button'),
-              borderRadius: BorderRadius.circular(FlowRadii.card),
-              onTap: () {
-                final currentText = _titleController.text.trim();
-                Navigator.pop(context);
-                showBrainDumpSheet(
-                  context,
-                  initialText: currentText.isNotEmpty ? currentText : null,
-                );
-              },
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                decoration: BoxDecoration(
-                  color: FlowColors.accentCyan.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(FlowRadii.card),
-                  border: Border.all(
-                    color: FlowColors.accentCyan.withValues(alpha: 0.35),
-                    width: 1.0,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 36,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Flexible(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Handle Bar
+                  Center(
+                    child: Container(
+                      width: 44,
+                      height: 4,
                       decoration: BoxDecoration(
-                        color: FlowColors.accentCyan.withValues(alpha: 0.16),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.auto_awesome_rounded,
-                        color: FlowColors.accentCyan,
-                        size: 20,
+                        color: FlowColors.border(context),
+                        borderRadius: BorderRadius.circular(2),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
+                  ),
+                  const SizedBox(height: 6),
+
+                  // Header with Title & Close (X) button
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Add Task',
+                        style: FlowTypography.titleMedium(
+                                color: FlowColors.textPrimaryOf(context))
+                            .copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded),
+                        color: FlowColors.textSecondaryOf(context),
+                        tooltip: 'Close',
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+
+                  // Task Title Input Field
+                  TextField(
+                    controller: _titleController,
+                    autofocus: true,
+                    style: FlowTypography.titleMedium(
+                        color: FlowColors.textPrimaryOf(context)),
+                    onChanged: _onTitleChanged,
+                    decoration: InputDecoration(
+                      hintText: 'What needs to get done?',
+                      hintStyle: FlowTypography.bodyLarge(
+                          color: FlowColors.textMutedOf(context)),
+                      prefixIcon: const Icon(Icons.bolt_rounded,
+                          color: FlowColors.accentCyan),
+                      filled: true,
+                      fillColor: FlowColors.surface(context),
+                      border: OutlineInputBorder(
+                        borderRadius:
+                            BorderRadius.circular(FlowRadii.inputField),
+                        borderSide:
+                            BorderSide(color: FlowColors.border(context)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius:
+                            BorderRadius.circular(FlowRadii.inputField),
+                        borderSide:
+                            BorderSide(color: FlowColors.border(context)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius:
+                            BorderRadius.circular(FlowRadii.inputField),
+                        borderSide: const BorderSide(
+                            color: FlowColors.accentCyan, width: 1.5),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 16),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+
+                  // Build with AI: a quiet secondary enhancement under the title
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: InkWell(
+                      key: const Key('add_task_build_with_ai_button'),
+                      borderRadius: BorderRadius.circular(FlowRadii.chip),
+                      onTap: () {
+                        final currentText = _titleController.text.trim();
+                        Navigator.pop(context);
+                        showBrainDumpSheet(
+                          context,
+                          initialText:
+                              currentText.isNotEmpty ? currentText : null,
+                        );
+                      },
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(minHeight: 44),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: Row(
                             children: [
                               Text(
                                 '✨ Build with AI',
-                                style: FlowTypography.titleSmall(color: FlowColors.accentCyan).copyWith(
+                                style: FlowTypography.labelMedium(
+                                        color: FlowColors.accentCyan)
+                                    .copyWith(
                                   fontWeight: FontWeight.w700,
-                                  fontSize: 14,
                                 ),
                               ),
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                                decoration: BoxDecoration(
-                                  color: FlowColors.accentCyan.withValues(alpha: 0.2),
-                                  borderRadius: BorderRadius.circular(FlowRadii.pill),
-                                ),
+                              const SizedBox(width: 8),
+                              Flexible(
                                 child: Text(
-                                  'SMART',
-                                  style: FlowTypography.badgeText(color: FlowColors.accentCyan).copyWith(
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.w800,
-                                  ),
+                                  'Describe what you need to get done in your own words',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: FlowTypography.bodySmall(
+                                      color: FlowColors.textMutedOf(context)),
                                 ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            'Describe what you need to get done in your own words',
-                            style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    const Icon(
-                      Icons.arrow_forward_ios_rounded,
-                      size: 13,
-                      color: FlowColors.accentCyan,
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Date & Time Selection (Task 1: Shared picker implementation reuse)
+                  TaskDateTimePickers(
+                    selectedDate: _selectedDate,
+                    selectedTime: _selectedTime,
+                    accentColor: FlowColors.accentCyan,
+                    dateButtonKey: const Key('add_task_date_button'),
+                    timeButtonKey: const Key('add_task_time_button'),
+                    clearDateKey: const Key('add_task_clear_date'),
+                    clearTimeKey: const Key('add_task_clear_time'),
+                    onDateChanged: (d) {
+                      setState(() {
+                        _selectedDate = d;
+                        if (d != null) {
+                          _selectedDeadline =
+                              TaskDateTimePickers.formatDateDisplay(d);
+                        }
+                      });
+                    },
+                    onTimeChanged: (t) {
+                      setState(() {
+                        _selectedTime = t;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Quick Date Presets Row
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _buildDatePresetChip(
+                          key: const Key('add_task_preset_today'),
+                          label: 'Today',
+                          targetDate: _getToday(),
+                        ),
+                        _buildDatePresetChip(
+                          key: const Key('add_task_preset_tomorrow'),
+                          label: 'Tomorrow',
+                          targetDate: _getTomorrow(),
+                        ),
+                        _buildDatePresetChip(
+                          key: const Key('add_task_preset_friday'),
+                          label: 'Due Friday',
+                          targetDate: _getThisFriday(),
+                        ),
+                        _buildDatePresetChip(
+                          key: const Key('add_task_preset_next_week'),
+                          label: 'Next Week',
+                          targetDate: _getNextMonday(),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Duration Slider & Snapping Selector
+                  DurationSliderSelector(
+                    durationMinutes: _selectedDuration,
+                    accentColor: FlowColors.accentCyan,
+                    onChanged: (mins) =>
+                        setState(() => _selectedDuration = mins),
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Focus Requirement Stepped Selector
+                  FocusRequirementSelector(
+                    selectedDifficulty: _selectedDifficulty,
+                    accentColor: FlowColors.accentCyan,
+                    onChanged: (diff) =>
+                        setState(() => _selectedDifficulty = diff),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Priority Selector (Low, Medium, High, Urgent)
+                  PrioritySelector(
+                    priority: _selectedPriority,
+                    onChanged: (p) {
+                      setState(() {
+                        _selectedPriority = p;
+                        _isPriority =
+                            p == TaskPriority.high || p == TaskPriority.urgent;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                ],
               ),
             ),
-            const SizedBox(height: 18),
-
-            // AI dynamic tags header
-            Row(
-              children: [
-                const Icon(Icons.auto_awesome_rounded, color: FlowColors.cyanLight, size: 16),
-                const SizedBox(width: 6),
-                Text(
-                  'Energy & Schedule Attributes',
-                  style: FlowTypography.labelMedium(color: FlowColors.textSecondaryOf(context)),
-                ),
-              ],
+          ),
+          // Pinned so it stays reachable with the keyboard open
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: PrimaryButton(
+              key: const Key('add_task_submit_button'),
+              label: 'Add & Schedule',
+              isLoading: _isSubmitting,
+              onPressed: _isSubmitting ? null : _saveTask,
             ),
-            const SizedBox(height: 14),
-
-            // Duration Selector
-            Text('Estimated Duration', style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context))),
-            const SizedBox(height: 8),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [30, 45, 60, 90, 120].map((mins) {
-                  final isSelected = _selectedDuration == mins;
-                  return _buildSelectablePill(
-                    label: '$mins min',
-                    isSelected: isSelected,
-                    onTap: () => setState(() => _selectedDuration = mins),
-                  );
-                }).toList(),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Difficulty / Focus Requirement
-            Text('Focus Requirement', style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context))),
-            const SizedBox(height: 8),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: TaskDifficulty.values.map((diff) {
-                  final isSelected = _selectedDifficulty == diff;
-                  return _buildSelectablePill(
-                    label: diff.label,
-                    isSelected: isSelected,
-                    onTap: () => setState(() => _selectedDifficulty = diff),
-                  );
-                }).toList(),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Deadline
-            Text('Deadline', style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context))),
-            const SizedBox(height: 8),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: ['Due Today', 'Due Tomorrow', 'Due Friday', 'Next Week'].map((d) {
-                  final isSelected = _selectedDeadline == d;
-                  return _buildSelectablePill(
-                    label: d,
-                    isSelected: isSelected,
-                    onTap: () => setState(() => _selectedDeadline = d),
-                  );
-                }).toList(),
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // Priority Toggle
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('High Priority Task', style: FlowTypography.bodyLarge()),
-                Switch.adaptive(
-                  value: _isPriority,
-                  activeThumbColor: FlowColors.cyanLight,
-                  onChanged: (val) => setState(() => _isPriority = val),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-
-            // Single CTA: Add & Schedule
-            SizedBox(
-              width: double.infinity,
-              child: PrimaryButton(
-                label: 'Add & Schedule',
-                isLoading: _isSubmitting,
-                onPressed: _isSubmitting ? null : _saveTask,
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildSelectablePill({
+  Widget _buildDatePresetChip({
+    required Key key,
     required String label,
-    required bool isSelected,
-    required VoidCallback onTap,
+    required DateTime targetDate,
   }) {
+    final isSelected = _isSameDay(_selectedDate, targetDate);
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Container(
+      key: key,
       margin: const EdgeInsets.only(right: 8),
       child: InkWell(
         borderRadius: FlowRadii.pillRadius,
-        onTap: onTap,
+        onTap: () {
+          FlowHaptics.selection();
+          setState(() {
+            if (isSelected) {
+              _selectedDate = null;
+              _selectedDeadline = '';
+            } else {
+              _selectedDate = targetDate;
+              _selectedDeadline = label;
+            }
+          });
+        },
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          constraints: const BoxConstraints(minHeight: 40),
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
           decoration: BoxDecoration(
             color: isSelected
-                ? FlowColors.cyan
-                : (isDark ? FlowColors.surfaceContainerDark : FlowColors.surfaceContainerLight),
+                ? FlowColors.accentCyan.withValues(alpha: 0.18)
+                : (isDark
+                    ? FlowColors.surfaceContainerDark
+                    : FlowColors.surfaceContainerLight),
             borderRadius: FlowRadii.pillRadius,
             border: Border.all(
-              color: isSelected ? FlowColors.cyan : FlowColors.border(context),
-              width: 1.0,
+              color: isSelected
+                  ? FlowColors.accentCyan
+                  : FlowColors.border(context),
+              width: isSelected ? 1.2 : 0.8,
             ),
           ),
           child: Text(
             label,
             style: FlowTypography.labelSmall(
-              color: isSelected ? FlowColors.textInverse : FlowColors.textPrimaryOf(context),
-            ).copyWith(fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500),
+              color: isSelected
+                  ? FlowColors.accentCyan
+                  : FlowColors.textSecondaryOf(context),
+            ).copyWith(
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500),
           ),
         ),
       ),

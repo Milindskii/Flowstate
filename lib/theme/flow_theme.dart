@@ -113,8 +113,16 @@ class FlowTheme {
         primary: accentColor,
         secondary: FlowColors.accentMintDark,
         surface: FlowColors.surfaceDark,
+        // Material 3 derives dialogs, menus, sheets and pickers from the container tones; pin
+        // them to Flowstate's dark surfaces instead of the default purple-grey palette.
+        surfaceContainerLowest: FlowColors.bgDark,
+        surfaceContainerLow: FlowColors.surfaceDark,
+        surfaceContainer: FlowColors.surfaceDark,
+        surfaceContainerHigh: FlowColors.surfaceElevatedDark,
         surfaceContainerHighest: FlowColors.surfaceElevatedDark,
+        surfaceTint: Colors.transparent,
         outline: FlowColors.borderDark,
+        outlineVariant: FlowColors.dividerDark,
         onPrimary: FlowColors.bgDark,
         onSecondary: FlowColors.bgDark,
         onSurface: FlowColors.textPrimaryDark,
@@ -185,6 +193,38 @@ class FlowTheme {
           borderRadius: FlowRadii.inputRadius,
           borderSide: BorderSide(color: accentColor, width: 1.5),
         ),
+      ),
+      dialogTheme: const DialogThemeData(
+        backgroundColor: FlowColors.surfaceElevatedDark,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: FlowRadii.cardRadius,
+          side: BorderSide(color: FlowColors.borderDark, width: 1.0),
+        ),
+      ),
+      bottomSheetTheme: const BottomSheetThemeData(
+        backgroundColor: FlowColors.surfaceDark,
+        modalBackgroundColor: FlowColors.surfaceDark,
+        surfaceTintColor: Colors.transparent,
+      ),
+      popupMenuTheme: const PopupMenuThemeData(
+        color: FlowColors.surfaceElevatedDark,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: FlowRadii.chipRadius,
+          side: BorderSide(color: FlowColors.borderDark, width: 1.0),
+        ),
+      ),
+      snackBarTheme: const SnackBarThemeData(
+        backgroundColor: FlowColors.surfaceElevatedDark,
+        contentTextStyle: TextStyle(color: FlowColors.textPrimaryDark),
+        behavior: SnackBarBehavior.floating,
+      ),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        foregroundColor: FlowColors.textPrimaryDark,
+        elevation: 0,
       ),
       bottomNavigationBarTheme: BottomNavigationBarThemeData(
         backgroundColor: FlowColors.surfaceDark,

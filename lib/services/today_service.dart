@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/today_model.dart';
 import 'api_service.dart';
+import 'timezone_service.dart';
 
 /// Single source of truth service for the aggregated Today experience
 class TodayService {
@@ -11,9 +12,14 @@ class TodayService {
   TodayService({required ApiService api}) : _api = api;
 
   /// Fetches Today experience from backend, with cached offline fallback
-  Future<TodayResponseModel> getTodayExperience() async {
+  ///
+  /// [allowCachedFallback] false: a failed fetch throws instead of silently returning the last-known payload.
+  /// Used right after a write (Replan Apply) where an old snapshot would be wrong, not merely offline.
+  Future<TodayResponseModel> getTodayExperience({bool allowCachedFallback = true}) async {
     try {
-      final res = await _api.get('/api/v1/today');
+      // Same IANA zone as Calendar, Replan and Build My Day (the server falls back to the stored preference).
+      final tz = await TimezoneService.localIanaName();
+      final res = await _api.get('/api/v1/today', queryParams: tz == null ? null : {'timezone': tz});
       if (res is Map<String, dynamic>) {
         final now = DateTime.now();
         res['cached_at'] = now.toIso8601String();
@@ -28,9 +34,11 @@ class TodayService {
       throw const ApiException('Invalid today response format');
     } catch (e) {
       // Offline fallback: try reading last-known cached Today payload
-      final cached = await getCachedToday();
-      if (cached != null) {
-        return cached;
+      if (allowCachedFallback) {
+        final cached = await getCachedToday();
+        if (cached != null) {
+          return cached;
+        }
       }
       rethrow;
     }

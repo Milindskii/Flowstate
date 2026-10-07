@@ -1,7 +1,66 @@
 import 'package:flutter/material.dart';
 import '../theme/flow_colors.dart';
+import '../theme/flow_motion.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_spacing.dart';
+
+const Duration _shimmerPeriod = Duration(milliseconds: 1400);
+const double _shimmerRestOpacity = 0.55;
+
+Animation<double> _shimmerTween(AnimationController controller) => Tween<double>(begin: 0.35, end: 0.75)
+    .animate(CurvedAnimation(parent: controller, curve: Curves.easeInOut));
+
+/// One shimmer driver for every [FlowShimmerBox] below it, so a skeleton runs a single ticker
+/// instead of one per box (spec §8.10). Static at the midpoint when loops are disabled.
+class FlowShimmerScope extends StatefulWidget {
+  final Widget child;
+
+  const FlowShimmerScope({super.key, required this.child});
+
+  static Animation<double>? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_ShimmerAnimation>()?.animation;
+
+  @override
+  State<FlowShimmerScope> createState() => _FlowShimmerScopeState();
+}
+
+class _FlowShimmerScopeState extends State<FlowShimmerScope> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(vsync: this, duration: _shimmerPeriod);
+  late final Animation<double> _animation = _shimmerTween(_controller);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!FlowMotion.loopsEnabled(context)) {
+      _controller.stop();
+    } else if (!_controller.isAnimating) {
+      _controller.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final animation = FlowMotion.loopsEnabled(context)
+        ? _animation
+        : const AlwaysStoppedAnimation<double>(_shimmerRestOpacity);
+    return _ShimmerAnimation(animation: animation, child: widget.child);
+  }
+}
+
+class _ShimmerAnimation extends InheritedWidget {
+  final Animation<double> animation;
+
+  const _ShimmerAnimation({required this.animation, required super.child});
+
+  @override
+  bool updateShouldNotify(_ShimmerAnimation oldWidget) => animation != oldWidget.animation;
+}
 
 /// Reusable pulsating shimmer box for skeleton states
 class FlowShimmerBox extends StatefulWidget {
@@ -24,47 +83,57 @@ class FlowShimmerBox extends StatefulWidget {
 
 class _FlowShimmerBoxState extends State<FlowShimmerBox>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _animation;
+  /// Only created for a box used outside a [FlowShimmerScope].
+  AnimationController? _ownController;
+  Animation<double>? _ownAnimation;
 
   @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    )..repeat(reverse: true);
-    _animation = Tween<double>(begin: 0.35, end: 0.75).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final standalone = FlowShimmerScope.maybeOf(context) == null;
+    if (standalone && FlowMotion.loopsEnabled(context)) {
+      _ownController ??= AnimationController(vsync: this, duration: _shimmerPeriod);
+      _ownAnimation ??= _shimmerTween(_ownController!);
+      if (!_ownController!.isAnimating) _ownController!.repeat(reverse: true);
+    } else {
+      _ownController?.stop();
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _ownController?.dispose();
     super.dispose();
+  }
+
+  Animation<double> _resolveAnimation(BuildContext context) {
+    final shared = FlowShimmerScope.maybeOf(context);
+    if (shared != null) return shared;
+    if (FlowMotion.loopsEnabled(context) && _ownAnimation != null) return _ownAnimation!;
+    return const AlwaysStoppedAnimation<double>(_shimmerRestOpacity);
   }
 
   @override
   Widget build(BuildContext context) {
+    final animation = _resolveAnimation(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final baseColor = isDark
-        ? FlowColors.darkCard
+        ? FlowColors.surfaceDark
         : FlowColors.lightCardElevated;
 
     return AnimatedBuilder(
-      animation: _animation,
+      animation: animation,
       builder: (context, child) {
         return Container(
           width: widget.width,
           height: widget.height,
           margin: widget.margin,
           decoration: BoxDecoration(
-            color: baseColor.withValues(alpha: _animation.value),
+            color: baseColor.withValues(alpha: animation.value),
             borderRadius: widget.borderRadius ?? FlowRadii.cardRadius,
             border: Border.all(
-              color: (isDark ? FlowColors.darkBorder : FlowColors.lightBorder)
-                  .withValues(alpha: _animation.value * 0.5),
+              color: (isDark ? FlowColors.borderDark : FlowColors.lightBorder)
+                  .withValues(alpha: animation.value * 0.5),
               width: 1.0,
             ),
           ),
@@ -82,7 +151,7 @@ class TodayDashboardSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     final horizontalPadding = FlowSpacing.pageMargin(context);
 
-    return Scaffold(
+    return FlowShimmerScope(child: Scaffold(
       backgroundColor: FlowColors.background(context),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -159,7 +228,7 @@ class TodayDashboardSkeleton extends StatelessWidget {
           ),
         ),
       ),
-    );
+    ));
   }
 }
 
@@ -171,7 +240,7 @@ class TaskInboxSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     final horizontalPadding = FlowSpacing.pageMargin(context);
 
-    return Scaffold(
+    return FlowShimmerScope(child: Scaffold(
       backgroundColor: FlowColors.background(context),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -251,6 +320,6 @@ class TaskInboxSkeleton extends StatelessWidget {
           ),
         ),
       ),
-    );
+    ));
   }
 }

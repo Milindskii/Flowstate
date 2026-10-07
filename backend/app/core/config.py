@@ -1,11 +1,14 @@
+from pathlib import Path
 from typing import List
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Flowstate"
     API_V1_STR: str = "/api/v1"
     VERSION: str = "1.0.0"
-    ENVIRONMENT: str = "development" # "development", "staging", "production"
+    # Fail closed: an unset ENVIRONMENT is treated as production. Local dev sets ENVIRONMENT=development in .env.
+    ENVIRONMENT: str = "production"  # "development", "test", "staging", "production"
 
     DEBUG: bool = False
 
@@ -18,8 +21,13 @@ class Settings(BaseSettings):
     SUPABASE_JWKS_URL: str = "https://drfjprhnynktjkiplbzy.supabase.co/auth/v1/.well-known/jwks.json"
     SUPABASE_JWT_SECRET: str = "flowstate-local-dev-secret-replace-in-production"
 
-    # Dev auth bypass: STRICTLY forbidden in production
+    # Dev auth bypass: STRICTLY forbidden outside ENVIRONMENT=development/test
     DEV_BYPASS_AUTH: bool = False
+
+    # Per-IP flood protection. TRUSTED_PROXY_CIDRS lists the load balancers whose X-Forwarded-For we believe.
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_PER_MINUTE: int = 150
+    TRUSTED_PROXY_CIDRS: List[str] = []
 
     # CORS configuration
     BACKEND_CORS_ORIGINS: List[str] = [
@@ -44,9 +52,39 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GEMINI_PROJECT_ID: str = ""
     GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+    # Replan: language-model understanding for messages the deterministic rules cannot read (metered, never writes)
+    REPLAN_AI_ENABLED: bool = True
+
+    # --- AI gateway (see services/ai_gateway.py) -------------------------------------------------------------
+    AI_MAX_CONCURRENCY: int = 8                 # simultaneous provider calls per API instance
+    AI_QUEUE_WAIT_SECONDS: float = 2.0          # how long a request may wait for a slot before a 503
+    AI_REQUEST_DEADLINE_SECONDS: float = 25.0   # hard cap on all provider work for one request
+    AI_RESERVATION_MARGIN_SECONDS: float = 20.0  # grace after the deadline before a stuck reservation is refunded
+    AI_RATE_LIMIT_PER_HOUR_FREE: int = 5
+    AI_RATE_LIMIT_PER_HOUR_PRO: int = 20
+    AI_PRO_DAILY_CAP: int = 30                  # Pro fair-use caps (successful plans)
+    AI_PRO_MONTHLY_CAP: int = 300
+    PRO_GRACE_DAYS: int = 3                     # Pro stays on this long after subscription_expires_at
+    AI_BREAKER_FAILURE_THRESHOLD: int = 5       # consecutive provider-health failures that open the breaker
+    AI_BREAKER_WINDOW_SECONDS: float = 30.0
+    AI_BREAKER_OPEN_SECONDS: float = 30.0
+    GEMINI_MAX_ATTEMPTS: int = 2                # models tried per call (primary + one fallback)
+    GEMINI_REQUEST_TIMEOUT_SECONDS: float = 12.0
+    GEMINI_BACKOFF_BASE_SECONDS: float = 0.5    # jittered exponential backoff between transient failures
+    GEMINI_MAX_OUTPUT_TOKENS: int = 8192
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _use_installed_pg_driver(cls, v: str) -> str:
+        # Supabase hands out "postgresql://..." (SQLAlchemy's default there is psycopg2); we ship psycopg v3.
+        for prefix in ("postgresql://", "postgres://"):
+            if v.startswith(prefix):
+                return "postgresql+psycopg://" + v[len(prefix):]
+        return v
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # backend/.env regardless of the working directory the server is started from.
+        env_file=str(Path(__file__).resolve().parents[2] / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="allow",

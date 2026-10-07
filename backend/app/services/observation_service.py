@@ -16,6 +16,7 @@ class ObservationService:
         db: Session,
         user_id: str,
         data: ObservationCreate,
+        provenance: str = "reflection",
     ) -> ReadinessObservation:
         obs = ReadinessObservation(
             user_id=user_id,
@@ -35,6 +36,7 @@ class ObservationService:
             actual_minutes=data.actual_minutes,
             outcome=data.outcome,
             source=data.source.value if hasattr(data.source, "value") else str(data.source),
+            provenance=provenance,
         )
         saved = self.repo.create_observation(db, obs)
 

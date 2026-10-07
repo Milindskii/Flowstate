@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/task_item.dart';
 import '../providers/theme_provider.dart';
+import 'flow_completion_check.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
 import 'framer_motion_wrapper.dart';
+import 'edit_task_sheet.dart';
+import 'noya_companion_view.dart';
 
 /// The Hero of the Today Screen: "DO THIS NOW"
 /// Highest visual weight, minimal clutter, interactive "Why this?" reasons.
@@ -111,7 +114,7 @@ class _RightNowTaskCardState extends State<RightNowTaskCard> {
                     const SizedBox(width: 8),
                     Text(
                       'DO THIS NOW',
-                      style: FlowTypography.badgeText(color: FlowColors.textSecondary).copyWith(
+                      style: FlowTypography.badgeText(color: FlowColors.textSecondaryOf(context)).copyWith(
                         fontWeight: FontWeight.w800,
                         letterSpacing: 1.0,
                         fontSize: 11,
@@ -119,10 +122,27 @@ class _RightNowTaskCardState extends State<RightNowTaskCard> {
                     ),
                   ],
                 ),
-                Icon(
-                  _isExpanded ? Icons.unfold_less_rounded : Icons.unfold_more_rounded,
-                  size: 18,
-                  color: FlowColors.textMutedOf(context),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined, size: 16),
+                      color: FlowColors.textMutedOf(context),
+                      tooltip: 'Edit Task',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                      onPressed: () {
+                        FlowHaptics.lightTap();
+                        EditTaskSheet.show(context, widget.task);
+                      },
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      _isExpanded ? Icons.unfold_less_rounded : Icons.unfold_more_rounded,
+                      size: 18,
+                      color: FlowColors.textMutedOf(context),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -133,23 +153,14 @@ class _RightNowTaskCardState extends State<RightNowTaskCard> {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 if (widget.onComplete != null) ...[
-                  Semantics(
-                    button: true,
-                    label: 'Mark ${widget.task.title} as done',
-                    child: InkWell(
-                      onTap: () {
-                        FlowHaptics.success();
-                        widget.onComplete!();
-                      },
-                      borderRadius: BorderRadius.circular(20),
-                      child: const Padding(
-                        padding: EdgeInsets.only(right: 10.0),
-                        child: Icon(
-                          Icons.radio_button_unchecked_rounded,
-                          size: 26,
-                          color: FlowColors.mint,
-                        ),
-                      ),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4.0),
+                    child: FlowCompletionCheck(
+                      completed: widget.task.isCompleted,
+                      size: 26,
+                      label: 'Mark ${widget.task.title} as done',
+                      outlineColor: FlowColors.mint,
+                      onToggle: widget.onComplete,
                     ),
                   ),
                 ],
@@ -169,7 +180,12 @@ class _RightNowTaskCardState extends State<RightNowTaskCard> {
 
             // Clean Metadata: duration · importance · energy
             Text(
-              '${widget.task.durationMinutes} min · ${widget.task.importanceLabel} importance · ${widget.task.energyRequired} energy',
+              [
+                '${widget.task.durationMinutes} min',
+                // An unspecified priority is noise, not information.
+                if (!widget.task.isPriorityUnspecified && widget.task.priority != null) '${widget.task.importanceLabel} importance',
+                '${widget.task.energyRequired} energy',
+              ].join(' · '),
               style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
                 fontWeight: FontWeight.w500,
               ),
@@ -256,30 +272,32 @@ class _RightNowTaskCardState extends State<RightNowTaskCard> {
                             ],
                           ),
                         ),
-                        if (widget.onFocusRitual != null) ...[
-                          const SizedBox(height: 12),
-                          SizedBox(
-                            width: double.infinity,
-                            child: OutlinedButton.icon(
-                              onPressed: () {
-                                FlowHaptics.lightTap();
-                                widget.onFocusRitual!();
-                              },
-                              icon: Icon(Icons.self_improvement_rounded, size: 18, color: accent),
-                              label: Text(
-                                'Open Focus Ritual with Noya',
-                                style: FlowTypography.labelMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
-                                  fontWeight: FontWeight.w700,
+                        Container(
+                          margin: const EdgeInsets.only(top: 10),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: FlowColors.surfaceElevated(context),
+                            borderRadius: BorderRadius.circular(FlowRadii.chip),
+                            border: Border.all(color: FlowColors.border(context)),
+                          ),
+                          child: Row(
+                            children: [
+                              const NoyaCompanionView(
+                                state: NoyaState.idle,
+                                size: 22,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Noya accompanies your focus session',
+                                  style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(
+                                    fontSize: 12,
+                                  ),
                                 ),
                               ),
-                              style: OutlinedButton.styleFrom(
-                                side: BorderSide(color: accent.withValues(alpha: 0.5)),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(FlowRadii.button)),
-                                padding: const EdgeInsets.symmetric(vertical: 10),
-                              ),
-                            ),
+                            ],
                           ),
-                        ],
+                        ),
                       ],
                     )
                   : const SizedBox.shrink(),
@@ -329,11 +347,7 @@ class _RightNowTaskCardState extends State<RightNowTaskCard> {
                               const SizedBox(width: 6),
                               Text(
                                 'Start Focus',
-                                style: FlowTypography.labelLarge(color: FlowColors.textInverse).copyWith(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 15.0,
-                                  letterSpacing: 0.3,
-                                ),
+                                style: FlowTypography.buttonPrimary(color: FlowColors.textInverse),
                               ),
                             ],
                           ),
@@ -366,9 +380,7 @@ class _RightNowTaskCardState extends State<RightNowTaskCard> {
                         fit: BoxFit.scaleDown,
                         child: Text(
                           'Later',
-                          style: FlowTypography.labelMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
+                          style: FlowTypography.buttonSecondary(color: FlowColors.textSecondaryOf(context)),
                         ),
                       ),
                     ),

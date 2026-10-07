@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Custom Exception for Flowstate API errors
 class ApiException implements Exception {
@@ -10,7 +11,10 @@ class ApiException implements Exception {
   final int? statusCode;
   final dynamic data;
 
-  const ApiException(this.message, {this.statusCode, this.data});
+  /// True when the client gave up waiting (as opposed to a refused connection or a server error).
+  final bool isTimeout;
+
+  const ApiException(this.message, {this.statusCode, this.data, this.isTimeout = false});
 
   @override
   String toString() => 'ApiException(status: $statusCode, message: $message)';
@@ -37,8 +41,8 @@ class ApiService {
     }
     try {
       if (Platform.isAndroid) {
-        // Physical device development over LAN fallback, emulator uses 10.0.2.2
-        return 'http://$_defaultLanIp:8000';
+        // Android emulator connects to host computer on 10.0.2.2
+        return 'http://10.0.2.2:8000';
       }
       if (Platform.isIOS) {
         return 'http://$_defaultLanIp:8000';
@@ -53,13 +57,35 @@ class ApiService {
     _authToken = token;
   }
 
+  /// Returns the current active token.
+  /// Prefers the live Supabase session access token when available so that
+  /// token refreshes are immediately respected and stale cached tokens
+  /// cannot override the live session.
+  /// Falls back to cached [_authToken] for manual tokens, mock clients, or testing.
+  String? get activeToken {
+    String? token;
+    try {
+      token = Supabase.instance.client.auth.currentSession?.accessToken;
+    } catch (_) {
+      // Supabase uninitialized or platform error
+    }
+    if (token == null || token.isEmpty) {
+      token = _authToken;
+    }
+    return (token != null && token.isNotEmpty) ? token : null;
+  }
+
+  /// Whether a valid authentication token is currently available
+  bool get isAuthenticated => activeToken != null;
+
   Map<String, String> _headers({Map<String, String>? extra}) {
     final headers = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
-    if (_authToken != null && _authToken!.isNotEmpty) {
-      headers['Authorization'] = 'Bearer $_authToken';
+    final token = activeToken;
+    if (token != null) {
+      headers['Authorization'] = 'Bearer $token';
     }
     if (extra != null) {
       headers.addAll(extra);
@@ -88,6 +114,23 @@ class ApiService {
     }
   }
 
+  /// Endpoints that legitimately outlast the default: /ai/plan walks Gemini's fallback chain server-side
+  /// (up to 3 models x 12s), so the client must wait longer than that or it reports a timeout for a call
+  /// the server is still completing.
+  static const Duration _defaultPostTimeout = Duration(seconds: 12);
+  static const Duration _aiPlanPostTimeout = Duration(seconds: 45);
+  /// Replan may read the message with the language model (server deadline 25 s) before planning.
+  static const Duration _replanPostTimeout = Duration(seconds: 30);
+
+  @visibleForTesting
+  static Duration postTimeoutFor(String endpoint) {
+    if (endpoint.startsWith('/api/v1/ai/plan')) return _aiPlanPostTimeout;
+    if (endpoint.startsWith('/api/v1/ai/replan') || endpoint.startsWith('/api/v1/calendar/replan')) {
+      return _replanPostTimeout;
+    }
+    return _defaultPostTimeout;
+  }
+
   Future<dynamic> post(String endpoint, {dynamic body}) async {
     final uri = Uri.parse('$baseUrl$endpoint');
     try {
@@ -97,12 +140,12 @@ class ApiService {
             headers: _headers(),
             body: body != null ? jsonEncode(body) : null,
           )
-          .timeout(const Duration(seconds: 12));
+          .timeout(postTimeoutFor(endpoint));
       return _handleResponse(response);
     } on SocketException catch (e) {
       throw ApiException('Network connection failed: ${e.message}');
     } on TimeoutException {
-      throw const ApiException('Request timed out. Please try again.');
+      throw const ApiException('Request timed out. Please try again.', isTimeout: true);
     } catch (e) {
       if (e is ApiException) rethrow;
       throw ApiException('Unexpected network error: $e');

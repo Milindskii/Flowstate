@@ -1,0 +1,206 @@
+{
+ "_comment": "Single definition of derived task state (scheduled|missed|failed|...). Times are local wall-clock in the user's timezone. Consumed by backend/tests/test_task_state_vectors.py and test/task_state_vectors_test.dart; change a rule here and both suites must follow.",
+ "missed_grace_minutes": 0,
+ "bedtime_after_midnight_below_hours": 6.0,
+ "cases": [
+  {
+   "name": "future slot is scheduled",
+   "completed": false,
+   "cancelled": false,
+   "active": false,
+   "start": "2026-10-04T09:00",
+   "end": "2026-10-04T10:00",
+   "now": "2026-10-04T08:00",
+   "bedtime": 23.0,
+   "expected": "scheduled"
+  },
+  {
+   "name": "inside its slot is scheduled",
+   "completed": false,
+   "cancelled": false,
+   "active": false,
+   "start": "2026-10-04T09:00",
+   "end": "2026-10-04T10:00",
+   "now": "2026-10-04T09:30",
+   "bedtime": 23.0,
+   "expected": "scheduled"
+  },
+  {
+   "name": "one minute before the slot ends is scheduled",
+   "completed": false,
+   "cancelled": false,
+   "active": false,
+   "start": "2026-10-04T09:00",
+   "end": "2026-10-04T10:00",
+   "now": "2026-10-04T09:59",
+   "bedtime": 23.0,
+   "expected": "scheduled"
+  },
+  {
+   "name": "the instant the slot ends it is missed",
+   "completed": false,
+   "cancelled": false,
+   "active": false,
+   "start": "2026-10-04T09:00",
+   "end": "2026-10-04T10:00",
+   "now": "2026-10-04T10:00",
+   "bedtime": 23.0,
+   "expected": "missed"
+  },
+  {
+   "name": "an hour after the slot, awake, is missed",
+   "completed": false,
+   "cancelled": false,
+   "active": false,
+   "start": "2026-10-04T09:00",
+   "end": "2026-10-04T10:00",
+   "now": "2026-10-04T11:00",
+   "bedtime": 23.0,
+   "expected": "missed"
+  },
+  {
+   "name": "late evening before bedtime is still missed",
+   "completed": false,
+   "cancelled": false,
+   "active": false,
+   "start": "2026-10-04T09:00",
+   "end": "2026-10-04T10:00",
+   "now": "2026-10-04T22:59",
+   "bedtime": 23.0,
+   "expected": "missed"
+  },
+  {
+   "name": "at bedtime the recovery window is over: failed",
+   "completed": false,
+   "cancelled": false,
+   "active": false,
+   "start": "2026-10-04T09:00",
+   "end": "2026-10-04T10:00",
+   "now": "2026-10-04T23:00",
+   "bedtime": 23.0,
+   "expected": "failed"
+  },
+  {
+   "name": "next morning is failed",
+   "completed": false,
+   "cancelled": false,
+   "active": false,
+   "start": "2026-10-04T09:00",
+   "end": "2026-10-04T10:00",
+   "now": "2026-10-05T07:00",
+   "bedtime": 23.0,
+   "expected": "failed"
+  },
+  {
+   "name": "a yesterday slot viewed today is failed",
+   "completed": false,
+   "cancelled": false,
+   "active": false,
+   "start": "2026-10-03T09:00",
+   "end": "2026-10-03T10:00",
+   "now": "2026-10-04T06:00",
+   "bedtime": 23.0,
+   "expected": "failed"
+  },
+  {
+   "name": "started (in progress) is active even when its slot has passed",
+   "completed": false,
+   "cancelled": false,
+   "active": true,
+   "start": "2026-10-04T09:00",
+   "end": "2026-10-04T10:00",
+   "now": "2026-10-04T12:00",
+   "bedtime": 23.0,
+   "expected": "active"
+  },
+  {
+   "name": "completed stays completed long after",
+   "completed": true,
+   "cancelled": false,
+   "active": false,
+   "start": "2026-10-04T09:00",
+   "end": "2026-10-04T10:00",
+   "now": "2026-10-06T12:00",
+   "bedtime": 23.0,
+   "expected": "completed"
+  },
+  {
+   "name": "cancelled stays cancelled",
+   "completed": false,
+   "cancelled": true,
+   "active": false,
+   "start": "2026-10-04T09:00",
+   "end": "2026-10-04T10:00",
+   "now": "2026-10-04T12:00",
+   "bedtime": 23.0,
+   "expected": "cancelled"
+  },
+  {
+   "name": "no slot is unscheduled",
+   "completed": false,
+   "cancelled": false,
+   "active": false,
+   "start": null,
+   "end": null,
+   "now": "2026-10-04T12:00",
+   "bedtime": 23.0,
+   "expected": "unscheduled"
+  },
+  {
+   "name": "after-midnight bedtime (1:00) keeps a 22:00 slot missed at 00:30",
+   "completed": false,
+   "cancelled": false,
+   "active": false,
+   "start": "2026-10-04T22:00",
+   "end": "2026-10-04T23:00",
+   "now": "2026-10-05T00:30",
+   "bedtime": 1.0,
+   "expected": "missed"
+  },
+  {
+   "name": "after-midnight bedtime (1:00) fails at 01:00 the next day",
+   "completed": false,
+   "cancelled": false,
+   "active": false,
+   "start": "2026-10-04T22:00",
+   "end": "2026-10-04T23:00",
+   "now": "2026-10-05T01:00",
+   "bedtime": 1.0,
+   "expected": "failed"
+  },
+  {
+   "name": "a 9:00 slot with a 1:00 bedtime is failed by 01:00 next day, not missed all night",
+   "completed": false,
+   "cancelled": false,
+   "active": false,
+   "start": "2026-10-04T09:00",
+   "end": "2026-10-04T10:00",
+   "now": "2026-10-05T01:00",
+   "bedtime": 1.0,
+   "expected": "failed"
+  },
+  {
+   "name": "completed beats everything even with no slot",
+   "completed": true,
+   "cancelled": false,
+   "active": false,
+   "start": null,
+   "end": null,
+   "now": "2026-10-04T08:00",
+   "bedtime": 23.0,
+   "expected": "completed"
+  },
+  {
+   "name": "a commitment is never missed or failed, even long after its slot",
+   "completed": false,
+   "cancelled": false,
+   "active": false,
+   "commitment": true,
+   "start": "2026-10-04T18:30",
+   "end": "2026-10-04T20:30",
+   "now": "2026-10-04T23:30",
+   "bedtime": 23.0,
+   "expected": "commitment"
+  }
+ ]
+}

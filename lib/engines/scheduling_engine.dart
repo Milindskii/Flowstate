@@ -1,5 +1,6 @@
 import 'package:intl/intl.dart';
 import '../models/task_item.dart';
+import '../models/personal_data.dart';
 import '../models/readiness_model.dart';
 import '../models/schedule_item.dart';
 import '../theme/flow_colors.dart';
@@ -48,6 +49,41 @@ class PlanningProfile {
     this.tiredBehavior = 'distracted',
     this.routineShiftPreference = 'quick_recovery',
   });
+
+  factory PlanningProfile.fromPersonalData(PersonalData data) {
+    double peakStart = 9.5;
+    double peakEnd = 11.75;
+    final peak = data.focusPeak.trim().toLowerCase();
+    if (peak.contains('afternoon')) {
+      peakStart = 14.0;
+      peakEnd = 17.0;
+    } else if (peak.contains('evening')) {
+      peakStart = 18.0;
+      peakEnd = 21.0;
+    } else if (peak.contains('morning')) {
+      peakStart = 9.5;
+      peakEnd = 11.75;
+    }
+
+    double wake = 7.0;
+    try {
+      final digits = data.wakeTime.replaceAll(RegExp(r'[^\d:]'), '');
+      final parts = digits.split(':');
+      if (parts.isNotEmpty) {
+        final h = int.tryParse(parts[0]) ?? 7;
+        final m = parts.length > 1 ? (int.tryParse(parts[1]) ?? 0) : 0;
+        wake = h + m / 60.0;
+      }
+    } catch (_) {}
+
+    return PlanningProfile(
+      wakeTime: wake,
+      weekendWakeTime: wake + 1.5,
+      bedtime: data.bedtimeHour,
+      peakWindowStart: peakStart,
+      peakWindowEnd: peakEnd,
+    );
+  }
 }
 
 /// Scheduling Engine
@@ -66,6 +102,8 @@ class SchedulingEngine {
     final now = nowLocal ?? DateTime.now();
     final List<TaskItem> enriched = [];
     final List<MapEntry<DateTime, DateTime>> busy = [];
+    // End of each placed candidate, so a task that follows another ("then", "after that") never starts before it.
+    final Map<String, DateTime> slotEnds = {};
 
     // Register existing scheduled tasks into busy intervals
     for (final et in existingTasks) {
@@ -87,17 +125,25 @@ class SchedulingEngine {
           final dur = task.durationMinutes > 0 ? task.durationMinutes : 45;
           final e = task.scheduledEnd ?? s.add(Duration(minutes: dur));
           busy.add(MapEntry(s, e.add(const Duration(minutes: 10))));
+          slotEnds[task.id] = e;
         }
         enriched.add(task);
         continue;
       }
 
+      DateTime? notBefore;
+      for (final dep in task.dependsOn) {
+        final depEnd = slotEnds[dep];
+        if (depEnd != null && (notBefore == null || depEnd.isAfter(notBefore))) notBefore = depEnd;
+      }
       final eval = evaluateCandidateSlot(
         task,
         existingBusy: busy,
         nowLocal: now,
         profile: profile,
+        notBefore: notBefore,
       );
+      slotEnds[task.id] = eval.slotEnd;
 
       // Add allocated slot with buffer to busy intervals for subsequent tasks
       final bufferMins = (task.taskType == TaskType.deepWork || task.taskType == TaskType.study) ? 15 : 10;
@@ -127,6 +173,7 @@ class SchedulingEngine {
     List<MapEntry<DateTime, DateTime>> existingBusy = const [],
     DateTime? nowLocal,
     PlanningProfile profile = const PlanningProfile(),
+    DateTime? notBefore,
   }) {
     final now = nowLocal ?? DateTime.now();
     final dur = task.durationMinutes > 0 ? task.durationMinutes : 45;
@@ -303,6 +350,14 @@ class SchedulingEngine {
 
     // Ensure slot does not collide with existing busy intervals
     DateTime resolvedStart = targetStart;
+    // A task that follows another never starts before the one it follows ends.
+    if (notBefore != null && resolvedStart.isBefore(notBefore)) {
+      resolvedStart = notBefore;
+      primaryReason = 'follows_previous_task';
+      secondaryReasons.add('dependency_order');
+      explanation = '${resolvedStart.day == now.day ? 'Today' : DateFormat('MMM d').format(resolvedStart)} at '
+          '${DateFormat('h:mm a').format(resolvedStart)} — Placed after the task it follows.';
+    }
     bool foundFree = false;
     while (!foundFree) {
       // If conflict resolution pushes a non-urgent task past bedtime (22:00), roll over to tomorrow!
@@ -353,16 +408,34 @@ class SchedulingEngine {
   List<ScheduleItem> generateOptimizedSchedule({
     required List<TaskItem> tasks,
     required ReadinessModel readiness,
+    PlanningProfile? profile,
   }) {
     final List<ScheduleItem> schedule = [];
 
-    // Filter uncompleted tasks
-    final pendingTasks = tasks.where((t) => !t.isCompleted).toList();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    // Filter uncompleted tasks relevant to today (excluding future rescheduled tasks)
+    final pendingTasks = tasks.where((t) {
+      if (t.isCompleted) return false;
+      if (t.scheduledStart != null) {
+        final sDate = DateTime(t.scheduledStart!.year, t.scheduledStart!.month, t.scheduledStart!.day);
+        if (sDate.isAfter(today)) return false;
+      } else if (t.deadlineAt != null) {
+        final dDate = DateTime(t.deadlineAt!.year, t.deadlineAt!.month, t.deadlineAt!.day);
+        if (dDate.isAfter(today)) return false;
+      }
+      // Planned for a later day with no time chosen: tomorrow's work is not today's schedule.
+      if (t.scheduledStart == null && t.plannedDate != null) {
+        final pDate = DateTime(t.plannedDate!.year, t.plannedDate!.month, t.plannedDate!.day);
+        if (pDate.isAfter(today)) return false;
+      }
+      return true;
+    }).toList();
+
     if (pendingTasks.isEmpty) {
       return [];
     }
-
-    final now = DateTime.now();
 
     // 1. Anchored tasks (explicitly scheduled by the user)
     final anchoredTasks = pendingTasks.where((t) => t.scheduledStart != null).toList();
@@ -398,8 +471,10 @@ class SchedulingEngine {
     });
 
     DateTime cursor = now.minute % 15 == 0 ? now : now.add(Duration(minutes: 15 - (now.minute % 15)));
-    if (cursor.hour < 9) {
-      cursor = DateTime(now.year, now.month, now.day, 9, 0);
+    final wakeHour = profile?.wakeTime ?? 7.0;
+    final wakeDt = DateTime(now.year, now.month, now.day, wakeHour.toInt(), ((wakeHour % 1) * 60).round());
+    if (cursor.isBefore(wakeDt)) {
+      cursor = wakeDt;
     }
 
     for (final task in flexibleTasks) {

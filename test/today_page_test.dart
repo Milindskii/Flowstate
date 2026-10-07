@@ -6,6 +6,8 @@ import 'package:flowstate/screens/today_dashboard_tab.dart';
 import 'package:flowstate/screens/what_should_i_do_screen.dart';
 import 'package:flowstate/screens/focus_ritual_screen.dart';
 import 'package:flowstate/components/timeline_current_time_marker.dart';
+import 'package:flowstate/components/timeline_item_widget.dart';
+import 'package:flowstate/theme/flow_motion.dart';
 import 'package:flowstate/providers/app_state_provider.dart';
 import 'package:flowstate/providers/theme_provider.dart';
 import 'package:flowstate/theme/flow_colors.dart';
@@ -14,6 +16,7 @@ import 'package:flowstate/screens/main_shell.dart';
 import 'package:flowstate/components/flow_bottom_nav.dart';
 import 'package:flowstate/services/auth_service.dart';
 import 'package:flowstate/screens/add_task_sheet.dart';
+import 'package:flowstate/models/task_item.dart';
 
 void main() {
   setUp(() {
@@ -527,5 +530,228 @@ void main() {
     // Verify TodayDashboardTab is visible by default
     expect(find.byType(TodayDashboardTab), findsOneWidget);
     expect(freshState.currentNavIndex, equals(0));
+  });
+
+  testWidgets('17. Later Action: Defers current recommendation so another task becomes recommended without deleting task', (WidgetTester tester) async {
+    final appState = AppStateProvider();
+    const task1 = TaskItem(
+      id: 'task-alpha',
+      title: 'Task Alpha (Initial Top)',
+      durationMinutes: 45,
+      difficulty: TaskDifficulty.high,
+      deadline: 'Today',
+      category: 'Work',
+      isPriority: true,
+    );
+    const task2 = TaskItem(
+      id: 'task-beta',
+      title: 'Task Beta (Next Pending)',
+      durationMinutes: 30,
+      difficulty: TaskDifficulty.medium,
+      deadline: 'Today',
+      category: 'Work',
+      isPriority: false,
+    );
+    appState.setTasksForTesting([task1, task2]);
+
+    await tester.pumpWidget(createTestWidget(appState: appState));
+    await tester.pumpAndSettle();
+
+    // Verify task1 is recommended initially
+    expect(appState.recommendedTask?.id, equals('task-alpha'));
+    expect(find.text('Task Alpha (Initial Top)'), findsWidgets);
+
+    // Tap "Later" on the primary recommendation card
+    await tester.tap(find.text('Later'));
+    await tester.pumpAndSettle();
+
+    // RescheduleTaskSheet opens
+    expect(find.text('Reschedule Task'), findsOneWidget);
+    expect(find.byKey(const Key('reschedule_chip_tomorrow')), findsOneWidget);
+
+    // Tap Tomorrow and Confirm
+    await tester.tap(find.byKey(const Key('reschedule_chip_tomorrow')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('reschedule_confirm_button')));
+    await tester.pumpAndSettle();
+
+    // Recommendation changes to task2
+    expect(appState.recommendedTask?.id, equals('task-beta'));
+    expect(find.text('Task Beta (Next Pending)'), findsWidgets);
+
+    // task1 is not completed, not deleted, and moved to tomorrow
+    final original = appState.tasks.firstWhere((t) => t.id == 'task-alpha');
+    expect(original.isCompleted, isFalse);
+    expect(original.deadline, equals('Tomorrow'));
+  });
+
+  testWidgets('18. Up Next Decision Point: Choosing "Do this now" switches the active recommendation', (WidgetTester tester) async {
+    final appState = AppStateProvider();
+    const task1 = TaskItem(
+      id: 'task-alpha',
+      title: 'Task Alpha (Default Top)',
+      durationMinutes: 45,
+      difficulty: TaskDifficulty.high,
+      deadline: 'Today',
+      category: 'Work',
+      isPriority: true,
+    );
+    const task2 = TaskItem(
+      id: 'task-beta',
+      title: 'Task Beta (User Choice)',
+      durationMinutes: 30,
+      difficulty: TaskDifficulty.medium,
+      deadline: 'Today',
+      category: 'Work',
+      isPriority: false,
+    );
+    appState.setTasksForTesting([task1, task2]);
+
+    await tester.pumpWidget(createTestWidget(appState: appState));
+    await tester.pumpAndSettle();
+
+    // Default top is task1
+    expect(appState.recommendedTask?.id, equals('task-alpha'));
+
+    // Set preferred active task
+    appState.setPreferredActiveTask('task-beta');
+    await tester.pumpAndSettle();
+
+    // Now task-beta is the top recommended task
+    expect(appState.recommendedTask?.id, equals('task-beta'));
+  });
+
+  testWidgets('19. Up Next Done Button: Shows confirmation dialog, completes task upon confirmation, and triggers feedback', (WidgetTester tester) async {
+    final appState = AppStateProvider();
+    const task1 = TaskItem(
+      id: 'task-alpha',
+      title: 'Primary Task',
+      durationMinutes: 45,
+      difficulty: TaskDifficulty.high,
+      deadline: 'Today',
+      category: 'Work',
+      isPriority: true,
+    );
+    const task2 = TaskItem(
+      id: 'task-beta',
+      title: 'Upcoming Report',
+      durationMinutes: 30,
+      difficulty: TaskDifficulty.medium,
+      deadline: 'Today',
+      category: 'Work',
+      isPriority: false,
+    );
+    appState.setTasksForTesting([task1, task2]);
+
+    await tester.pumpWidget(createTestWidget(appState: appState));
+    await tester.pumpAndSettle();
+
+    // Verify task2 is rendered in Up Next
+    expect(find.text('Upcoming Report'), findsOneWidget);
+
+    // Find the checkmark button for Upcoming Report
+    final checkmark = find.bySemanticsLabel('Mark Upcoming Report as done');
+    expect(checkmark, findsOneWidget);
+
+    // 1. Tap checkmark
+    await tester.ensureVisible(checkmark);
+    await tester.tap(checkmark);
+    await tester.pumpAndSettle();
+
+    // Confirmation dialog must appear
+    expect(find.text('Complete Task?'), findsOneWidget);
+    expect(find.text('Mark "Upcoming Report" as completed?'), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
+    expect(find.text('Mark Done'), findsOneWidget);
+
+    // Tapping Cancel does NOT complete the task
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(appState.tasks.firstWhere((t) => t.id == 'task-beta').isCompleted, isFalse);
+    expect(find.text('Upcoming Report'), findsOneWidget);
+
+    // 2. Open item inspection sheet and tap Done button
+    await tester.ensureVisible(find.text('Upcoming Report'));
+    await tester.tap(find.text('Upcoming Report'));
+    await tester.pumpAndSettle();
+
+    final modalDone = find.widgetWithText(TextButton, 'Done');
+    expect(modalDone, findsOneWidget);
+    await tester.tap(modalDone);
+    await tester.pumpAndSettle();
+
+    // Confirmation dialog appears from modal too
+    expect(find.text('Complete Task?'), findsOneWidget);
+    await tester.tap(find.text('Mark Done'));
+    await tester.pumpAndSettle();
+
+    // Task is now marked completed in AppState
+    expect(appState.tasks.firstWhere((t) => t.id == 'task-beta').isCompleted, isTrue);
+
+    // Feedback sheet appears
+    expect(find.text('How did that feel?'), findsOneWidget);
+  });
+
+  group('M2 Task 15: shared timeline row + bounded NOW pulse', () {
+    testWidgets('Today timeline renders FlowTimelineRow with same states as Calendar for same ScheduleItem', (WidgetTester tester) async {
+      final appState = AppStateProvider();
+      appState.setCalibratedStateForTesting();
+      await tester.pumpWidget(createTestWidget(appState: appState));
+      await tester.pumpAndSettle();
+
+      final rows = find.byType(FlowTimelineRow);
+      expect(rows, findsWidgets);
+      for (final row in tester.widgetList<FlowTimelineRow>(rows)) {
+        // Same component and same state rules as Calendar: the row key and, when not default,
+        // the state indicator key are derived from the item exactly as on Calendar.
+        expect(find.byKey(Key('timeline_row_${row.item.id}')), findsOneWidget);
+        final state = timelineRowStateOf(row.item, isNow: row.isNow);
+        expect(
+          find.byKey(Key('timeline_state_${state.name}_${row.item.id}')),
+          state == TimelineRowState.normal ? findsNothing : findsOneWidget,
+        );
+        expect(row.onComplete, isNotNull);
+        expect(row.onStart, isNotNull);
+      }
+    });
+
+    Widget marker({required bool loops, bool reduced = false, bool isToday = true}) => MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(disableAnimations: reduced),
+            child: FlowMotionScope(
+              loopsEnabled: loops,
+              child: Scaffold(body: TimelineCurrentTimeMarker(isToday: isToday)),
+            ),
+          ),
+        );
+
+    double dotOpacity(WidgetTester tester) =>
+        tester.widget<Opacity>(find.byKey(const Key('timeline_now_marker_dot'))).opacity;
+
+    testWidgets('NOW marker pulses 3 cycles then is static', (WidgetTester tester) async {
+      await tester.pumpWidget(marker(loops: true));
+      await tester.pump(const Duration(milliseconds: 1200)); // mid-cycle
+      expect(dotOpacity(tester), closeTo(0.55, 0.05));
+      expect(tester.binding.transientCallbackCount, greaterThan(0));
+
+      await tester.pump(const Duration(milliseconds: 3 * 2400));
+      await tester.pump();
+      expect(dotOpacity(tester), 1.0);
+      expect(tester.binding.transientCallbackCount, 0, reason: 'no scheduled frames after 3 cycles');
+    });
+
+    testWidgets('NOW marker static under reduced motion', (WidgetTester tester) async {
+      await tester.pumpWidget(marker(loops: true, reduced: true));
+      await tester.pump(const Duration(milliseconds: 1200));
+      expect(dotOpacity(tester), 1.0);
+      expect(tester.binding.transientCallbackCount, 0);
+    });
+
+    testWidgets('NOW marker static when not on today', (WidgetTester tester) async {
+      await tester.pumpWidget(marker(loops: true, isToday: false));
+      await tester.pump(const Duration(milliseconds: 1200));
+      expect(dotOpacity(tester), 1.0);
+      expect(tester.binding.transientCallbackCount, 0);
+    });
   });
 }

@@ -4,9 +4,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class FeedbackCreate(BaseModel):
     actual_minutes: Optional[int] = Field(default=None, ge=1, le=1440)
-    focus_score: int = Field(default=3, ge=1, le=5)
-    energy_score: int = Field(default=3, ge=1, le=5)
-    difficulty_score: int = Field(default=3, ge=1, le=5)
+    # each rating is optional: an unrated field is stored as NULL, never a made-up 3
+    focus_score: Optional[int] = Field(default=None, ge=1, le=5)
+    energy_score: Optional[int] = Field(default=None, ge=1, le=5)
+    difficulty_score: Optional[int] = Field(default=None, ge=1, le=5)
     distraction_score: Optional[int] = Field(default=None, ge=1, le=5)
     notes: Optional[str] = None
 
@@ -17,11 +18,12 @@ class FeedbackResponse(BaseModel):
     completed_at: datetime
     estimated_minutes: int
     actual_minutes: int
-    focus_score: int
-    energy_score: int
-    difficulty_score: int
+    focus_score: Optional[int] = None
+    energy_score: Optional[int] = None
+    difficulty_score: Optional[int] = None
     distraction_score: Optional[int] = None
     notes: Optional[str] = None
+    provenance: str = "reflection"
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

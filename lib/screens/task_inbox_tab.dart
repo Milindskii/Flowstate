@@ -98,39 +98,31 @@ class _TaskInboxTabState extends State<TaskInboxTab> {
       return const TaskInboxSkeleton();
     }
 
-    final allTasks = state.selectedCategory == 'All'
-        ? state.tasks
-        : state.tasks.where((t) => t.category == state.selectedCategory).toList();
-    final highPriority = allTasks
-        .where((t) =>
-            t.isPriorityExplicit &&
-            (t.priority == TaskPriority.high || t.priority == TaskPriority.urgent) &&
-            !t.isCompleted)
-        .toList();
-    final later = allTasks
-        .where((t) =>
-            !(t.isPriorityExplicit &&
-                (t.priority == TaskPriority.high || t.priority == TaskPriority.urgent)) &&
-            !t.isCompleted)
-        .toList();
+    // Chronological by persisted planned day + slot (compareTaskOrder), never by list/insert order.
+    final allTasks = (state.selectedCategory == 'All'
+        ? state.tasks.toList()
+        : state.tasks.where((t) => t.category == state.selectedCategory).toList())
+      ..sort(compareTaskOrder);
+    // One chronological list: priority is shown on each card but never reorders scheduled tasks.
+    final later = allTasks.where((t) => !t.isCompleted).toList();
     final completed = allTasks.where((t) => t.isCompleted).toList();
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       floatingActionButton: Padding(
         padding: const EdgeInsets.only(bottom: 74.0), // Above bottom nav
-        child: FloatingActionButton.extended(
-          backgroundColor: accent,
-          foregroundColor: FlowColors.textInverse,
-          elevation: 3,
-          shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
-          icon: const Icon(Icons.add_rounded, size: 22),
-          label: Text(
-            'Add Task',
-            style: FlowTypography.labelLarge(color: FlowColors.textInverse).copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+        // A quiet entry point for a detailed task; quick capture lives in the bar above.
+        child: FloatingActionButton(
+          key: const Key('task_inbox_add_fab'),
+          backgroundColor: FlowColors.surfaceElevated(context),
+          foregroundColor: accent,
+          elevation: 1,
+          tooltip: 'Add a task with details',
+          shape: RoundedRectangleBorder(
+            borderRadius: FlowRadii.buttonRadius,
+            side: BorderSide(color: FlowColors.border(context)),
           ),
+          child: const Icon(Icons.add_rounded, size: 24),
           onPressed: () {
             FlowHaptics.lightTap();
             _openAddTaskSheet(context);
@@ -168,7 +160,7 @@ class _TaskInboxTabState extends State<TaskInboxTab> {
                         allTasks.isEmpty
                             ? 'Your inbox is all clear'
                             : 'You have ${allTasks.where((t) => !t.isCompleted).length} tasks for today',
-                        style: FlowTypography.bodyMedium(color: FlowColors.textSecondary),
+                        style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
                       ),
                     ],
                   ),
@@ -177,9 +169,9 @@ class _TaskInboxTabState extends State<TaskInboxTab> {
                     width: 48,
                     height: 48,
                     decoration: BoxDecoration(
-                      color: FlowColors.darkCard,
+                      color: FlowColors.surface(context),
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: FlowColors.darkBorder, width: 1.0),
+                      border: Border.all(color: FlowColors.border(context), width: 1.0),
                     ),
                     child: IconButton(
                       tooltip: 'Brain Dump',
@@ -194,9 +186,9 @@ class _TaskInboxTabState extends State<TaskInboxTab> {
               // P1.1: "+ What do you need to get done?" Natural Language Quick Input Bar
               Container(
                 decoration: BoxDecoration(
-                  color: FlowColors.darkCard,
+                  color: FlowColors.surface(context),
                   borderRadius: FlowRadii.cardRadius,
-                  border: Border.all(color: FlowColors.darkBorder, width: 1.0),
+                  border: Border.all(color: FlowColors.border(context), width: 1.0),
                 ),
                 child: Row(
                   children: [
@@ -208,8 +200,12 @@ class _TaskInboxTabState extends State<TaskInboxTab> {
                         onSubmitted: (_) => _handleQuickInput(),
                         decoration: InputDecoration(
                           hintText: '+ What do you need to get done?',
-                          hintStyle: FlowTypography.bodyMedium(color: FlowColors.textMuted),
+                          hintStyle: FlowTypography.bodyMedium(color: FlowColors.textMutedOf(context)),
+                          // The bar is the field: no second themed fill or border inside it.
+                          filled: false,
                           border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
                           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                         ),
                       ),
@@ -254,47 +250,11 @@ class _TaskInboxTabState extends State<TaskInboxTab> {
               if (allTasks.isEmpty) ...[
                 _buildEmptyState(context, state, accent),
               ] else ...[
-                // High Priority Section
-                if (highPriority.isNotEmpty) ...[
-                  Text(
-                    'High Priority',
-                    style: FlowTypography.labelLarge(color: FlowColors.textSecondary).copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  ...highPriority.map((t) => TaskCard(
-                        task: t,
-                        onToggleComplete: () {
-                          final willComplete = !t.isCompleted;
-                          state.toggleTaskCompletion(t.id);
-                          if (willComplete) {
-                            showTaskFeedbackSheet(
-                              context,
-                              taskId: t.id,
-                              actualMinutes: t.durationMinutes,
-                              onSubmit: (fb) {
-                                state.recordTaskFeedback(
-                                  taskId: t.id,
-                                  actualMinutes: fb.actualMinutes,
-                                  feeling: fb.feeling,
-                                  durationFeedback: fb.durationFeedback,
-                                  blockerNote: fb.blockerNote,
-                                );
-                              },
-                            );
-                          }
-                        },
-                        onTap: () => _openTaskDetail(context, t),
-                      )),
-                  const SizedBox(height: 16),
-                ],
-
                 // Later Today Section
                 if (later.isNotEmpty) ...[
                   Text(
                     'Later Today',
-                    style: FlowTypography.labelLarge(color: FlowColors.textSecondary).copyWith(
+                    style: FlowTypography.labelLarge(color: FlowColors.textSecondaryOf(context)).copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -316,6 +276,11 @@ class _TaskInboxTabState extends State<TaskInboxTab> {
                                   feeling: fb.feeling,
                                   durationFeedback: fb.durationFeedback,
                                   blockerNote: fb.blockerNote,
+                                  energyScore: fb.energyScore,
+                                  focusScore: fb.focusScore,
+                                  difficultyScore: fb.difficultyScore,
+                                  distractionScore: fb.distractionScore,
+                                  completedAt: fb.completedAt,
                                 );
                               },
                             );
@@ -408,7 +373,7 @@ class _TaskInboxTabState extends State<TaskInboxTab> {
             child: ElevatedButton(
               onPressed: () {
                 FlowHaptics.lightTap();
-                _openAddTaskSheet(context);
+                _openBrainDumpSheet(context);
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: accent,
@@ -419,7 +384,7 @@ class _TaskInboxTabState extends State<TaskInboxTab> {
                 ),
               ),
               child: Text(
-                'Add task',
+                'Build My Day',
                 style: FlowTypography.labelLarge(color: FlowColors.textInverse).copyWith(
                   fontWeight: FontWeight.w700,
                 ),
@@ -433,7 +398,7 @@ class _TaskInboxTabState extends State<TaskInboxTab> {
             child: OutlinedButton(
               onPressed: () {
                 FlowHaptics.lightTap();
-                _openBrainDumpSheet(context);
+                _openAddTaskSheet(context);
               },
               style: OutlinedButton.styleFrom(
                 foregroundColor: FlowColors.textPrimaryOf(context),
@@ -443,7 +408,7 @@ class _TaskInboxTabState extends State<TaskInboxTab> {
                 ),
               ),
               child: Text(
-                'Brain dump a messy day',
+                'Add a single task',
                 style: FlowTypography.labelMedium(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w600),
               ),
             ),

@@ -1,3 +1,4 @@
+import uuid
 import pytest
 from httpx import AsyncClient, ASGITransport
 from app.main import app
@@ -146,5 +147,29 @@ async def test_submit_privacy_grievance():
         assert "Milindkrishnan24@gmail.com" in data["contact_email"]
         assert "applicable law" in data["message"].lower()
         assert data["ticket_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_grievance_is_linked_only_to_an_existing_account():
+    """A signed-in user with no users row yet can still file a grievance (unlinked); an existing user's is linked."""
+    from app.db.session import SessionLocal
+    from app.models.privacy_grievance import PrivacyGrievance
+    from app.models.user import User
+
+    ghost, real = f"ghost-{uuid.uuid4().hex[:8]}", f"real-{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as db:
+        db.add(User(id=real, email=f"{real}@flowstate.local", name="R"))
+        db.commit()
+    body = {"request_type": "access", "message": "Please tell me what you store about me."}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        tickets = {}
+        for uid in (ghost, real):
+            token = create_access_token({"sub": uid, "email": f"{uid}@flowstate.local"})
+            res = await ac.post("/api/v1/auth/grievance", headers={"Authorization": f"Bearer {token}"}, json=body)
+            assert res.status_code == 200, (uid, res.text)
+            tickets[uid] = res.json()["ticket_id"]
+    with SessionLocal() as db:
+        assert db.query(PrivacyGrievance).filter(PrivacyGrievance.id == tickets[ghost]).one().user_id is None
+        assert db.query(PrivacyGrievance).filter(PrivacyGrievance.id == tickets[real]).one().user_id == real
 
 

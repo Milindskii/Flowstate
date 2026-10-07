@@ -134,20 +134,22 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Your task inbox is clear'), findsOneWidget);
       expect(find.textContaining('Flowstate will organize and schedule them'), findsOneWidget);
-      expect(find.text('Add task'), findsOneWidget);
+      // Planning leads; adding a single task is the secondary action (reduce "Add task" dominance).
+      expect(find.widgetWithText(ElevatedButton, 'Build My Day'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, 'Add a single task'), findsOneWidget);
 
       // 4c. Calendar Empty State
       await tester.pumpWidget(wrapWithProviders(const CalendarTab()));
       await tester.pumpAndSettle();
-      expect(find.text('No scheduled events yet'), findsOneWidget);
-      expect(find.textContaining('Connect your calendar or calibrate your day'), findsOneWidget);
-      expect(find.text('Calibrate focus blocks'), findsOneWidget);
+      expect(find.textContaining('No plan for'), findsOneWidget);
+      expect(find.text("Tell Flowstate what you need to get done and we'll build the day."), findsOneWidget);
+      expect(find.text('Build My Day'), findsOneWidget);
 
       // 4d. Insights Empty State (learning mode without fabricated stats)
       await tester.pumpWidget(wrapWithProviders(const InsightsTab()));
       await tester.pumpAndSettle();
       expect(find.text("We're still learning your rhythm."), findsOneWidget);
-      expect(find.textContaining('more focus sessions will help us understand'), findsOneWidget);
+      expect(find.textContaining('Nothing here is estimated'), findsOneWidget);
       expect(find.text('Start a focus session'), findsOneWidget);
     });
 

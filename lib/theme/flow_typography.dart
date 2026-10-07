@@ -18,62 +18,62 @@ class FlowTypography {
 
   static TextStyle displayLarge({Color? color}) =>
       GoogleFonts.plusJakartaSans(
-        fontSize: 36.0,
-        fontWeight: FontWeight.w800,
+        fontSize: 34.0,
+        fontWeight: FontWeight.w700,
         color: color,
-        letterSpacing: -0.6,
+        letterSpacing: -0.5,
         height: 1.22,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
   static TextStyle displayMedium({Color? color}) =>
       GoogleFonts.plusJakartaSans(
-        fontSize: 30.0,
-        fontWeight: FontWeight.w800,
+        fontSize: 28.0,
+        fontWeight: FontWeight.w700,
         color: color,
-        letterSpacing: -0.5,
+        letterSpacing: -0.4,
         height: 1.25,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
   static TextStyle headlineLarge({Color? color}) =>
       GoogleFonts.plusJakartaSans(
-        fontSize: 26.0,
+        fontSize: 24.0,
         fontWeight: FontWeight.w700,
         color: color,
-        letterSpacing: -0.4,
+        letterSpacing: -0.3,
         height: 1.28,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
   static TextStyle headlineMedium({Color? color}) =>
       GoogleFonts.plusJakartaSans(
-        fontSize: 22.5,
-        fontWeight: FontWeight.w700,
+        fontSize: 21.0,
+        fontWeight: FontWeight.w600,
         color: color,
-        letterSpacing: -0.3,
+        letterSpacing: -0.2,
         height: 1.3,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
   static TextStyle titleMedium({Color? color}) =>
       GoogleFonts.plusJakartaSans(
-        fontSize: 20.0,
+        fontSize: 18.5,
         fontWeight: FontWeight.w600,
         color: color,
-        letterSpacing: -0.2,
+        letterSpacing: -0.15,
         height: 1.35,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
   static TextStyle titleSmall({Color? color}) =>
       GoogleFonts.plusJakartaSans(
-        fontSize: 17.0,
+        fontSize: 16.5,
         fontWeight: FontWeight.w600,
         color: color,
         letterSpacing: -0.1,
         height: 1.35,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
-  /// Readable mobile body font (bumped to 18px)
+  /// Readable mobile body font
   static TextStyle bodyLarge({Color? color}) =>
       GoogleFonts.plusJakartaSans(
-        fontSize: 18.0,
+        fontSize: 17.0,
         fontWeight: FontWeight.w400,
         color: color,
         height: 1.5,
@@ -81,7 +81,7 @@ class FlowTypography {
 
   static TextStyle bodyMedium({Color? color}) =>
       GoogleFonts.plusJakartaSans(
-        fontSize: 16.5,
+        fontSize: 15.5,
         fontWeight: FontWeight.w400,
         color: color,
         height: 1.45,
@@ -89,7 +89,7 @@ class FlowTypography {
 
   static TextStyle bodySmall({Color? color}) =>
       GoogleFonts.plusJakartaSans(
-        fontSize: 14.5,
+        fontSize: 13.5,
         fontWeight: FontWeight.w400,
         color: color,
         height: 1.4,
@@ -97,7 +97,7 @@ class FlowTypography {
 
   static TextStyle labelLarge({Color? color}) =>
       GoogleFonts.plusJakartaSans(
-        fontSize: 17.5,
+        fontSize: 16.0,
         fontWeight: FontWeight.w600,
         color: color,
         letterSpacing: 0.1,
@@ -106,7 +106,7 @@ class FlowTypography {
 
   static TextStyle labelMedium({Color? color}) =>
       GoogleFonts.plusJakartaSans(
-        fontSize: 15.5,
+        fontSize: 14.5,
         fontWeight: FontWeight.w500,
         color: color,
         letterSpacing: 0.1,
@@ -115,24 +115,54 @@ class FlowTypography {
 
   static TextStyle labelSmall({Color? color}) =>
       GoogleFonts.plusJakartaSans(
-        fontSize: 13.5,
+        fontSize: 12.5,
         fontWeight: FontWeight.w500,
         color: color,
         letterSpacing: 0.2,
         height: 1.25,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
+  /// Dedicated refined typography for primary buttons across the app
+  static TextStyle buttonPrimary({Color? color}) =>
+      GoogleFonts.plusJakartaSans(
+        fontSize: 15.5,
+        fontWeight: FontWeight.w600,
+        color: color,
+        letterSpacing: 0.2,
+        height: 1.25,
+      ).copyWith(fontFamilyFallback: emojiFallback);
+
+  /// Dedicated refined typography for secondary / outline buttons
+  static TextStyle buttonSecondary({Color? color}) =>
+      GoogleFonts.plusJakartaSans(
+        fontSize: 14.5,
+        fontWeight: FontWeight.w500,
+        color: color,
+        letterSpacing: 0.15,
+        height: 1.25,
+      ).copyWith(fontFamilyFallback: emojiFallback);
+
+  /// Chips and small interactive elements
+  static TextStyle actionChip({Color? color}) =>
+      GoogleFonts.plusJakartaSans(
+        fontSize: 13.0,
+        fontWeight: FontWeight.w600,
+        color: color,
+        letterSpacing: 0.1,
+        height: 1.2,
+      ).copyWith(fontFamilyFallback: emojiFallback);
+
   static TextStyle numberHero({Color? color}) =>
       GoogleFonts.plusJakartaSans(
-        fontSize: 38.0,
-        fontWeight: FontWeight.w800,
+        fontSize: 36.0,
+        fontWeight: FontWeight.w700,
         color: color ?? FlowColors.cyanLight,
         letterSpacing: -0.5,
       ).copyWith(fontFamilyFallback: emojiFallback);
 
   static TextStyle badgeText({Color? color}) =>
       GoogleFonts.plusJakartaSans(
-        fontSize: 13.0,
+        fontSize: 12.0,
         fontWeight: FontWeight.w700,
         color: color,
         letterSpacing: 0.6,

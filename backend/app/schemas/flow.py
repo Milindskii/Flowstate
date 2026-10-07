@@ -197,3 +197,18 @@ class UseShieldResponse(BaseModel):
     message: str
     shields_available: int
     current_streak: int
+
+
+class DayCompleteClaimRequest(BaseModel):
+    date: str  # user-local YYYY-MM-DD
+    timezone: Optional[str] = None
+
+
+class DayCompleteClaimResponse(BaseModel):
+    date: str
+    claimed: bool
+    already_claimed: bool = False
+    xp_awarded: int = 0
+    companion_xp: int = 0
+    level: int = 1
+    leveled_up: bool = False

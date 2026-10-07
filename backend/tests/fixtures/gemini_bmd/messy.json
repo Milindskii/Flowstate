@@ -1,0 +1,14 @@
+{"tasks": [
+ {"ref": "t1", "title": "Finish DBMS assignment", "type": "deep_work", "estimated_minutes": 120, "duration_source": "explicit",
+  "priority": "urgent", "priority_source": "explicit", "focus_level": "high", "focus_source": "explicit",
+  "deadline": "2026-10-06", "deadline_time": null, "deadline_phrase": "before", "deadline_kind": "hard", "depends_on": []},
+ {"ref": "t2", "title": "Send assignment to professor", "type": "admin", "estimated_minutes": 10, "duration_source": "inferred",
+  "priority": null, "priority_source": "unspecified", "depends_on": ["t1"]},
+ {"ref": "t3", "title": "Dentist appointment", "type": "personal", "estimated_minutes": 60, "duration_source": "inferred",
+  "priority": null, "target_date": "2026-10-04", "fixed_start": "16:00", "depends_on": []},
+ {"ref": "t4", "title": "Call mom", "type": "admin", "estimated_minutes": 20, "priority": null,
+  "deadline": "2026-10-09", "deadline_time": null, "deadline_phrase": "by", "deadline_kind": "soft", "preferred_window": "evening",
+  "target_date": "2026-10-09", "depends_on": []},
+ {"ref": "t5", "title": "Gym session", "type": "physical", "estimated_minutes": 60, "priority": "low", "priority_source": "explicit",
+  "preferred_window": "morning", "depends_on": []}
+], "ambiguities": [], "planning_context": {}}

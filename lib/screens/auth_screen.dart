@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../components/flow_ambient_background.dart';
-import '../components/flow_logo.dart';
+import '../components/noya_companion_view.dart';
 import '../components/primary_button.dart';
 import '../components/secondary_button.dart';
 import '../providers/app_state_provider.dart';
@@ -37,21 +37,23 @@ class _AuthScreenState extends State<AuthScreen> {
 
   void _navigateToOnboarding() {
     FlowHaptics.lightTap();
-    Navigator.of(context).push(
+    Navigator.of(context).pushAndRemoveUntil(
       FlowPageRoute.fade(
         builder: (_) => const OnboardingFlowScreen(),
         duration: const Duration(milliseconds: 320),
       ),
+      (route) => false,
     );
   }
 
   void _navigateToDashboard() {
     FlowHaptics.lightTap();
-    Navigator.of(context).pushReplacement(
+    Navigator.of(context).pushAndRemoveUntil(
       FlowPageRoute.fade(
         builder: (_) => const MainShell(),
         duration: const Duration(milliseconds: 320),
       ),
+      (route) => false,
     );
   }
 
@@ -196,33 +198,9 @@ class _AuthScreenState extends State<AuthScreen> {
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: const Color(0xFFFCA5A5)),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text(
-                            errorMessage!,
-                            style: FlowTypography.bodySmall(color: const Color(0xFFB91C1C)),
-                          ),
-                          if (errorMessage!.contains('rate limit') || errorMessage!.contains('over_email_send_rate_limit')) ...[
-                            const SizedBox(height: 8),
-                            ElevatedButton.icon(
-                              onPressed: () async {
-                                final appState = Provider.of<AppStateProvider>(context, listen: false);
-                                await appState.enterOfflineDemoUser(emailController.text.trim(), startWithOnboarding: true);
-                                if (ctx.mounted) Navigator.pop(ctx);
-                                _navigateToOnboarding();
-                              },
-                              icon: const Icon(Icons.bolt_rounded, size: 16),
-                              label: const Text('Continue to Questionnaire (Instant Demo)'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF0F172A),
-                                foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              ),
-                            ),
-                          ],
-                        ],
+                      child: Text(
+                        errorMessage!,
+                        style: FlowTypography.bodySmall(color: const Color(0xFFB91C1C)),
                       ),
                     ),
                   ],
@@ -341,12 +319,12 @@ class _AuthScreenState extends State<AuthScreen> {
                               }
                               if (msg.contains('Invalid login credentials') || msg.contains('invalid_credentials')) {
                                 msg = 'Invalid email or password. Please try again.';
-                              }
-                              if (msg.contains('User already registered')) {
+                              } else if (msg.contains('User already registered') || msg.contains('user_already_exists')) {
                                 msg = 'Account already exists. Please log in instead.';
-                              }
-                              if (msg.contains('over_email_send_rate_limit') || msg.contains('rate limit')) {
-                                msg = 'Supabase email rate limit reached (free tier limit: 3-4 emails/hr). To use any fake email, turn off "Confirm email" in Supabase Dashboard, or tap below to continue immediately:';
+                              } else if (msg.contains('Email not confirmed') || msg.contains('email_not_confirmed')) {
+                                msg = 'Please check your email and verify your account before logging in.';
+                              } else if (msg.contains('over_email_send_rate_limit') || msg.contains('rate limit')) {
+                                msg = 'Email rate limit reached. Please wait a few minutes before trying again.';
                               }
                               setSheetState(() {
                                 isSubmitting = false;
@@ -460,7 +438,11 @@ class _AuthScreenState extends State<AuthScreen> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const FlowLogo(size: 64),
+                            const NoyaCompanionView(
+                              state: NoyaState.idle,
+                              size: 64,
+                              showAmbientGlow: false,
+                            ),
                             const SizedBox(height: 18),
                             Text(
                               'FLOWSTATE',

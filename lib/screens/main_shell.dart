@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../components/flow_ambient_background.dart';
 import '../components/flow_bottom_nav.dart';
+import '../components/noya_thinking.dart';
+import '../components/companion/noya_reaction_controller.dart';
 import '../providers/app_state_provider.dart';
 import '../providers/flow_provider.dart';
 import '../theme/flow_colors.dart';
@@ -64,24 +66,49 @@ class MainShell extends StatelessWidget {
 
     try {
       final flow = Provider.of<FlowProvider>(context, listen: false);
-      state.onTaskCompletedForFlow ??= () {
-        flow.recordTaskCompletionLocally();
-        flow.loadOverview();
+      state.onTaskCompletedForFlow ??= flow.recordTaskCompletionLocally;
+      state.onFlowNeedsRefresh ??= flow.loadOverview;
+      // One visible Noya reaction per completion: a hop, or a celebration for the last task of
+      // the day (the reaction controller caps celebrations at 3 per day).
+      state.onTaskCompletedForNoya ??= (task, {required bool lastOfDay}) {
+        flow.animController.reactions.react(lastOfDay ? NoyaReaction.celebrate : NoyaReaction.taskDone);
       };
     } catch (_) {}
 
-    return Scaffold(
-      backgroundColor: FlowColors.background(context),
-      body: FlowAmbientBackground(
-        visualState: _getTabVisualState(navIndex),
-        child: FlowFadeIndexedStack(
-          index: navIndex,
-          children: _tabs,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && navIndex > 0) {
+          state.setNavIndex(0);
+        }
+      },
+      child: Scaffold(
+        backgroundColor: FlowColors.background(context),
+        body: Stack(
+          children: [
+            FlowAmbientBackground(
+              visualState: _getTabVisualState(navIndex),
+              child: FlowFadeIndexedStack(
+                index: navIndex,
+                children: _tabs,
+              ),
+            ),
+            // Noya "thinking" the moment any tracked async work starts; nothing when idle.
+            const SafeArea(
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: Padding(
+                  padding: EdgeInsets.only(top: 6),
+                  child: IgnorePointer(child: NoyaBusyBadge()),
+                ),
+              ),
+            ),
+          ],
         ),
-      ),
-      bottomNavigationBar: FlowBottomNav(
-        currentIndex: navIndex,
-        onTap: (idx) => state.setNavIndex(idx),
+        bottomNavigationBar: FlowBottomNav(
+          currentIndex: navIndex,
+          onTap: (idx) => state.setNavIndex(idx),
+        ),
       ),
     );
   }

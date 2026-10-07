@@ -9,20 +9,27 @@ from .db.session import get_db, Base, engine
 # Ensure all models are registered with Base metadata
 from . import models  # noqa: F401
 
-from .api.routes import auth, tasks, today, flow, admin, readiness, personalization, insights, ai, subscription
+from .api.routes import auth, tasks, today, flow, admin, readiness, personalization, insights, ai, subscription, calendar
 from .core.security_headers import SecurityHeadersMiddleware
 from .core.rate_limit import RateLimitMiddleware
 
 setup_logging()
 
 # Production / Debug Docs Control
-is_production = settings.ENVIRONMENT.lower() == "production"
+is_production = settings.ENVIRONMENT.strip().lower() not in ("development", "test")  # fail closed
 docs_enabled = settings.DEBUG and not is_production
 
 # In development with SQLite, run startup schema safety checks to ensure local developer DBs
 # are kept in sync without modifying existing data. Production relies strictly on Alembic migrations.
 if not is_production and settings.DATABASE_URL.startswith("sqlite"):
     try:
+        # Guard FIRST: an existing development database that predates migration 006 is never altered (or
+        # backfilled) silently. The developer reviews the report, then opts in or runs Alembic.
+        import os as _os
+        from .db.backfill import ensure_planning_columns
+
+        ensure_planning_columns(
+            engine, auto_migrate=_os.getenv("FLOWSTATE_DEV_AUTO_MIGRATE", "").lower() in ("1", "true", "yes"))
         Base.metadata.create_all(bind=engine)
         with engine.connect() as conn:
             from sqlalchemy import inspect
@@ -60,7 +67,7 @@ if not is_production and settings.DATABASE_URL.startswith("sqlite"):
                         conn.execute(text(f"ALTER TABLE readiness_profiles ADD COLUMN {col_name} {col_def}"))
                 conn.commit()
     except Exception as e:
-        logger.error(f"Development schema safety check failed: {e}")
+        logger.error(f"Development schema safety check failed: {type(e).__name__}")
         raise
 
 from contextlib import asynccontextmanager
@@ -69,6 +76,10 @@ from .core.security import verify_security_environment
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     verify_security_environment()
+    if not settings.DATABASE_URL.startswith("sqlite"):
+        # PostgreSQL (Supabase): schema comes only from Alembic; never create_all here.
+        from .db.backfill import assert_schema_at_head
+        assert_schema_at_head(engine)
     yield
 
 app = FastAPI(
@@ -83,7 +94,12 @@ app = FastAPI(
 
 # Attach Security and Rate Limiting Middlewares
 app.add_middleware(SecurityHeadersMiddleware)
-app.add_middleware(RateLimitMiddleware, max_requests_per_minute=150)
+if settings.RATE_LIMIT_ENABLED:
+    app.add_middleware(
+        RateLimitMiddleware,
+        max_requests_per_minute=settings.RATE_LIMIT_PER_MINUTE,
+        trusted_proxies=settings.TRUSTED_PROXY_CIDRS,
+    )
 
 # Configure CORS defensively
 app.add_middleware(
@@ -104,7 +120,9 @@ app.include_router(readiness.router, prefix=settings.API_V1_STR)
 app.include_router(personalization.router, prefix=settings.API_V1_STR)
 app.include_router(insights.router, prefix=settings.API_V1_STR)
 app.include_router(ai.router, prefix=settings.API_V1_STR)
+app.add_exception_handler(ai.PlanFailure, ai.plan_failure_handler)
 app.include_router(subscription.router, prefix=settings.API_V1_STR)
+app.include_router(calendar.router, prefix=settings.API_V1_STR)
 
 @app.get("/health", tags=["Health"])
 def health_check():
@@ -122,7 +140,7 @@ def api_v1_health(db: Session = Depends(get_db)):
     try:
         db.execute(text("SELECT 1"))
     except Exception as e:
-        logger.error(f"Health check database query failure: {e}")
+        logger.error(f"Health check database query failure: {type(e).__name__}")
         db_status = "unhealthy"
 
     return {
@@ -334,7 +352,7 @@ async def process_delete_account_web(request: Request, db: Session = Depends(get
             user_id = user.id
             db.delete(user)
             db.commit()
-            logger.info(f"Authenticated web account deletion completed for user_id={user_id}, email={clean_email}")
+            logger.info(f"Authenticated web account deletion completed for user_id={user_id}")
 
             success_html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -397,7 +415,7 @@ async def process_delete_account_web(request: Request, db: Session = Depends(get
 
     # Unauthenticated path: Do NOT delete user without ownership verification!
     # Acknowledge request and require verification to prevent malicious deletion attacks.
-    logger.info(f"Unauthenticated web deletion request received for email={clean_email}. Verification required.")
+    logger.info("Unauthenticated web deletion request received. Verification required.")
     pending_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>

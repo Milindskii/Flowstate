@@ -95,10 +95,10 @@ class _ShieldRecoveryDialogState extends State<ShieldRecoveryDialog> {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: isDark ? FlowColors.darkCard : FlowColors.lightCardElevated,
+              color: isDark ? FlowColors.surfaceDark : FlowColors.lightCardElevated,
               borderRadius: FlowRadii.cardRadius,
               border: Border.all(
-                color: isDark ? FlowColors.darkBorder : FlowColors.lightBorder,
+                color: isDark ? FlowColors.borderDark : FlowColors.lightBorder,
               ),
             ),
             child: Column(

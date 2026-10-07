@@ -61,3 +61,7 @@ backend/.env.*
 **/__pycache__/
 .pytest_cache/
 
+.superdesign/
+.agents/
+.claude/
+skills-lock.json

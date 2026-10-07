@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from .task import TaskResponse
@@ -35,6 +36,10 @@ class WorkloadSummary(BaseModel):
     message: str = "Let's build your day."
     is_overloaded: bool = False
     available_minutes: int = 480
+    # planned_minutes above is what can still be done. Time whose slot already ended unstarted is kept apart
+    # (never counted as remaining) so history/analytics still know about it.
+    missed_minutes: int = 0
+    missed_count: int = 0
 
 class ScheduleItemResponse(BaseModel):
     id: str
@@ -45,6 +50,17 @@ class ScheduleItemResponse(BaseModel):
     tag_text: str
     is_active: bool = False
     duration_minutes: int = 60
+    state: str = "scheduled"  # derived: scheduled|active|missed|failed (same rule as the Calendar day view)
+    is_missed: bool = False
+    is_commitment: bool = False
+
+class TomorrowTaskResponse(BaseModel):
+    """One open task planned for tomorrow. Shown in its own Today section; never part of today's timeline."""
+    id: str
+    title: str
+    start_time: Optional[datetime] = None  # tz-aware in the user's zone; None when no time was chosen yet
+    duration_minutes: int = 45
+    is_commitment: bool = False
 
 class CalendarContext(BaseModel):
     events_count: int = 0
@@ -63,6 +79,8 @@ class TodayResponse(BaseModel):
     workload_summary: WorkloadSummary
     active_task: Optional[TaskResponse] = None
     upcoming_timeline: List[ScheduleItemResponse] = Field(default_factory=list)
+    # Separate from upcoming_timeline: tomorrow's open tasks (empty when tomorrow has none).
+    tomorrow_tasks: List[TomorrowTaskResponse] = Field(default_factory=list)
     calendar_context: CalendarContext
     # Audit ID for this recommendation — used by Flutter to log accept/override/later
     decision_id: Optional[str] = None

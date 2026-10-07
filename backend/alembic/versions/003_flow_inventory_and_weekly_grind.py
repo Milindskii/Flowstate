@@ -193,6 +193,11 @@ def downgrade() -> None:
     inspector = sa.inspect(conn)
     existing_tables = inspector.get_table_names()
 
-    for table in ['flow_weekly_progress', 'flow_inventory_items']:
+    # Every table upgrade() creates (previously only the last two were dropped, so a
+    # downgrade to base left orphan flow_* tables that still FK to users).
+    for table in [
+        'flow_weekly_progress', 'flow_inventory_items', 'flow_achievements', 'flow_daily_quests',
+        'flow_economic_events', 'flow_challenges', 'flow_focus_sessions', 'flow_profiles', 'flow_companions',
+    ]:
         if table in existing_tables:
             op.drop_table(table)

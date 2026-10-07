@@ -5,7 +5,8 @@ from app.engines.scheduling_engine import SchedulingEngine, PlanningProfile
 from app.services.ai_service import AIService
 from app.schemas.readiness import ReadinessOnboardingRequest
 from app.services.readiness_service import ReadinessService
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, Base, engine as db_engine
+import app.models
 from app.models.user import User
 
 class MockTask:
@@ -297,6 +298,7 @@ def test_data_path_onboarding_to_planning_profile_to_scheduler():
     Trace the complete data path:
     Questionnaire payload -> ReadinessService.submit_onboarding_answers -> DB -> PlanningProfile -> SchedulingEngine
     """
+    Base.metadata.create_all(bind=db_engine)
     db = SessionLocal()
     try:
         # Create test user

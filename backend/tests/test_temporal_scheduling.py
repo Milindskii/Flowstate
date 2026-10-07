@@ -230,6 +230,56 @@ class TestAfternoonPreference:
             f"Afternoon preference failed: got {result.slot.start_time}"
         )
 
+    def test_deterministic_parser_extracts_afternoon_window(self):
+        """
+        Regression: _parse_single_clause must extract preferred_window [12:00-17:00]
+        from clauses containing 'afternoon'. Previously the keyword was absent from
+        the deterministic parser, so Gemini-path tasks got the window but deterministic
+        ones did not, silently falling back to morning-focus heuristic.
+        """
+        from app.services.ai_service import AIService
+        tz = IST
+        now = datetime(2026, 9, 27, 9, 0, tzinfo=tz)
+
+        test_clauses = [
+            "Fix authentication bug for 2 hours, preferably in the afternoon",
+            "Study preferably in the afternoon",
+            "Work on project, afternoon is best",
+        ]
+        for clause in test_clauses:
+            c = AIService._parse_single_clause(clause, now, tz)
+            assert c is not None, f"Parser returned None for: {clause!r}"
+            t = c.temporal
+            assert t is not None, (
+                f"No temporal extracted for 'afternoon' clause: {clause!r}"
+            )
+            pws = getattr(t, "preferred_window_start", None)
+            pwe = getattr(t, "preferred_window_end", None)
+            assert pws is not None and pws.hour == 12, (
+                f"Expected afternoon window start=12:00, got {pws} for {clause!r}"
+            )
+            assert pwe is not None and pwe.hour == 17, (
+                f"Expected afternoon window end=17:00, got {pwe} for {clause!r}"
+            )
+
+    def test_deterministic_parser_afternoon_clause_schedules_afternoon(self):
+        """Regression: 'preferably in the afternoon' must produce an afternoon slot, not morning."""
+        from app.services.ai_service import AIService
+        tz = IST
+        now = datetime(2026, 9, 27, 9, 0, tzinfo=tz)
+        c = AIService._parse_single_clause(
+            "Fix authentication bug for 2 hours, preferably in the afternoon", now, tz
+        )
+        assert c is not None
+        assert c.temporal is not None
+        result = SchedulingEngine().evaluate_best_slot_for_task(c, [], PlanningProfile(), now, tz)
+        assert result is not None
+        in_afternoon = 12 <= result.slot.start_time.hour < 17
+        is_tomorrow = result.slot.start_time.date() > now.date()
+        assert in_afternoon or is_tomorrow, (
+            f"Parser+scheduler gave morning slot for 'preferably in the afternoon': {result.slot.start_time}"
+        )
+
 
 # -- TEST 5: "Around 6 PM" should score closer slots higher -------------------
 
@@ -474,3 +524,193 @@ class TestMidnightRollover:
                 assert result.slot.start_time.date() == now.date()
             elif result.slot.day_offset == 1:
                 assert result.slot.start_time.date() == (now.date() + timedelta(days=1))
+
+
+# ── NEW: Meal Anchor & Relative Constraint Re-Anchoring Tests ──────────────────
+
+class TestMealAnchors:
+    """
+    BUG 5 COVERAGE: Verifies that after/before lunch and after/before breakfast
+    are parsed into correct temporal constraints by the deterministic parser.
+    """
+
+    def test_after_lunch_earliest_start(self):
+        """'after lunch' → earliest_start at 13:00 with relative_after=lunch"""
+        from app.services.ai_service import AIService
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Kolkata")
+        now = datetime(2026, 9, 28, 10, 0, tzinfo=tz)
+        c = AIService._parse_single_clause("Study after lunch for 1 hour", now, tz)
+        assert c is not None
+        assert c.temporal is not None
+        assert c.temporal.earliest_start is not None
+        assert c.temporal.earliest_start.hour == 13
+        assert c.temporal.relative_after == "lunch"
+
+    def test_before_lunch_latest_end(self):
+        """'before lunch' → latest_end at 13:00 with relative_before=lunch"""
+        from app.services.ai_service import AIService
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Kolkata")
+        now = datetime(2026, 9, 28, 10, 0, tzinfo=tz)
+        c = AIService._parse_single_clause("Study before lunch for 1 hour", now, tz)
+        assert c is not None
+        assert c.temporal is not None
+        assert c.temporal.latest_end is not None
+        assert c.temporal.latest_end.hour == 13
+        assert c.temporal.relative_before == "lunch"
+
+    def test_after_breakfast_earliest_start(self):
+        """'after breakfast' → earliest_start at 07:30 with relative_after=breakfast"""
+        from app.services.ai_service import AIService
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Kolkata")
+        now = datetime(2026, 9, 28, 10, 0, tzinfo=tz)
+        c = AIService._parse_single_clause("Gym after breakfast for 45 minutes", now, tz)
+        assert c is not None
+        assert c.temporal is not None
+        assert c.temporal.earliest_start is not None
+        assert c.temporal.earliest_start.hour == 7
+        assert c.temporal.earliest_start.minute == 30
+        assert c.temporal.relative_after == "breakfast"
+
+    def test_before_breakfast_latest_end(self):
+        """'before breakfast' → latest_end at 07:30 with relative_before=breakfast"""
+        from app.services.ai_service import AIService
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Kolkata")
+        now = datetime(2026, 9, 28, 10, 0, tzinfo=tz)
+        c = AIService._parse_single_clause("Call mom before breakfast for 15 minutes", now, tz)
+        assert c is not None
+        assert c.temporal is not None
+        assert c.temporal.latest_end is not None
+        assert c.temporal.latest_end.hour == 7
+        assert c.temporal.latest_end.minute == 30
+        assert c.temporal.relative_before == "breakfast"
+
+    def test_after_lunch_scheduling_respects_constraint(self):
+        """'after lunch' scheduling → slot starts at or after 13:00"""
+        from app.services.ai_service import AIService
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Kolkata")
+        now = datetime(2026, 9, 28, 10, 0, tzinfo=tz)
+        c = AIService._parse_single_clause("Study after lunch for 1 hour", now, tz)
+        assert c is not None
+        result = SchedulingEngine().evaluate_best_slot_for_task(c, [], PlanningProfile(), now, tz)
+        assert result is not None
+        assert result.slot.start_time.hour >= 13, \
+            f"after lunch should start >= 13:00, got {result.slot.start_time.strftime('%H:%M')}"
+
+    def test_before_lunch_scheduling_ends_before_constraint(self):
+        """'before lunch' scheduling → slot ends by 13:00"""
+        from app.services.ai_service import AIService
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Kolkata")
+        now = datetime(2026, 9, 28, 7, 0, tzinfo=tz)
+        c = AIService._parse_single_clause("Study before lunch for 1 hour", now, tz)
+        assert c is not None
+        result = SchedulingEngine().evaluate_best_slot_for_task(c, [], PlanningProfile(), now, tz)
+        assert result is not None
+        assert result.slot.end_time.replace(tzinfo=None) <= datetime(2026, 9, 28, 13, 0), \
+            f"before lunch should end by 13:00, got {result.slot.end_time.strftime('%H:%M')}"
+
+
+class TestRelativeConstraintReAnchoring:
+    """
+    BUG 2 & 3 COVERAGE: Verifies that relative temporal constraints (preferred_window,
+    earliest_start from meals) are re-evaluated per candidate day, not pinned to today.
+    """
+
+    def test_preferred_window_rolls_to_tomorrow_correctly(self):
+        """
+        BUG 2: 'around 6 PM' with now=22:30 should schedule tomorrow ~18:00, not tomorrow 07:00.
+        Root cause: preferred_window_start/end were anchored to today's date; all tomorrow
+        slots scored -0.55 as 'outside window', so early tomorrow (07:00) beat 18:00.
+        """
+        tz = ZoneInfo("Asia/Kolkata")
+        now = datetime(2026, 9, 28, 22, 30, tzinfo=tz)
+        tc = TemporalConstraints(
+            preferred_start=datetime(2026, 9, 28, 18, 0, tzinfo=tz),
+            preferred_window_start=datetime(2026, 9, 28, 17, 15, tzinfo=tz),
+            preferred_window_end=datetime(2026, 9, 28, 18, 45, tzinfo=tz),
+            flexibility="preferred",
+        )
+        task = make_task("Gym session", task_type=TaskType.physical, duration=60, temporal=tc)
+        result = SchedulingEngine().evaluate_best_slot_for_task(task, [], PlanningProfile(), now, tz)
+        assert result is not None
+        s = result.slot.start_time
+        tomorrow = (now.date() + timedelta(days=1))
+        assert s.date() == tomorrow, f"should be tomorrow, got {s.date()}"
+        hour = s.hour + s.minute / 60.0
+        assert hour >= 13.0, f"should be afternoon/evening (~18:00), got {s.strftime('%H:%M')}"
+
+    def test_after_dinner_tomorrow_starts_after_dinner_time(self):
+        """
+        BUG 3: 'after dinner' with now=22:00 should schedule TOMORROW >= 20:00, not 09:30.
+        Root cause: earliest_start was pinned to today 20:00; any tomorrow slot (09:30)
+        satisfied 'slot >= today 20:00', so dinner constraint was completely lost.
+        """
+        tz = ZoneInfo("Asia/Kolkata")
+        now = datetime(2026, 9, 28, 22, 0, tzinfo=tz)
+        tc = TemporalConstraints(
+            earliest_start=datetime(2026, 9, 28, 20, 0, tzinfo=tz),
+            relative_after="dinner",
+            flexibility="constrained",
+        )
+        task = make_task("Review DSA", task_type=TaskType.study, duration=45, temporal=tc)
+        result = SchedulingEngine().evaluate_best_slot_for_task(task, [], PlanningProfile(), now, tz)
+        assert result is not None
+        s = result.slot.start_time
+        assert s.date() > now.date(), f"should be tomorrow, got {s.date()}"
+        assert s.hour >= 20, \
+            f"after dinner should start >= 20:00 on the scheduled day, got {s.strftime('%H:%M')}"
+
+    def test_after_dinner_today_stays_today(self):
+        """After dinner with now=10:00 should schedule TODAY >= 20:00 (not tomorrow)."""
+        tz = ZoneInfo("Asia/Kolkata")
+        now = datetime(2026, 9, 28, 10, 0, tzinfo=tz)
+        tc = TemporalConstraints(
+            earliest_start=datetime(2026, 9, 28, 20, 0, tzinfo=tz),
+            relative_after="dinner",
+            flexibility="constrained",
+        )
+        task = make_task("Review DSA", task_type=TaskType.study, duration=45, temporal=tc)
+        result = SchedulingEngine().evaluate_best_slot_for_task(task, [], PlanningProfile(), now, tz)
+        assert result is not None
+        assert result.slot.start_time.date() == now.date(), \
+            f"should be today, got {result.slot.start_time.date()}"
+        assert result.slot.start_time.hour >= 20, \
+            f"should start >= 20:00, got {result.slot.start_time.strftime('%H:%M')}"
+
+    def test_after_lunch_tomorrow_stays_after_lunch(self):
+        """After lunch with now=14:00 (past lunch) should be TOMORROW >= 13:00."""
+        tz = ZoneInfo("Asia/Kolkata")
+        now = datetime(2026, 9, 28, 14, 30, tzinfo=tz)
+        tc = TemporalConstraints(
+            earliest_start=datetime(2026, 9, 28, 13, 0, tzinfo=tz),
+            relative_after="lunch",
+            flexibility="constrained",
+        )
+        task = make_task("Study notes", task_type=TaskType.study, duration=60, temporal=tc)
+        result = SchedulingEngine().evaluate_best_slot_for_task(task, [], PlanningProfile(), now, tz)
+        assert result is not None
+        s = result.slot.start_time
+        assert s >= now, "must not be in the past"
+        assert s.hour >= 13, \
+            f"after lunch on any day must be >= 13:00, got {s.strftime('%H:%M')}"
+
+    def test_late_night_penalty_symmetry(self):
+        """
+        BUG 3 COROLLARY: Late-night penalty (>=20:00) must apply equally to today and tomorrow.
+        Without this, tomorrow's 20:00 was artificially cheaper than today's 20:00,
+        causing after-dinner tasks to always prefer tomorrow over today.
+        """
+        tz = ZoneInfo("Asia/Kolkata")
+        now = datetime(2026, 9, 28, 10, 0, tzinfo=tz)
+        # Task with no temporal constraints → should prefer daytime, not evening
+        task = make_task("Study DBMS", task_type=TaskType.study, duration=60)
+        result = SchedulingEngine().evaluate_best_slot_for_task(task, [], PlanningProfile(), now, tz)
+        assert result is not None
+        # Without user evening preference, daytime slot should always beat 20:00+ slot
+        assert result.slot.start_time.hour < 20 or result.slot.start_time.date() == now.date(), \
+            "Unconstrained task should prefer daytime over late evening"

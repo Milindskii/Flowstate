@@ -21,9 +21,9 @@ class ReadinessHeroCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: FlowColors.darkCard,
+        color: FlowColors.surface(context),
         borderRadius: FlowRadii.cardLargeRadius,
-        border: Border.all(color: FlowColors.darkBorder, width: 1.0),
+        border: Border.all(color: FlowColors.border(context), width: 1.0),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.04),
@@ -60,7 +60,7 @@ class ReadinessHeroCard extends StatelessWidget {
                         const SizedBox(height: 4),
                         Text(
                           'Based on your recent rhythm',
-                          style: FlowTypography.bodyMedium(color: FlowColors.textSecondary),
+                          style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
                         ),
                       ],
                     ),
@@ -105,7 +105,7 @@ class ReadinessHeroCard extends StatelessWidget {
                     Expanded(
                       child: Text(
                         readiness.statusMessage,
-                        style: FlowTypography.labelMedium(color: FlowColors.textPrimary).copyWith(
+                        style: FlowTypography.labelMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -121,7 +121,7 @@ class ReadinessHeroCard extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: FlowColors.darkSurface,
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: FlowColors.darkBorder, width: 1.0),
+                    border: Border.all(color: FlowColors.border(context), width: 1.0),
                   ),
                   child: Row(
                     children: [
@@ -133,7 +133,7 @@ class ReadinessHeroCard extends StatelessWidget {
                       const SizedBox(width: 10),
                       Text(
                         'Focus Window: ${readiness.focusWindowRange}',
-                        style: FlowTypography.labelMedium(color: FlowColors.textPrimary).copyWith(
+                        style: FlowTypography.labelMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
                           fontWeight: FontWeight.w600,
                         ),
                       ),

@@ -76,15 +76,15 @@ class ReadinessModel {
         ];
 
     final isCal = json['is_calibrated'] as bool? ?? (json['score'] != null);
-    final scoreVal = isCal ? (json['score'] as num?)?.toInt() : null;
+    final scoreVal = (json['score'] as num?)?.toInt();
 
     return ReadinessModel(
       score: scoreVal,
       maxScore: (json['max_score'] as num?)?.toInt() ?? 100,
       statusMessage: json['status_message'] as String? ??
-          (isCal ? 'Strong focus window active' : 'Learning your rhythm'),
+          (scoreVal != null ? 'Strong focus window active' : 'Learning your rhythm'),
       focusWindowRange: json['focus_window_range'] as String? ??
-          (isCal ? '9:30 AM – 11:30 AM' : "We're still learning when you work best."),
+          (scoreVal != null ? '9:30 AM – 11:30 AM' : "We're still learning when you work best."),
       explanation: json['explanation'] as String? ??
           "Your readiness is based on recent sleep, your usual rhythm, today's check-in, and what we've learned from your previous work sessions.",
       hourlyRhythm: rhythmList,

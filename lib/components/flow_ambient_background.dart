@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../theme/flow_colors.dart';
+import '../theme/flow_motion.dart';
 
 enum OnboardingVisualState {
   neutral,
@@ -42,16 +43,10 @@ class _FlowAmbientBackgroundState extends State<FlowAmbientBackground>
     );
   }
 
-  bool get _isTestOrReducedMotion {
-    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    final isTest = WidgetsBinding.instance.runtimeType.toString().contains('Test');
-    return reduceMotion || isTest;
-  }
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_isTestOrReducedMotion) {
+    if (!FlowMotion.loopsEnabled(context)) {
       _controller.stop();
     } else if (!_controller.isAnimating) {
       _controller.repeat();
@@ -66,7 +61,7 @@ class _FlowAmbientBackgroundState extends State<FlowAmbientBackground>
 
   @override
   Widget build(BuildContext context) {
-    final reduceMotion = _isTestOrReducedMotion;
+    final animate = FlowMotion.loopsEnabled(context);
     final isDark = FlowColors.isDark(context);
     final baseColor = isDark ? FlowColors.bgDark : const Color(0xFFF8FAFC);
 
@@ -76,28 +71,30 @@ class _FlowAmbientBackgroundState extends State<FlowAmbientBackground>
         // Primary Base Surface (Slate 50 in light, Obsidian in dark)
         Container(color: baseColor),
 
-        // Animated or static light field
-        if (reduceMotion)
-          CustomPaint(
-            painter: _AmbientPainter(
-              progress: 0.0,
-              visualState: widget.visualState,
-              isDark: isDark,
-            ),
-          )
-        else
-          AnimatedBuilder(
-            animation: _controller,
-            builder: (context, _) {
-              return CustomPaint(
-                painter: _AmbientPainter(
-                  progress: _controller.value,
-                  visualState: widget.visualState,
-                  isDark: isDark,
+        // Animated or static light field. Its own repaint layer, so each animation frame
+        // repaints only the light field and never the tab content stacked above it (spec §17 P8).
+        RepaintBoundary(
+          child: animate
+              ? AnimatedBuilder(
+                  animation: _controller,
+                  builder: (context, _) {
+                    return CustomPaint(
+                      painter: _AmbientPainter(
+                        progress: _controller.value,
+                        visualState: widget.visualState,
+                        isDark: isDark,
+                      ),
+                    );
+                  },
+                )
+              : CustomPaint(
+                  painter: _AmbientPainter(
+                    progress: 0.0,
+                    visualState: widget.visualState,
+                    isDark: isDark,
+                  ),
                 ),
-              );
-            },
-          ),
+        ),
 
         if (widget.child != null) widget.child!,
       ],

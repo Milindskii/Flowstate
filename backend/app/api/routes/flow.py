@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 
 from ...db.session import get_db
-from ...core.security import get_current_user
+from ...core.config import settings
+from ...core.security import get_current_user, DEV_ENVIRONMENTS
 from ...models.user import User
 from ...schemas.flow import (
     FlowOverviewResponse,
@@ -20,6 +21,8 @@ from ...schemas.flow import (
     ShopItemResponse,
     PurchaseCompanionResponse,
     UseShieldResponse,
+    DayCompleteClaimRequest,
+    DayCompleteClaimResponse,
 )
 from ...services.flow_service import FlowService
 
@@ -74,7 +77,8 @@ def complete_focus_session(
         task_completed=request.task_completed,
         feeling_score=request.feeling_score,
         idempotency_key=request.idempotency_key,
-        test_mode=test_mode,
+        # Client-controlled: honoured only in development/test, never in a deployed environment.
+        test_mode=test_mode and settings.ENVIRONMENT.strip().lower() in DEV_ENVIRONMENTS,
     )
 
 @router.post("/session/{session_id}/abandon", response_model=AbandonSessionResponse)
@@ -135,6 +139,36 @@ def claim_daily_quest(
     Protected against duplicate claims.
     """
     return flow_service.claim_daily_quest(db, current_user, quest_id)
+
+@router.post("/day-complete/claim", response_model=DayCompleteClaimResponse)
+def claim_day_complete(
+    req: DayCompleteClaimRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    The trophy at the end of a finished day path: Noya earns XP once per local date, only when every task the
+    day owns is completed (the server checks; the app only asks). A repeated claim returns already_claimed.
+    """
+    from datetime import datetime as _dt
+    from ...services.calendar_service import CalendarService
+
+    calendar = CalendarService()
+    tz, _ = calendar.resolve(current_user, req.timezone)
+    now_local = _dt.now(tz)
+    try:
+        day = _dt.strptime(req.date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={"code": "invalid_date", "message": "Use a YYYY-MM-DD date."})
+    state = calendar.day_complete_status(db, current_user, day, tz, now_local)
+    if not state.eligible:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail={"code": "day_not_complete", "message": "Finish every task of the day first."})
+    awarded, companion, leveled_up, already = flow_service.claim_day_complete_xp(db, current_user, day.isoformat(), state.xp)
+    return DayCompleteClaimResponse(
+        date=day.isoformat(), claimed=True, already_claimed=already, xp_awarded=awarded,
+        companion_xp=companion.companion_xp, level=companion.level, leveled_up=leveled_up)
 
 @router.get("/shop", response_model=List[ShopItemResponse])
 def get_shop_catalog(

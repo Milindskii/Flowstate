@@ -190,7 +190,13 @@ class CompanionAnimalInfo {
     evolutionLine: ['Kitten Mochi', 'Whiskers Mochi', 'Calico Mochi', 'Astra Cat', 'Celestial Neko'],
   );
 
-  static const List<CompanionAnimalInfo> all = [fox, otter, owl, capybara];
+  static const List<CompanionAnimalInfo> all = [fox, otter, owl, capybara, cat];
+
+  /// Companions that are ready today. The others are shown as "Coming soon": they cannot be bought, but one a
+  /// user already owns stays selectable.
+  static const Set<String> availableSpecies = {'fox'};
+
+  static bool isAvailable(String species) => availableSpecies.contains(species.toLowerCase().trim());
 
   static CompanionAnimalInfo fromSpecies(String species) {
     switch (species.toLowerCase()) {

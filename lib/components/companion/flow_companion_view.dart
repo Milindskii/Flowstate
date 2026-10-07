@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/flow_companion.dart';
 import '../../theme/flow_colors.dart';
+import '../noya_motion_view.dart';
 import '../../theme/flow_typography.dart';
 import 'companion_graphic.dart';
 import 'flow_companion_animation_controller.dart';
@@ -41,39 +42,13 @@ class FlowCompanionView extends StatefulWidget {
   State<FlowCompanionView> createState() => _FlowCompanionViewState();
 }
 
-class _FlowCompanionViewState extends State<FlowCompanionView>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _pulseController;
-  late Animation<double> _pulseAnimation;
-
+class _FlowCompanionViewState extends State<FlowCompanionView> {
+  // Noya's motion (focus bob, idle breath, reactions) lives in NoyaMotionView, bounded per spec
+  // §17; this card no longer runs its own ±4% scale pulse (spec §6.8).
   @override
   void initState() {
     super.initState();
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2400),
-    );
-    _pulseAnimation = Tween<double>(begin: 0.96, end: 1.04).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
-    );
-
     widget.controller?.addListener(_onControllerChange);
-  }
-
-  bool get _isTestOrReducedMotion {
-    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    final isTest = WidgetsBinding.instance.runtimeType.toString().contains('Test');
-    return reduceMotion || isTest;
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_isTestOrReducedMotion) {
-      _pulseController.stop();
-    } else if (!_pulseController.isAnimating) {
-      _pulseController.repeat(reverse: true);
-    }
   }
 
   @override
@@ -92,7 +67,6 @@ class _FlowCompanionViewState extends State<FlowCompanionView>
   @override
   void dispose() {
     widget.controller?.removeListener(_onControllerChange);
-    _pulseController.dispose();
     super.dispose();
   }
 
@@ -136,7 +110,6 @@ class _FlowCompanionViewState extends State<FlowCompanionView>
             ? CompanionAnimState.evolution
             : CompanionAnimState.idle);
 
-    final bool reduceMotion = MediaQuery.of(context).disableAnimations;
     final stateAccent = _getStateAccent(context, state);
     final size = widget.size;
     final isDark = FlowColors.isDark(context);
@@ -151,13 +124,7 @@ class _FlowCompanionViewState extends State<FlowCompanionView>
           mainAxisSize: MainAxisSize.min,
           children: [
             // Character Container
-            AnimatedBuilder(
-              animation: _pulseAnimation,
-              builder: (context, child) {
-                final scale = reduceMotion ? 1.0 : (state == CompanionAnimState.focusing ? _pulseAnimation.value : 1.0);
-                return Transform.scale(
-                  scale: scale,
-                  child: Container(
+            Container(
                     width: size,
                     height: size,
                     decoration: widget.frameless
@@ -207,6 +174,8 @@ class _FlowCompanionViewState extends State<FlowCompanionView>
                             species: widget.companion.species,
                             size: widget.frameless ? size : size * 0.90,
                             state: state,
+                            mood: state == CompanionAnimState.focusing ? NoyaMood.focusing : NoyaMood.rest,
+                            reactions: widget.controller?.reactions,
                           ),
                         ),
 
@@ -260,9 +229,6 @@ class _FlowCompanionViewState extends State<FlowCompanionView>
                           ),
                       ],
                     ),
-                  ),
-                );
-              },
             ),
 
             if (widget.showStageBadge) ...[

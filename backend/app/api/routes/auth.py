@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import hmac
 from typing import Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, status, HTTPException
@@ -22,6 +25,7 @@ from ...schemas.user import (
     GrievanceCreateRequest,
     GrievanceResponse,
 )
+from ...core.config import settings
 from ...services.user_service import UserService
 
 router = APIRouter(prefix="/auth", tags=["Authentication & Profile"])
@@ -36,11 +40,19 @@ def get_current_user_profile(
     Returns the authenticated user profile and circadian rhythm preferences.
     User identity is authenticated via Supabase JWT.
     """
-    is_completed = bool(current_user.onboarding_completed or (current_user.readiness_profile is not None))
-    if is_completed and not current_user.onboarding_completed:
-        current_user.onboarding_completed = True
-        db.commit()
-        db.refresh(current_user)
+    return current_user
+
+@router.post("/onboarding-complete", response_model=UserResponse)
+def mark_user_onboarding_completed(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Explicitly marks onboarding completed for the authenticated user.
+    """
+    current_user.onboarding_completed = True
+    db.commit()
+    db.refresh(current_user)
     return current_user
 
 @router.patch("/preferences", response_model=UserPreferencesSchema)
@@ -89,26 +101,49 @@ def update_email_preferences(
     db.refresh(current_user)
     return current_user
 
+def _b64(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def _unsubscribe_mac(payload: str) -> str:
+    key = hashlib.sha256(b"flowstate-unsubscribe-v1:" + settings.SUPABASE_JWT_SECRET.encode()).digest()
+    return _b64(hmac.new(key, payload.encode(), hashlib.sha256).digest()[:16])
+
+
+def make_unsubscribe_token(email: str) -> str:
+    """Opaque, tamper-proof token for the one-click unsubscribe link (embed it in outgoing emails)."""
+    payload = _b64(email.strip().lower().encode())
+    return f"{payload}.{_unsubscribe_mac(payload)}"
+
+
+def _email_from_unsubscribe_token(token: str) -> Optional[str]:
+    payload, _, mac = (token or "").partition(".")
+    if not payload or not mac or not hmac.compare_digest(mac, _unsubscribe_mac(payload)):
+        return None
+    try:
+        return base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)).decode()
+    except Exception:
+        return None
+
+
 @router.get("/unsubscribe")
 @router.post("/unsubscribe")
 def unsubscribe_email(
-    email: Optional[str] = Query(None, description="User email to unsubscribe"),
+    token: Optional[str] = Query(None, description="Signed unsubscribe token from the email link"),
     db: Session = Depends(get_db),
 ):
     """
-    One-click unsubscribe endpoint complying with RFC 8058 and CAN-SPAM.
-    Disables marketing emails without requiring login.
+    One-click unsubscribe (RFC 8058 / CAN-SPAM). Requires the signed token from the email, so nobody can
+    unsubscribe an address they do not control; the response never echoes the address.
     """
+    email = _email_from_unsubscribe_token(token or "")
     if not email:
-        return {"status": "ok", "message": "Unsubscribe requested. Please provide a valid email."}
-    user = db.query(User).filter(User.email == email.strip().lower()).first()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired unsubscribe link.")
+    user = db.query(User).filter(User.email == email).first()
     if user:
         user.marketing_emails_enabled = False
         db.commit()
-    return {
-        "status": "ok",
-        "message": f"Successfully unsubscribed {email} from Flowstate marketing & digest emails.",
-    }
+    return {"status": "ok", "message": "You have been unsubscribed from Flowstate marketing & digest emails."}
 
 @router.post("/export-data", response_model=UserExportDataResponse)
 def export_user_data(
@@ -250,7 +285,11 @@ def submit_privacy_grievance(
     if credentials and credentials.credentials:
         payload = decode_access_token(credentials.credentials)
         if payload:
-            user_id = payload.get("sub")
+            sub = payload.get("sub")
+            # Link the ticket only to an account that exists (a brand-new session may not have a users row yet);
+            # the FK would otherwise reject the insert on PostgreSQL. The ticket is still recorded without a link.
+            if sub and db.query(User.id).filter(User.id == sub).first():
+                user_id = sub
             if not email:
                 email = payload.get("email")
 

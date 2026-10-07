@@ -203,6 +203,7 @@ class _FocusRitualScreenState extends State<FocusRitualScreen>
   // Completion state
   bool _isComplete = false;
   bool _taskFinishedByUser = false;
+  bool _hasToggledCompletion = false;
   int? _xpEarned;
   int? _flowEarned;
   String? _completionRhythmNote;
@@ -591,8 +592,12 @@ class _FocusRitualScreenState extends State<FocusRitualScreen>
       },
       child: Scaffold(
         backgroundColor: Colors.transparent,
+        // The ambient background runs under the app bar so no light root surface shows through
+        // in dark mode.
+        extendBodyBehindAppBar: true,
         appBar: AppBar(
           backgroundColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
           elevation: 0,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
@@ -1153,20 +1158,29 @@ class _FocusRitualScreenState extends State<FocusRitualScreen>
                     feeling: feedback.feeling,
                     durationFeedback: feedback.durationFeedback,
                     blockerNote: feedback.blockerNote,
+                    energyScore: feedback.energyScore,
+                    focusScore: feedback.focusScore,
+                    difficultyScore: feedback.difficultyScore,
+                    distractionScore: feedback.distractionScore,
+                    completedAt: feedback.completedAt,
+                    durationMeasured: true, // the focus timer measured this session
                   );
-                  if (_taskFinishedByUser) {
+                  if (_taskFinishedByUser && !_hasToggledCompletion) {
+                    _hasToggledCompletion = true;
                     appState.toggleTaskCompletion(widget.task!.id);
                   }
                 } catch (_) {}
-                Navigator.of(context).pop();
               },
               onDismiss: () {
-                if (_taskFinishedByUser) {
+                if (_taskFinishedByUser && !_hasToggledCompletion) {
                   try {
+                    _hasToggledCompletion = true;
                     Provider.of<AppStateProvider>(context, listen: false).toggleTaskCompletion(widget.task!.id);
                   } catch (_) {}
                 }
-                Navigator.of(context).pop();
+                if (mounted && Navigator.of(context).canPop()) {
+                  Navigator.of(context).pop();
+                }
               },
             ),
           ],

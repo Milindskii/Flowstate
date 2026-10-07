@@ -1,9 +1,9 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import '../components/flow_logo.dart';
+import 'noya_companion_view.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
-import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
 
 /// Honest "Building Your Starting Rhythm" View
@@ -116,42 +116,8 @@ class _RoutineBuildingViewState extends State<RoutineBuildingView>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Calm Circular Graphic with Flow Logo
-            SizedBox(
-              width: 130,
-              height: 130,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  RotationTransition(
-                    turns: _circleAnimController,
-                    child: Container(
-                      width: 120,
-                      height: 120,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(FlowRadii.cardLarge),
-                        border: Border.all(
-                          color: FlowColors.cyan.withValues(alpha: 0.25),
-                          width: 2.5,
-                        ),
-                      ),
-                      child: Align(
-                        alignment: Alignment.topCenter,
-                        child: Container(
-                          width: 10,
-                          height: 10,
-                          decoration: const BoxDecoration(
-                            color: FlowColors.cyan,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const FlowLogo(size: 54),
-                ],
-              ),
-            ),
+            // Subtle looping Noya animation appropriate for building rhythm
+            _buildNoyaLoadingAnimation(),
 
             const SizedBox(height: 36),
 
@@ -227,6 +193,69 @@ class _RoutineBuildingViewState extends State<RoutineBuildingView>
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildNoyaLoadingAnimation() {
+    NoyaState currentNoyaState;
+    if (_activeStep <= 1) {
+      currentNoyaState = NoyaState.thinking;
+    } else if (_activeStep == 2) {
+      currentNoyaState = NoyaState.idle;
+    } else {
+      currentNoyaState = NoyaState.encouraging;
+    }
+
+    return AnimatedBuilder(
+      animation: _circleAnimController,
+      builder: (context, child) {
+        final t = _circleAnimController.value;
+        // Subtle horizontal pacing: smooth ease back and forth (-8 to +8 px)
+        final dx = math.sin(t * 2 * math.pi) * 8.0;
+        // Subtle vertical walking/stepping bob (0 to -2.5 px)
+        final dy = -math.sin(t * 4 * math.pi).abs() * 2.5;
+        // Ground shadow breathes slightly with step
+        final shadowScale = 0.93 + 0.07 * (1.0 - (dy / -2.5).clamp(0.0, 1.0));
+
+        return SizedBox(
+          width: 140,
+          height: 140,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // Grounded soft oval shadow beneath Noya
+              Positioned(
+                bottom: 12,
+                child: Transform.scale(
+                  scaleX: shadowScale,
+                  scaleY: shadowScale * 0.9,
+                  child: Container(
+                    width: 72,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: FlowColors.softShadow(context),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
+              // Noya pacing thoughtfully with gentle stepping
+              Positioned(
+                bottom: 18,
+                child: Transform.translate(
+                  offset: Offset(dx, dy),
+                  child: NoyaCompanionView(
+                    state: currentNoyaState,
+                    size: 100,
+                    showAmbientGlow: true,
+                    semanticLabel: 'Noya structuring and building your starting rhythm',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

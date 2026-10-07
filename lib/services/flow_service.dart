@@ -8,6 +8,10 @@ import 'api_service.dart';
 /// Strictly enforces:
 /// - Offline is READ-ONLY (cached companion & streak display only)
 /// - Server owns session lifecycle & rewards
+/// Dev-only shortcut for short focus sessions (`--dart-define=FLOW_TEST_MODE=true`). The server ignores it
+/// outside development, and release builds never define it.
+const bool _flowTestMode = bool.fromEnvironment('FLOW_TEST_MODE');
+
 class FlowService {
   static const String _cacheKey = 'flowstate_flow_overview_cache';
   final ApiService _api;
@@ -69,7 +73,7 @@ class FlowService {
     String? idempotencyKey,
   }) async {
     final res = await _api.post(
-      '/api/v1/flow/session/$sessionId/complete?test_mode=true',
+      '/api/v1/flow/session/$sessionId/complete${_flowTestMode ? '?test_mode=true' : ''}',
       body: {
         'task_completed': taskCompleted,
         if (feelingScore != null) 'feeling_score': feelingScore,

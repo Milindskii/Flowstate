@@ -19,7 +19,7 @@ from .flow_progression import (
     FlowInventoryItem,
     FlowWeeklyProgress,
 )
-from .ai_usage import AIUsageRecord, AIPlanningRequestCache
+from .ai_usage import AIUsageRecord, AIPlanningRequestCache, AIPlanningAttempt, AIRequest, AIUsagePeriod, RateLimitWindow
 
 __all__ = [
     "User",
@@ -51,6 +51,11 @@ __all__ = [
     "PrivacyGrievance",
     "AIUsageRecord",
     "AIPlanningRequestCache",
+    "AIPlanningAttempt",
+    "PlanApplication",
+    "TaskDeviation",
 ]
 
 from .privacy_grievance import PrivacyGrievance
+from .plan_application import PlanApplication
+from .task_deviation import TaskDeviation

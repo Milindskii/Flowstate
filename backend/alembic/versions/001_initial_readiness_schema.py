@@ -1,7 +1,7 @@
 """Initial readiness, personalization, and evaluation schema
 
 Revision ID: 001_readiness
-Revises: 
+Revises: 000_base_schema
 Create Date: 2026-09-21 20:50:00.000000
 
 """
@@ -10,7 +10,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = '001_readiness'
-down_revision: Union[str, None] = None
+down_revision: Union[str, None] = '000_base_schema'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

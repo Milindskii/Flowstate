@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 
 /// Flowstate Clean & Focused Circadian Time Control with Circular Timer Loading
@@ -159,10 +160,10 @@ class _FlowTimePickerState extends State<FlowTimePicker> with SingleTickerProvid
             // 3. Simple mode indicator hint
             Text(
               _selectingHours ? 'Select Hour on Clock' : 'Select Minute on Clock',
-              style: const TextStyle(
-                fontSize: 12,
+              style: TextStyle(
+                fontSize: 12.5,
                 fontWeight: FontWeight.w500,
-                color: Color(0xFF94A3B8),
+                color: FlowColors.textMutedOf(context),
                 letterSpacing: 0.3,
               ),
             ),
@@ -194,10 +195,10 @@ class _FlowTimePickerState extends State<FlowTimePicker> with SingleTickerProvid
             decoration: BoxDecoration(
               color: _selectingHours
                   ? _accentColor.withValues(alpha: 0.12)
-                  : const Color(0xFFF8FAFC),
+                  : FlowColors.surfaceElevated(context),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: _selectingHours ? _accentColor : const Color(0xFFE2E8F0),
+                color: _selectingHours ? _accentColor : FlowColors.border(context),
                 width: 1.8,
               ),
             ),
@@ -206,17 +207,17 @@ class _FlowTimePickerState extends State<FlowTimePicker> with SingleTickerProvid
               style: TextStyle(
                 fontSize: 32,
                 fontWeight: FontWeight.w800,
-                color: _selectingHours ? _accentColor : const Color(0xFF0F172A),
+                color: _selectingHours ? _accentColor : FlowColors.textPrimaryOf(context),
               ),
             ),
           ),
         ),
 
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 6),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
           child: Text(
             ':',
-            style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8)),
+            style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800, color: FlowColors.textMutedOf(context)),
           ),
         ),
 
@@ -232,10 +233,10 @@ class _FlowTimePickerState extends State<FlowTimePicker> with SingleTickerProvid
             decoration: BoxDecoration(
               color: !_selectingHours
                   ? _accentColor.withValues(alpha: 0.12)
-                  : const Color(0xFFF8FAFC),
+                  : FlowColors.surfaceElevated(context),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: !_selectingHours ? _accentColor : const Color(0xFFE2E8F0),
+                color: !_selectingHours ? _accentColor : FlowColors.border(context),
                 width: 1.8,
               ),
             ),
@@ -244,7 +245,7 @@ class _FlowTimePickerState extends State<FlowTimePicker> with SingleTickerProvid
               style: TextStyle(
                 fontSize: 32,
                 fontWeight: FontWeight.w800,
-                color: !_selectingHours ? _accentColor : const Color(0xFF0F172A),
+                color: !_selectingHours ? _accentColor : FlowColors.textPrimaryOf(context),
               ),
             ),
           ),
@@ -370,15 +371,15 @@ class _FlowTimePickerState extends State<FlowTimePicker> with SingleTickerProvid
       width: 240,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: FlowColors.surface(context),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
+        border: Border.all(color: FlowColors.border(context), width: 1.2),
       ),
       child: Column(
         children: [
-          const Text(
+          Text(
             'Type time directly',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: FlowColors.textSecondaryOf(context)),
           ),
           const SizedBox(height: 8),
           Row(

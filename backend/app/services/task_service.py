@@ -1,8 +1,8 @@
 from typing import Optional, List, Tuple
 from datetime import datetime, time, timezone
-from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
+from ..core.timezone import local_date, owning_date, resolve_timezone, resolve_user_timezone
 from ..models.task import Task, TaskStatus, TaskType
 from ..models.user import User
 from ..schemas.task import TaskCreate, TaskUpdate, TaskComplete
@@ -18,10 +18,7 @@ class TaskService:
         Calculates the start and end of 'today' according to the user's configured timezone,
         returned as UTC datetime objects for accurate database querying.
         """
-        try:
-            tz = ZoneInfo(user_timezone_str)
-        except Exception:
-            tz = timezone.utc
+        tz, _ = resolve_timezone(user_timezone_str, None)
 
         now_in_user_tz = datetime.now(tz)
         start_of_day_local = datetime.combine(now_in_user_tz.date(), time.min, tzinfo=tz)
@@ -44,8 +41,18 @@ class TaskService:
             )
         return task
 
-    def create_task(self, db: Session, user: User, task_in: TaskCreate) -> Task:
+    def create_task(self, db: Session, user: User, task_in: TaskCreate, timezone_name: Optional[str] = None) -> Task:
         task_data = task_in.model_dump()
+        tz, _ = resolve_user_timezone(user, timezone_name)
+        # planned_date is always explicit on a new row: the slot's day, else the given date, else the
+        # deadline's day ("due Friday" belongs to Friday), else the user's local today at creation.
+        # It is stored once and never re-derived later from created_at / completed_at.
+        deadline = task_data.get("deadline_at")
+        task_data["planned_date"] = (
+            owning_date(task_data.get("planned_date"), task_data.get("scheduled_start"), tz)
+            or (local_date(deadline, tz) if deadline is not None else None)
+            or datetime.now(tz).date()
+        )
         task = Task(user_id=user.id, **task_data)
         return self.task_repo.create(db, task)
 
@@ -72,15 +79,38 @@ class TaskService:
             offset=safe_offset,
         )
 
-    def list_today_tasks(self, db: Session, user: User) -> List[Task]:
-        user_tz = user.preferences.timezone if user.preferences else "UTC"
-        start_of_day, end_of_day = self.get_user_day_bounds(user_tz)
-        return self.task_repo.list_today_tasks(db, user.id, start_of_day, end_of_day)
+    def list_today_tasks(self, db: Session, user: User, timezone_name: Optional[str] = None) -> List[Task]:
+        tz, tz_name = resolve_user_timezone(user, timezone_name)
+        start_of_day, end_of_day = self.get_user_day_bounds(tz_name)
+        return self.task_repo.list_today_tasks(db, user.id, datetime.now(tz).date(), start_of_day, end_of_day)
 
-    def update_task(self, db: Session, task_id: str, user_id: str, task_update: TaskUpdate) -> Task:
-        task = self.get_task_or_404(db, task_id, user_id)
+    def update_task(self, db: Session, task_id: str, user: User, task_update: TaskUpdate) -> Task:
+        task = self.get_task_or_404(db, task_id, user.id)
         update_data = task_update.model_dump(exclude_unset=True)
+        if task.is_commitment:
+            # A commitment stays a locked block of time: it can be retitled or moved, never unlocked or unscheduled.
+            if update_data.get("time_locked") is False or (
+                "scheduled_start" in update_data and update_data["scheduled_start"] is None
+            ) or ("scheduled_end" in update_data and update_data["scheduled_end"] is None):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"code": "commitment_locked",
+                            "message": f"“{task.title}” is a fixed commitment, so its time stays locked."})
+        # An explicit reschedule: a new slot moves ownership to the slot's local day (clients send
+        # planned_date=null alongside a timed reschedule). Clearing the slot keeps the planned day.
+        if update_data.get("scheduled_start") is not None:
+            tz, _ = resolve_user_timezone(user)
+            update_data["planned_date"] = owning_date(None, update_data["scheduled_start"], tz)
         return self.task_repo.update(db, task, update_data)
+
+    @staticmethod
+    def _refuse_commitment(task: Task) -> None:
+        """A commitment (going out) is a block of time, not work: it can't be started or completed."""
+        if task.is_commitment:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "commitment_not_completable",
+                        "message": f"\u201c{task.title}\u201d is a fixed commitment, not a task to complete."})
 
     def start_task(self, db: Session, task_id: str, user_id: str) -> Task:
         """
@@ -90,6 +120,7 @@ class TaskService:
         - completed / cancelled / archived -> 400 Bad Request
         """
         task = self.get_task_or_404(db, task_id, user_id)
+        self._refuse_commitment(task)
 
         if task.status == TaskStatus.in_progress:
             return task
@@ -124,6 +155,7 @@ class TaskService:
         - cancelled / archived -> 400 Bad Request
         """
         task = self.get_task_or_404(db, task_id, user_id)
+        self._refuse_commitment(task)
 
         if task.status == TaskStatus.completed:
             return task

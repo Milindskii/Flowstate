@@ -6,6 +6,7 @@ import 'core/config/env_config.dart';
 import 'providers/app_state_provider.dart';
 import 'providers/theme_provider.dart';
 import 'providers/flow_provider.dart';
+import 'services/api_service.dart';
 import 'screens/splash_screen.dart';
 import 'theme/flow_theme.dart';
 
@@ -33,12 +34,16 @@ Future<void> main() async {
     ),
   );
 
+  final sharedApi = ApiService();
+  final appState = AppStateProvider(customApi: sharedApi);
+  final flowProvider = FlowProvider(api: sharedApi);
+
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AppStateProvider()),
+        ChangeNotifierProvider.value(value: appState),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
-        ChangeNotifierProvider(create: (_) => FlowProvider()),
+        ChangeNotifierProvider.value(value: flowProvider),
       ],
       child: const FlowstateApp(),
     ),

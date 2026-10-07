@@ -131,6 +131,26 @@ class MockP1ApiService extends ApiService {
         },
       ];
     }
+    // Build My Day confirm is now ONE atomic, idempotent request (previously one POST per task).
+    if (endpoint == '/api/v1/tasks/batch-create-and-schedule') {
+      final items = ((body as Map)['tasks'] as List).cast<Map>();
+      final created = <Map<String, dynamic>>[];
+      for (final it in items) {
+        final m = Map<String, dynamic>.from(it);
+        m['id'] = 'task-uuid-${dbTasks.length + 1}';
+        m['status'] = 'todo';
+        m['created_at'] = DateTime.now().toIso8601String();
+        m['updated_at'] = DateTime.now().toIso8601String();
+        dbTasks.add(m);
+        created.add(m);
+      }
+      return {
+        'created_count': created.length,
+        'tasks': created,
+        'client_refs': items.map((i) => i['client_ref']).toList(),
+        'message': 'ok',
+      };
+    }
     if (endpoint == '/api/v1/tasks') {
       final taskMap = Map<String, dynamic>.from(body as Map);
       final realId = 'task-uuid-${dbTasks.length + 1}';

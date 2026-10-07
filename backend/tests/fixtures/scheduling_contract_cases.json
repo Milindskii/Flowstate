@@ -1,0 +1,73 @@
+{
+  "_comment": "Shared by backend/tests/test_scheduling_contract_fixtures.py (planner) and test/scheduling_contract_fixtures_test.dart (Dart engine). Wall-clock strings are in the user's zone (tz). Expectations are INVARIANTS (no overlap, not in the past, user-fixed times unchanged, deadlines respected), never exact slots.",
+  "tz": "Asia/Kolkata",
+  "cases": [
+    {
+      "name": "flexible_only_morning",
+      "now": "2026-10-05T09:00:00",
+      "tasks": [
+        {"id": "a", "title": "Write report", "minutes": 60, "priority": "high", "type": "deep_work"},
+        {"id": "b", "title": "Email batch", "minutes": 30, "priority": "medium", "type": "admin"},
+        {"id": "c", "title": "Gym", "minutes": 60, "priority": "low", "type": "physical"}
+      ]
+    },
+    {
+      "name": "fixed_event_plus_flexible",
+      "now": "2026-10-05T09:00:00",
+      "tasks": [
+        {"id": "d", "title": "Dentist", "minutes": 45, "type": "meeting", "locked": true, "start": "2026-10-05T18:00:00"},
+        {"id": "a", "title": "Write report", "minutes": 120, "priority": "high", "type": "deep_work"},
+        {"id": "b", "title": "Study DSA", "minutes": 90, "priority": "medium", "type": "study"}
+      ]
+    },
+    {
+      "name": "explicit_time_listed_after_flexible",
+      "now": "2026-10-05T08:00:00",
+      "tasks": [
+        {"id": "a", "title": "Write report", "minutes": 60, "priority": "high", "type": "deep_work"},
+        {"id": "b", "title": "Email batch", "minutes": 45, "priority": "medium", "type": "admin"},
+        {"id": "m", "title": "Call mom", "minutes": 30, "type": "personal", "locked": true, "start": "2026-10-05T10:00:00"}
+      ]
+    },
+    {
+      "name": "deadline_today",
+      "now": "2026-10-05T09:00:00",
+      "tasks": [
+        {"id": "a", "title": "Submit assignment", "minutes": 90, "priority": "urgent", "type": "study", "deadline": "2026-10-05T13:00:00"},
+        {"id": "b", "title": "Email batch", "minutes": 30, "priority": "medium", "type": "admin"}
+      ]
+    },
+    {
+      "name": "late_evening",
+      "now": "2026-10-05T22:15:00",
+      "tasks": [
+        {"id": "a", "title": "Write report", "minutes": 60, "priority": "medium", "type": "deep_work"},
+        {"id": "b", "title": "Email batch", "minutes": 30, "priority": "low", "type": "admin"}
+      ]
+    },
+    {
+      "name": "overloaded_day",
+      "now": "2026-10-05T09:15:00",
+      "tasks": [
+        {"id": "t1", "title": "Task 1", "minutes": 90, "priority": "high", "type": "deep_work"},
+        {"id": "t2", "title": "Task 2", "minutes": 90, "priority": "medium", "type": "study"},
+        {"id": "t3", "title": "Task 3", "minutes": 90, "priority": "medium", "type": "study"},
+        {"id": "t4", "title": "Task 4", "minutes": 90, "priority": "low", "type": "admin"},
+        {"id": "t5", "title": "Task 5", "minutes": 90, "priority": "low", "type": "admin"},
+        {"id": "t6", "title": "Task 6", "minutes": 90, "priority": "low", "type": "admin"},
+        {"id": "t7", "title": "Task 7", "minutes": 90, "priority": "low", "type": "admin"},
+        {"id": "t8", "title": "Task 8", "minutes": 90, "priority": "low", "type": "admin"}
+      ]
+    },
+    {
+      "name": "two_user_fixed_times_do_not_overlap_flexible",
+      "now": "2026-10-05T08:00:00",
+      "tasks": [
+        {"id": "f1", "title": "Standup", "minutes": 30, "type": "meeting", "locked": true, "start": "2026-10-05T09:30:00"},
+        {"id": "f2", "title": "Client call", "minutes": 60, "type": "meeting", "locked": true, "start": "2026-10-05T14:00:00"},
+        {"id": "a", "title": "Write report", "minutes": 120, "priority": "high", "type": "deep_work"},
+        {"id": "b", "title": "Gym", "minutes": 60, "priority": "low", "type": "physical"}
+      ]
+    }
+  ]
+}

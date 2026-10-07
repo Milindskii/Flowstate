@@ -69,13 +69,21 @@ class ReadinessService:
             if onboarding.adaptive_followup_answers else "quick_recovery"
         ) or "quick_recovery"
 
+        p_start_h = _to_hours(onboarding.preferred_peak_start)
+        if p_start_h >= 13.0:
+            dip_start = "11:00"
+            dip_end = "12:30"
+        else:
+            dip_start = "14:00"
+            dip_end = "15:30"
+
         profile = self.repo.create_or_update_profile(
             db=db,
             user_id=user_id,
             preferred_peak_start=onboarding.preferred_peak_start,
             preferred_peak_end=onboarding.preferred_peak_end,
-            preferred_dip_start="14:00",
-            preferred_dip_end="15:30",
+            preferred_dip_start=dip_start,
+            preferred_dip_end=dip_end,
             typical_sleep_minutes=480,
             weekday_wake_time=onboarding.weekday_wake_time,
             weekend_wake_time=onboarding.weekend_wake_time,
@@ -98,7 +106,9 @@ class ReadinessService:
             db.commit()
 
         # Update user timezone preference if provided
-        if onboarding.timezone:
+        from ..core.timezone import is_valid_iana
+
+        if onboarding.timezone and is_valid_iana(onboarding.timezone):
             user_prefs = db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
             if user_prefs:
                 user_prefs.timezone = onboarding.timezone
@@ -113,6 +123,7 @@ class ReadinessService:
             energy_rating=4,
             focus_rating=4,
             source=ObservationSource.self_report.value,
+            provenance="onboarding",  # a questionnaire baseline, never evidence about real sessions
         )
         self.repo.create_observation(db, baseline_obs)
 

@@ -38,8 +38,8 @@ class CompactReadinessCard extends StatelessWidget {
                   child: Container(
                     width: 36,
                     height: 4,
-                    decoration: const BoxDecoration(
-                      color: FlowColors.darkBorder,
+                    decoration: BoxDecoration(
+                      color: FlowColors.border(context),
                       borderRadius: FlowRadii.pillRadius,
                     ),
                   ),
@@ -53,7 +53,7 @@ class CompactReadinessCard extends StatelessWidget {
                       'Why this readiness estimate?',
                       style: FlowTypography.titleMedium().copyWith(
                         fontWeight: FontWeight.w700,
-                        color: FlowColors.textPrimary,
+                        color: FlowColors.textPrimaryOf(context),
                       ),
                     ),
                   ],
@@ -63,7 +63,7 @@ class CompactReadinessCard extends StatelessWidget {
                   readiness.explanation.isNotEmpty
                       ? readiness.explanation
                       : 'Your readiness is based on recent sleep, previous cognitive performance, and historical circadian focus rhythm.',
-                  style: FlowTypography.bodyMedium(color: FlowColors.textSecondary),
+                  style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
                 ),
                 const SizedBox(height: 16),
                 ...readiness.factors.map(
@@ -77,7 +77,7 @@ class CompactReadinessCard extends StatelessWidget {
                         Expanded(
                           child: Text(
                             factor,
-                            style: FlowTypography.bodyMedium(color: FlowColors.textPrimary),
+                            style: FlowTypography.bodyMedium(color: FlowColors.textPrimaryOf(context)),
                           ),
                         ),
                       ],
@@ -88,20 +88,20 @@ class CompactReadinessCard extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: FlowColors.darkCardElevated,
+                    color: FlowColors.surfaceElevated(context),
                     borderRadius: FlowRadii.inputRadius,
-                    border: Border.all(color: FlowColors.darkBorder),
+                    border: Border.all(color: FlowColors.border(context)),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.info_outline_rounded, color: FlowColors.textMuted, size: 16),
+                      Icon(Icons.info_outline_rounded, color: FlowColors.textMutedOf(context), size: 16),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           readiness.isCalibrated
                               ? 'Confidence: ${(readiness.confidence * 100).toInt()}% · Model: ${readiness.modelVersion}'
                               : 'Model: ${readiness.modelVersion} · Gathering initial sessions',
-                          style: FlowTypography.labelSmall(color: FlowColors.textMuted),
+                          style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)),
                         ),
                       ),
                     ],
@@ -123,8 +123,8 @@ class CompactReadinessCard extends StatelessWidget {
       accent = Provider.of<ThemeProvider>(context).accentColor;
     } catch (_) {}
 
-    // 1. Uncalibrated / Learning State
-    if (!readiness.isCalibrated || readiness.score == null) {
+    // 1. Uncalibrated / No score from backend
+    if (readiness.score == null) {
       return InkWell(
         onTap: () => _showWhySheet(context),
         borderRadius: FlowRadii.inputRadius,
@@ -135,14 +135,14 @@ class CompactReadinessCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Text('✦', style: TextStyle(color: accent, fontSize: 13, fontWeight: FontWeight.bold)),
+                  Icon(Icons.auto_awesome_rounded, color: accent, size: 14),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Learning your rhythm',
                       style: FlowTypography.titleSmall().copyWith(
                         fontWeight: FontWeight.w700,
-                        color: FlowColors.textPrimary,
+                        color: FlowColors.textPrimaryOf(context),
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -157,13 +157,13 @@ class CompactReadinessCard extends StatelessWidget {
                   Expanded(
                     child: Text(
                       "We're learning when you work best.",
-                      style: FlowTypography.bodySmall(color: FlowColors.textSecondary),
+                      style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Text(
                     'Why?',
-                    style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(
+                    style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
                       decoration: TextDecoration.underline,
                       fontWeight: FontWeight.w600,
                     ),
@@ -176,10 +176,12 @@ class CompactReadinessCard extends StatelessWidget {
       );
     }
 
-    // 2. Calibrated State
+    // 2. Active readiness with real score (learning prior or fully calibrated)
     final score = readiness.score ?? 78;
     final isLowEnergy = score < 50;
-    final headline = isLowEnergy ? 'Low-energy window' : 'Ready for a good session';
+    final headline = readiness.statusMessage.isNotEmpty && readiness.statusMessage != 'Learning your rhythm'
+        ? readiness.statusMessage
+        : (isLowEnergy ? 'Low-energy window' : 'Ready for a good session');
     final subtitle = isLowEnergy
         ? 'Best to handle lighter work'
         : readiness.focusWindowRange;
@@ -194,14 +196,14 @@ class CompactReadinessCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Text('✦', style: TextStyle(color: accent, fontSize: 13, fontWeight: FontWeight.bold)),
+                Icon(Icons.auto_awesome_rounded, color: accent, size: 14),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     headline,
                     style: FlowTypography.titleSmall().copyWith(
                       fontWeight: FontWeight.w700,
-                      color: FlowColors.textPrimary,
+                      color: FlowColors.textPrimaryOf(context),
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -216,13 +218,13 @@ class CompactReadinessCard extends StatelessWidget {
                 Expanded(
                   child: Text(
                     subtitle,
-                    style: FlowTypography.bodySmall(color: FlowColors.textSecondary),
+                    style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Text(
                   'Why?',
-                  style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(
+                  style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
                     decoration: TextDecoration.underline,
                     fontWeight: FontWeight.w600,
                   ),

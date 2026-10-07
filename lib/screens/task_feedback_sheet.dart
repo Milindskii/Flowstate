@@ -1,6 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../components/companion/noya_moments.dart';
+import '../components/noya_companion_view.dart';
+import '../components/noya_motion_view.dart';
+import '../models/task_reflection.dart';
 import '../providers/theme_provider.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
@@ -16,8 +20,8 @@ class TaskFeedbackEntry {
   final int feeling;              // 1=😫 2=😐 3=🙂 4=🔥
   final int energyScore;          // 1 (drained) to 5 (energized)
   final int focusScore;           // 1 (scattered) to 5 (flow)
-  final int difficultyScore;      // 1 (breeze) to 5 (intense)
-  final int distractionScore;     // 1 (none) to 5 (severe)
+  final int? difficultyScore;     // 1 (breeze) to 5 (intense); null = the user did not rate it
+  final int? distractionScore;    // 1 (none) to 5 (severe); null = the user did not rate it
   final String? durationFeedback; // 'shorter' | 'about_right' | 'longer'
   final String? blockerNote;      // optional free text
   final DateTime completedAt;
@@ -29,8 +33,8 @@ class TaskFeedbackEntry {
     required this.feeling,
     this.energyScore = 3,
     this.focusScore = 3,
-    this.difficultyScore = 3,
-    this.distractionScore = 1,
+    this.difficultyScore,
+    this.distractionScore,
     this.durationFeedback,
     this.blockerNote,
     required this.completedAt,
@@ -118,6 +122,9 @@ class _TaskFeedbackContentState extends State<TaskFeedbackContent> {
   int _focusScore = 3;
   int _difficultyScore = 3;
   int _distractionScore = 1;
+  // the sliders start at neutral defaults; a default the user never touched is not a rating
+  bool _difficultyTouched = false;
+  bool _distractionTouched = false;
   bool _taskFinishedByUser = false;
 
   int? _animatingEmoji;
@@ -188,7 +195,13 @@ class _TaskFeedbackContentState extends State<TaskFeedbackContent> {
     });
   }
 
+  bool _hasSubmitted = false;
+
   void _submit() {
+    _autoCloseTimer?.cancel();
+    if (_hasSubmitted) return;
+    _hasSubmitted = true;
+
     if (_feeling == null) {
       widget.onDismiss?.call();
       return;
@@ -199,8 +212,8 @@ class _TaskFeedbackContentState extends State<TaskFeedbackContent> {
       feeling: _feeling!,
       energyScore: _energyScore,
       focusScore: _focusScore,
-      difficultyScore: _difficultyScore,
-      distractionScore: _distractionScore,
+      difficultyScore: _difficultyTouched ? _difficultyScore : null,
+      distractionScore: _distractionTouched ? _distractionScore : null,
       durationFeedback: _durationFeedback,
       blockerNote: _blockerCtrl.text.trim().isNotEmpty ? _blockerCtrl.text.trim() : null,
       completedAt: DateTime.now(),
@@ -325,59 +338,132 @@ class _TaskFeedbackContentState extends State<TaskFeedbackContent> {
                 ),
               ],
 
-              // Question
-              Text(
-                'How did that feel?',
-                style: FlowTypography.titleMedium(
-                  color: FlowColors.textPrimaryOf(context),
-                ).copyWith(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 16),
-
-              // Emoji row
+              // Question, with Noya reflecting alongside: her pose follows the answer.
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: List.generate(4, (i) {
-                  final feeling = i + 1;
-                  final selected = _feeling == feeling;
-                  return GestureDetector(
-                    onTap: () => _onEmojiTap(feeling),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      width: 62,
-                      height: 62,
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? accent.withValues(alpha: 0.12)
-                            : FlowColors.surfaceElevated(context),
-                        borderRadius: FlowRadii.cardRadius,
-                        border: Border.all(
-                          color: selected ? accent : Colors.transparent,
-                          width: 1.5,
-                        ),
-                      ),
-                      child: Center(
-                        child: AnimatedScale(
-                          scale: _animatingEmoji == feeling ? 1.10 : 1.0,
-                          duration: const Duration(milliseconds: 140),
-                          curve: Curves.easeOutCubic,
-                          child: Text(
-                            _emojis[i],
-                            style: const TextStyle(
-                              fontSize: 28,
-                              fontFamilyFallback: [
-                                'Segoe UI Emoji',
-                                'Apple Color Emoji',
-                                'Noto Color Emoji',
-                                'sans-serif',
-                              ],
-                            ),
+                children: [
+                  NoyaMotionView(
+                    key: const Key('reflection_noya'),
+                    pose: _feeling == null
+                        ? NoyaState.encouraging
+                        : noyaStateForMoment(TaskReflection(
+                            taskId: widget.taskId,
+                            title: '',
+                            feeling: _feeling!,
+                            energy: _energyScore,
+                            focus: _focusScore,
+                            difficulty: _difficultyScore,
+                            distraction: _distractionScore,
+                            completedAt: DateTime.now(),
+                            actualMinutes: widget.actualMinutes,
+                          )),
+                    // Same height as the question block, so the sheet doesn't grow on small screens.
+                    size: 44,
+                    enter: true,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'How did that feel?',
+                          style: FlowTypography.titleMedium(
+                            color: FlowColors.textPrimaryOf(context),
+                          ).copyWith(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 17,
                           ),
                         ),
-                      ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Flowstate learns how and when you work best.',
+                          style: FlowTypography.bodySmall(
+                            color: FlowColors.textSecondaryOf(context),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+
+              // Emoji row with drag-to-select horizontal track & tap fallback
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  return GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onHorizontalDragStart: (details) {
+                      final targetIndex = (details.localPosition.dx / (constraints.maxWidth / 4)).floor().clamp(0, 3);
+                      _onEmojiTap(targetIndex + 1);
+                    },
+                    onHorizontalDragUpdate: (details) {
+                      final dx = details.localPosition.dx.clamp(0.0, constraints.maxWidth - 1);
+                      final targetIndex = (dx / (constraints.maxWidth / 4)).floor().clamp(0, 3);
+                      final targetFeeling = targetIndex + 1;
+                      if (_feeling != targetFeeling) {
+                        _onEmojiTap(targetFeeling);
+                      }
+                    },
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: List.generate(4, (i) {
+                        final feeling = i + 1;
+                        final selected = _feeling == feeling;
+                        return Semantics(
+                          button: true,
+                          label: 'Rate feeling ${_emojis[i]}',
+                          child: GestureDetector(
+                            onTap: () => _onEmojiTap(feeling),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              width: 64,
+                              height: 64,
+                              decoration: BoxDecoration(
+                                color: selected
+                                    ? accent.withValues(alpha: 0.16)
+                                    : FlowColors.surfaceElevated(context),
+                                borderRadius: FlowRadii.cardRadius,
+                                border: Border.all(
+                                  color: selected ? accent : FlowColors.border(context),
+                                  width: selected ? 2.0 : 1.0,
+                                ),
+                                boxShadow: selected
+                                    ? [
+                                        BoxShadow(
+                                          color: accent.withValues(alpha: 0.22),
+                                          blurRadius: 10,
+                                          offset: const Offset(0, 3),
+                                        ),
+                                      ]
+                                    : null,
+                              ),
+                              child: Center(
+                                child: AnimatedScale(
+                                  scale: selected ? (_animatingEmoji == feeling ? 1.2 : 1.1) : 1.0,
+                                  duration: const Duration(milliseconds: 140),
+                                  curve: Curves.easeOutCubic,
+                                  child: Text(
+                                    _emojis[i],
+                                    style: const TextStyle(
+                                      fontSize: 30,
+                                      fontFamilyFallback: [
+                                        'Segoe UI Emoji',
+                                        'Apple Color Emoji',
+                                        'Noto Color Emoji',
+                                        'sans-serif',
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
                     ),
                   );
-                }),
+                },
               ),
 
               // Duration row (appears smoothly after emoji tap)
@@ -433,8 +519,14 @@ class _TaskFeedbackContentState extends State<TaskFeedbackContent> {
                 const SizedBox(height: 10),
                 _buildScoreRow('Energy', _energyScore, (v) => setState(() => _energyScore = v), accent),
                 _buildScoreRow('Focus', _focusScore, (v) => setState(() => _focusScore = v), accent),
-                _buildScoreRow('Difficulty', _difficultyScore, (v) => setState(() => _difficultyScore = v), accent),
-                _buildScoreRow('Distraction', _distractionScore, (v) => setState(() => _distractionScore = v), accent),
+                _buildScoreRow('Difficulty', _difficultyScore, (v) => setState(() {
+                      _difficultyScore = v;
+                      _difficultyTouched = true;
+                    }), accent),
+                _buildScoreRow('Distraction', _distractionScore, (v) => setState(() {
+                      _distractionScore = v;
+                      _distractionTouched = true;
+                    }), accent),
               ],
 
               // Optional blocker note
@@ -498,7 +590,7 @@ class _TaskFeedbackContentState extends State<TaskFeedbackContent> {
 
   Widget _buildScoreRow(String title, int currentVal, ValueChanged<int> onChanged, Color accent) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
+      padding: const EdgeInsets.only(bottom: 4.0),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -506,35 +598,59 @@ class _TaskFeedbackContentState extends State<TaskFeedbackContent> {
             child: Text(
               title,
               overflow: TextOverflow.ellipsis,
-              style: FlowTypography.labelSmall(color: FlowColors.textSecondaryOf(context)),
+              style: FlowTypography.labelMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
             ),
           ),
           const SizedBox(width: 8),
           Row(
+            mainAxisSize: MainAxisSize.min,
             children: List.generate(5, (idx) {
               final val = idx + 1;
               final isSel = currentVal == val;
-              return GestureDetector(
-                onTap: () {
-                  FlowHaptics.selection();
-                  onChanged(val);
-                },
-                child: Container(
-                  width: 28,
-                  height: 28,
-                  margin: const EdgeInsets.only(left: 6),
-                  decoration: BoxDecoration(
-                    color: isSel ? accent : FlowColors.surfaceElevated(context),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: isSel ? accent : FlowColors.border(context)),
-                  ),
-                  child: Center(
-                    child: Text(
-                      '$val',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: isSel ? Colors.black : FlowColors.textPrimaryOf(context),
+              return Semantics(
+                button: true,
+                label: '$title $val',
+                child: InkWell(
+                  onTap: () {
+                    FlowHaptics.selection();
+                    onChanged(val);
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                    alignment: Alignment.center,
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: isSel ? accent : FlowColors.surfaceElevated(context),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isSel ? accent : FlowColors.border(context),
+                          width: isSel ? 1.5 : 1.0,
+                        ),
+                        boxShadow: isSel
+                            ? [
+                                BoxShadow(
+                                  color: accent.withValues(alpha: 0.25),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ]
+                            : null,
+                      ),
+                      child: Center(
+                        child: Text(
+                          '$val',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: isSel ? FontWeight.w800 : FontWeight.w600,
+                            color: isSel ? FlowColors.textInverse : FlowColors.textPrimaryOf(context),
+                          ),
+                        ),
                       ),
                     ),
                   ),

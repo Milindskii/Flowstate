@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'noya_reaction_controller.dart';
+
+export 'noya_reaction_controller.dart' show NoyaReaction, NoyaReactionEvent, NoyaReactionController, NoyaReactionRules;
 
 /// Logical states for the companion character presentation.
 /// Exactly maps to the external Rive / Lottie state machine contract:
@@ -18,6 +21,15 @@ enum CompanionAnimState {
 class FlowCompanionAnimationController extends ChangeNotifier {
   CompanionAnimState _state = CompanionAnimState.idle;
   String? _statusText;
+
+  /// One-shot reactions played over the current state; never changes [state] (spec §16.2).
+  final NoyaReactionController reactions = NoyaReactionController();
+
+  @override
+  void dispose() {
+    reactions.dispose();
+    super.dispose();
+  }
 
   CompanionAnimState get state => _state;
   String? get statusText => _statusText;

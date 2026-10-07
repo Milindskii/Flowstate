@@ -1,7 +1,7 @@
-import 'package:intl/intl.dart';
 import '../models/ai_plan_models.dart';
 import '../models/pricing_config.dart';
 import 'api_service.dart';
+import 'timezone_service.dart';
 
 /// Exception thrown when AI economic limit is encountered (e.g. Free AI used up, Shield required)
 class AIEconomyException implements Exception {
@@ -17,6 +17,21 @@ class AIEconomyException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// Build My Day AI planning failed. [code] is the server's failure_code (spec 2026-10-03 §7):
+/// gemini_error, provider_unavailable, provider_quota, provider_auth, model_not_found, timeout, network,
+/// malformed, empty, scheduling_failed, quota_exhausted, privacy_declined, auth_required, plus the AI gateway's
+/// ai_busy, rate_limited, request_in_progress, another_request_in_flight, pro_cap_day, pro_cap_month, and two
+/// client-side codes: offline (the request never reached Flowstate's server) and server_error (a 5xx with no
+/// failure_code). offline/server_error are Flowstate connectivity, never an AI-provider problem.
+class AIPlanFailure implements Exception {
+  final String code;
+  final String message;
+  const AIPlanFailure(this.code, this.message);
+
+  @override
+  String toString() => 'AIPlanFailure($code): $message';
 }
 
 /// Service interfacing with FastAPI Gemini task understanding and AI economy endpoints.
@@ -43,26 +58,29 @@ class AIPlanService {
     required String rawText,
     bool consumeShield = false,
     String? idempotencyKey,
+    String? requestId,
   }) async {
     final cleanInput = rawText.trim();
     if (cleanInput.isEmpty) {
       return const AIPlanResult(tasks: []);
     }
 
-    // Context minimization: only raw brain dump, current date, and local timezone name
+    // Context minimization: only the raw brain dump, the client clock, and the IANA timezone.
+    // The timezone is omitted (never an abbreviation) when it cannot be determined, so the
+    // backend uses the user's stored preference instead of silently falling back to UTC.
     final now = DateTime.now();
-    final todayStr = DateFormat('yyyy-MM-dd').format(now);
-    final tzName = now.timeZoneName;
+    final tzName = await TimezoneService.localIanaName();
 
-    final key = idempotencyKey ?? 'idemp-${now.millisecondsSinceEpoch}-${cleanInput.hashCode}';
+    // One stable request id per brain dump: "Retry with AI" reuses it, so the server charges once.
+    final key = requestId ?? idempotencyKey ?? 'idemp-${now.millisecondsSinceEpoch}-${cleanInput.hashCode}';
 
     try {
       final response = await api.post(
         '/api/v1/ai/plan',
         body: {
           'raw_text': cleanInput,
-          'user_timezone': tzName,
-          'current_date': todayStr,
+          if (tzName != null) 'timezone': tzName,
+          'current_local_time': now.toUtc().toIso8601String(),
           'consume_shield': consumeShield,
           'idempotency_key': key,
         },
@@ -73,6 +91,27 @@ class AIPlanService {
       }
       throw const ApiException('Invalid plan response from server');
     } on ApiException catch (e) {
+      final data = e.data is Map<String, dynamic> ? e.data as Map<String, dynamic> : const <String, dynamic>{};
+      final failureCode = data['failure_code'] as String?;
+      final detail = data['detail'];
+      final message = detail is String ? detail : e.message;
+      if (failureCode != null) {
+        throw AIPlanFailure(failureCode, message);
+      }
+      if (e.statusCode == 401 || e.statusCode == 403) {
+        // Not signed in (or the session ended): an account problem, never an AI-provider one.
+        throw AIPlanFailure('auth_required', message);
+      }
+      if (e.isTimeout) {
+        throw AIPlanFailure('timeout', message);
+      }
+      if (e.statusCode == null || e.statusCode == 0) {
+        // Connection refused / no network: Flowstate's own server was never reached, so the AI was never involved.
+        throw AIPlanFailure('offline', message);
+      }
+      if (e.statusCode! >= 500) {
+        throw AIPlanFailure('server_error', message);
+      }
       if (e.statusCode == 402) {
         final data = e.data is Map<String, dynamic> ? e.data as Map<String, dynamic> : {};
         final detail = data['detail'];
@@ -89,12 +128,24 @@ class AIPlanService {
         );
       } else if (e.statusCode == 429) {
         throw const AIEconomyException(
-          message: 'AI planning limit reached for this hour (5 requests/hour max). Please wait a moment.',
+          message: 'AI planning limit reached for now. Please wait a moment.',
           code: 'RATE_LIMITED',
         );
       }
       rethrow;
     }
+  }
+
+  /// Diagnostics for failures that never reach the server's Gemini call (privacy declined,
+  /// network error). Never blocks the UI and never charges.
+  Future<void> reportFailure(String requestId, String code, [String? reason]) async {
+    try {
+      await api.post('/api/v1/ai/planning-attempts', body: {
+        'request_id': requestId,
+        'failure_code': code,
+        if (reason != null) 'failure_reason': reason,
+      });
+    } catch (_) {}
   }
 
   /// Get Pro subscription status from backend

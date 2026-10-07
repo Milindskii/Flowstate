@@ -357,8 +357,8 @@ void main() {
 
       // Verify Noya avatar image is present
       final noyaImageFinder = find.byWidgetPredicate((widget) {
-        if (widget is Image && widget.image is AssetImage) {
-          final asset = widget.image as AssetImage;
+        final asset = widget is Image ? _assetOf(widget.image) : null;
+        if (asset != null) {
           return asset.assetName.contains('fox_winking') || asset.assetName.contains('noya');
         }
         return false;
@@ -472,7 +472,7 @@ void main() {
       );
       expect(imgFinder, findsWidgets);
       final imageWidget = tester.widget<Image>(imgFinder.first);
-      final assetImage = imageWidget.image as AssetImage;
+      final assetImage = _assetOf(imageWidget.image)!;
       expect(
         assetImage.assetName.contains('noya_celebrating') || assetImage.assetName.contains('noya_success'),
         isTrue,
@@ -509,4 +509,11 @@ void main() {
       tester.view.reset();
     });
   });
+}
+
+/// The asset behind an image provider. Noya images are decoded at display size, so the asset is
+/// wrapped in a [ResizeImage] (spec §17 P5); unwrap it before checking which artwork is shown.
+AssetImage? _assetOf(ImageProvider provider) {
+  if (provider is ResizeImage) return _assetOf(provider.imageProvider);
+  return provider is AssetImage ? provider : null;
 }

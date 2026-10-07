@@ -69,6 +69,10 @@ class InsightsSummaryResponse(BaseModel):
     pattern_detail: Optional[str] = None     # "Your deep-work sessions tend to overrun by ~25%"
     actionable_note: Optional[str] = None    # "Flowstate will use this when planning tomorrow."
 
+    # ── Real history (engines/behavior_patterns): each section is "ready" or an honest "learning" state ──
+    history: Dict[str, Any] = {}
+    timezone_used: Optional[str] = None
+
 
 @router.get("/summary", response_model=InsightsSummaryResponse)
 def get_insights_summary(
@@ -82,9 +86,17 @@ def get_insights_summary(
     Returns honest low-data state when insufficient history exists.
     Never fabricates metrics.
     """
-    observations: List[ReadinessObservation] = readiness_repo.list_observations(
-        db, current_user.id, limit=500
-    )
+    from ...core.timezone import resolve_user_timezone
+    from ...services import behavior_service
+
+    tz, tz_name = resolve_user_timezone(current_user)
+    history = behavior_service.summary(db, current_user.id, tz, datetime.now(timezone.utc))
+
+    # only real post-task reflections are sessions (legacy rows carried made-up ratings; the onboarding
+    # baseline is a self-description)
+    observations: List[ReadinessObservation] = [
+        o for o in readiness_repo.list_observations(db, current_user.id, limit=500)
+        if getattr(o, "provenance", None) in (None, "reflection")]
     obs_count = len(observations)
     has_sufficient = obs_count >= MIN_SESSIONS_FOR_PATTERNS
 
@@ -94,6 +106,8 @@ def get_insights_summary(
         return InsightsSummaryResponse(
             total_sessions=obs_count,
             has_sufficient_history=False,
+            history=history,
+            timezone_used=tz_name,
             status_message=f"Complete {sessions_needed} more session{'s' if sessions_needed != 1 else ''} to see your patterns.",
         )
 
@@ -230,4 +244,6 @@ def get_insights_summary(
         pattern_headline=pattern_headline,
         pattern_detail=pattern_detail,
         actionable_note=actionable_note,
+        history=history,
+        timezone_used=tz_name,
     )

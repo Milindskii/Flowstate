@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../components/flow_logo.dart';
+import '../components/noya_companion_view.dart';
 import '../providers/app_state_provider.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_typography.dart';
+import '../services/auth_service.dart';
 import 'auth_screen.dart';
 import 'main_shell.dart';
 import 'onboarding_flow_screen.dart';
@@ -49,16 +50,28 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     final appState = Provider.of<AppStateProvider>(context, listen: false);
 
     // Attempt restoring existing session from Supabase
-    final user = await appState.authService.restoreSession();
+    AuthUser? user = await appState.authService.restoreSession();
     if (user != null) {
-      await appState.onUserAuthenticated(user);
+      // Navigate once identity + onboarding are known; tasks / Today / Calendar keep loading in parallel
+      // behind the first screen (its own loading state), instead of holding the splash for every request.
+      await appState.onUserAuthenticated(user, awaitData: false);
     }
 
-    // Preserve minimum brand splash visibility (~1.6s)
+    // A short brand moment, not a wait: the splash used to hold for 1.6 s on top of the network.
     final elapsed = DateTime.now().difference(startTime);
-    final remaining = const Duration(milliseconds: 1600) - elapsed;
+    final remaining = const Duration(milliseconds: 900) - elapsed;
     if (remaining > Duration.zero) {
       await Future.delayed(remaining);
+    }
+
+    if (!mounted) return;
+
+    // Double-check session restoration in case async storage completed during splash animation
+    if (user == null) {
+      user = await appState.authService.restoreSession();
+      if (user != null) {
+        await appState.onUserAuthenticated(user, awaitData: false);
+      }
     }
 
     if (!mounted) return;
@@ -74,7 +87,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
       targetScreen = const AuthScreen();
     }
 
-    Navigator.of(context).pushReplacement(
+    Navigator.of(context).pushAndRemoveUntil(
       PageRouteBuilder(
         pageBuilder: (_, __, ___) => targetScreen,
         transitionsBuilder: (_, animation, __, child) {
@@ -82,6 +95,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
         },
         transitionDuration: const Duration(milliseconds: 400),
       ),
+      (route) => false,
     );
   }
 
@@ -143,7 +157,11 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                         child: child,
                       );
                     },
-                    child: const FlowLogo(size: 88),
+                    child: const NoyaCompanionView(
+                      state: NoyaState.idle,
+                      size: 88,
+                      showAmbientGlow: true,
+                    ),
                   ),
                   const SizedBox(height: 32),
 

@@ -22,12 +22,16 @@ class TaskPerformance(Base):
     actual_minutes = Column(Integer, nullable=False, default=45)
 
     # Subjective post-session reflection ratings (1 to 5)
-    focus_score = Column(Integer, nullable=False, default=3) # 1 (distracted) to 5 (flow)
-    energy_score = Column(Integer, nullable=False, default=3) # 1 (drained) to 5 (energized)
-    difficulty_score = Column(Integer, nullable=False, default=3) # 1 (breeze) to 5 (intense)
+    # NULL when the user did not rate it (never a made-up default: learning reads only real ratings)
+    focus_score = Column(Integer, nullable=True) # 1 (distracted) to 5 (flow)
+    energy_score = Column(Integer, nullable=True) # 1 (drained) to 5 (energized)
+    difficulty_score = Column(Integer, nullable=True) # 1 (breeze) to 5 (intense)
     distraction_score = Column(Integer, nullable=True) # 1 (none) to 5 (severe)
 
     notes = Column(Text, nullable=True)
+    # Where the row came from: reflection (the user rated it) | timestamps (only real start/finish times) |
+    # legacy (written before 2026-10-07, when completion sent made-up scores; never used as rating evidence)
+    provenance = Column(String(20), nullable=False, default="reflection", server_default="legacy")
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     # Relationships

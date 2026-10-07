@@ -12,6 +12,14 @@ from app.models.flow_progression import FlowCompanion, FlowProfile, FlowFocusSes
 def unique_user(prefix: str = "flow-user") -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
+def ensure_user(user_id: str) -> None:
+    """Direct DB setup needs the users row first (PostgreSQL enforces the foreign keys; the API creates it lazily)."""
+    with SessionLocal() as db:
+        if not db.query(User).filter(User.id == user_id).first():
+            db.add(User(id=user_id, email=f"{user_id}@flowstate.local", name="t"))
+            db.commit()
+
+
 def make_auth_header(user_id: str) -> dict:
     token = create_access_token({"sub": user_id, "email": f"{user_id}@flowstate.local"})
     return {"Authorization": f"Bearer {token}"}
@@ -548,6 +556,7 @@ async def test_shop_purchase_flow():
 async def test_anti_farming_trivial_task_no_priority_bonus():
     user_id = unique_user("anti_farm")
     headers = make_auth_header(user_id)
+    ensure_user(user_id)
     test_db = SessionLocal()
     try:
         from app.models.task import TaskPriority
@@ -585,6 +594,7 @@ async def test_anti_farming_trivial_task_no_priority_bonus():
 async def test_daily_focus_xp_cap():
     user_id = unique_user("xp_cap")
     headers = make_auth_header(user_id)
+    ensure_user(user_id)
     test_db = SessionLocal()
     try:
         # Insert historical economic events totaling 290 XP today
@@ -656,7 +666,8 @@ async def test_gdpr_data_export_and_deletion():
         assert "tasks" in data
 
         # 3. Unsubscribe email
-        unsub_res = await ac.get(f"/api/v1/auth/unsubscribe?email={data['email']}")
+        from app.api.routes.auth import make_unsubscribe_token
+        unsub_res = await ac.get(f"/api/v1/auth/unsubscribe?token={make_unsubscribe_token(data['email'])}")
         assert unsub_res.status_code == 200
         assert unsub_res.json()["status"] == "ok"
 

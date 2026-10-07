@@ -17,6 +17,7 @@ import '../components/companion/flow_companion_animation_controller.dart';
 /// decoupled animation controller.
 class FlowProvider extends ChangeNotifier {
   final FlowService flowService;
+  final ApiService? apiService;
   final FlowCompanionAnimationController animController = FlowCompanionAnimationController();
 
   FlowOverview _overview = FlowOverview.defaultInitial();
@@ -33,9 +34,11 @@ class FlowProvider extends ChangeNotifier {
   String? _latestNotification;
 
   FlowProvider({FlowService? service, ApiService? api})
-      : flowService = service ?? FlowService(api: api ?? ApiService()) {
-    loadOverview();
-    loadShopCatalog();
+      : apiService = api,
+        flowService = service ?? FlowService(api: api ?? ApiService()) {
+    // Eager constructor network calls removed to ensure authenticated
+    // dependency wiring is ready before firing network requests.
+    // UI lifecycle (FlowScreen.initState) initiates loading when auth is ready.
   }
 
   FlowOverview get overview => _overview;
@@ -46,6 +49,11 @@ class FlowProvider extends ChangeNotifier {
   List<FlowAchievement> get achievements => _overview.achievements;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+
+  static const String authRequiredMessage = 'Authentication required. Please sign in.';
+
+  /// The Hub can't sync because nobody is signed in (not a failure to show as an error).
+  bool get isAuthRequired => _errorMessage == authRequiredMessage;
 
   String? get activeSessionId => _activeSessionId;
   String? get activeTaskId => _activeTaskId;
@@ -120,6 +128,15 @@ class FlowProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // If an authenticated ApiService was wired and is not authenticated,
+      // fail visibly rather than silently fabricating default progression data.
+      if (apiService != null && !apiService!.isAuthenticated) {
+        _errorMessage = 'Authentication required. Please sign in.';
+        _isLoading = false;
+        notifyListeners();
+        return;
+      }
+
       final res = await flowService.getOverview();
       if (_mockMode) return;
       _overview = res;
@@ -134,6 +151,16 @@ class FlowProvider extends ChangeNotifier {
         animController.setIdle();
       }
       _isLoading = false;
+      // Lazily load shop catalog on first overview sync if empty
+      if (_shopCatalog.isEmpty) {
+        unawaited(loadShopCatalog());
+      }
+      notifyListeners();
+    } on ApiException catch (e) {
+      _errorMessage = e.statusCode == 401
+          ? 'Authentication required. Please sign in.'
+          : (e.message.isNotEmpty ? e.message : 'Failed to sync progression state.');
+      _isLoading = false;
       notifyListeners();
     } catch (e) {
       _errorMessage = 'Failed to sync progression state.';
@@ -143,6 +170,8 @@ class FlowProvider extends ChangeNotifier {
   }
 
   Future<void> loadShopCatalog() async {
+    if (_mockMode) return;
+    if (apiService != null && !apiService!.isAuthenticated) return;
     try {
       final items = await flowService.getShopCatalog();
       if (items.isNotEmpty) {
@@ -166,9 +195,12 @@ class FlowProvider extends ChangeNotifier {
       _sessionTimer?.cancel();
       _sessionTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
         _sessionElapsedSeconds++;
-        final mins = _sessionElapsedSeconds ~/ 60;
-        animController.setFocusing(taskTitle: _activeTaskTitle, elapsedMinutes: mins);
-        notifyListeners();
+        // Listeners (Flow hub, shield dialog) show minutes: notify once a minute, not every second.
+        if (_sessionElapsedSeconds % 60 == 0) {
+          final mins = _sessionElapsedSeconds ~/ 60;
+          animController.setFocusing(taskTitle: _activeTaskTitle, elapsedMinutes: mins);
+          notifyListeners();
+        }
       });
       notifyListeners();
     } catch (e) {
@@ -349,6 +381,22 @@ class FlowProvider extends ChangeNotifier {
 
   void clearNotification() {
     _latestNotification = null;
+    notifyListeners();
+  }
+
+  /// Wipes in-memory companion progression state on user logout or account switch
+  void reset() {
+    _overview = FlowOverview.defaultInitial();
+    _activeSessionId = null;
+    _activeTaskId = null;
+    _activeTaskTitle = null;
+    _sessionElapsedSeconds = 0;
+    _sessionTimer?.cancel();
+    _sessionTimer = null;
+    _errorMessage = null;
+    _shopCatalog = [];
+    _latestNotification = null;
+    animController.setIdle();
     notifyListeners();
   }
 

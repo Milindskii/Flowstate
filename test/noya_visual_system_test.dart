@@ -8,8 +8,8 @@ import 'package:flowstate/models/task_item.dart';
 
 void main() {
   group('Noya Canonical Visual System - Unit & State Tests', () {
-    test('1. Verify all 7 canonical Noya states exist and map to correct assets', () {
-      expect(NoyaState.values.length, 7);
+    test('1. Verify all 13 canonical Noya states exist and map to correct assets', () {
+      expect(NoyaState.values.length, 13);
 
       expect(NoyaState.idle.assetPath, 'assets/images/companions/noya/noya_default.png');
       expect(NoyaState.focusing.assetPath, 'assets/images/companions/noya/noya_focusing.png');
@@ -18,9 +18,24 @@ void main() {
       expect(NoyaState.sleepy.assetPath, 'assets/images/companions/noya/noya_sleepy.png');
       expect(NoyaState.proud.assetPath, 'assets/images/companions/noya/noya_proud.png');
       expect(NoyaState.encouraging.assetPath, 'assets/images/companions/noya/noya_encouraging.png');
+      // Existing art in the root companions folder (spec §2.2), registered in Rev 2 (D2).
+      expect(NoyaState.delighted.assetPath, 'assets/images/companions/noya_success.png');
+      expect(NoyaState.windDown.assetPath, 'assets/images/companions/noya_sleeping.png');
+      // Cut from the expression sheet (docs/ui-qa/screenshots), transparent 384 px.
+      expect(NoyaState.goodJob.assetPath, 'assets/images/companions/noya/noya_good_job.png');
+      expect(NoyaState.idea.assetPath, 'assets/images/companions/noya/noya_idea.png');
+      expect(NoyaState.planning.assetPath, 'assets/images/companions/noya/noya_planning.png');
+      expect(NoyaState.cheering.assetPath, 'assets/images/companions/noya/noya_cheering.png');
     });
 
-    test('2. Verify all 7 canonical Noya asset files physically exist on disk', () {
+    test('1b. New states carry their spec labels', () {
+      expect(NoyaState.delighted.semanticLabel, 'Noya beaming with sparkling eyes, delighted with your plan');
+      expect(NoyaState.windDown.semanticLabel, 'Noya getting drowsy as the day winds down');
+      expect(NoyaState.delighted.displayName, 'Delighted');
+      expect(NoyaState.windDown.displayName, 'Wind-down');
+    });
+
+    test('2. Verify all 9 canonical Noya asset files physically exist on disk', () {
       for (final state in NoyaState.values) {
         final file = File(state.assetPath);
         expect(file.existsSync(), isTrue, reason: 'Missing asset file: ${state.assetPath}');
@@ -109,7 +124,7 @@ void main() {
       );
     });
 
-    test('6. Verify semantic accessibility labels for all 7 states', () {
+    test('6. Verify semantic accessibility labels for all 9 states', () {
       for (final state in NoyaState.values) {
         expect(state.semanticLabel.isNotEmpty, isTrue);
         expect(state.displayName.isNotEmpty, isTrue);
@@ -143,7 +158,7 @@ void main() {
       expect(semanticsFinder, findsOneWidget);
     });
 
-    testWidgets('9. TaskCard displays small contextual Noya and clear checkmark [✓] when completed', (tester) async {
+    testWidgets('9. Completed TaskCard shows a clear checkmark [✓] and no repeated Noya', (tester) async {
       bool toggleCalled = false;
       const completedTask = TaskItem(
         id: 'test-card-1',
@@ -167,13 +182,8 @@ void main() {
         ),
       );
 
-      // Verify small contextual Noya avatar is present
-      final companionFinder = find.byType(NoyaCompanionView);
-      expect(companionFinder, findsOneWidget);
-
-      final noyaView = tester.widget<NoyaCompanionView>(companionFinder);
-      expect(noyaView.state, NoyaState.proud);
-      expect(noyaView.size, NoyaSize.small);
+      // Finished tasks are calm history: Noya is not repeated beside each one.
+      expect(find.byType(NoyaCompanionView), findsNothing);
 
       // Verify clear completion indicator [✓] is rendered
       final checkIconFinder = find.byIcon(Icons.check_circle_rounded);
@@ -186,6 +196,24 @@ void main() {
       // Tap toggle
       await tester.tap(checkIconFinder);
       expect(toggleCalled, isTrue);
+    });
+  });
+
+  group('Noya decode size (spec §17 P5)', () {
+    test('cacheWidthFor rounds size x dpr', () {
+      expect(NoyaCompanionView.cacheWidthFor(40, 2.625), 105);
+      expect(NoyaCompanionView.cacheWidthFor(156, 3.0), 468);
+    });
+
+    testWidgets('NoyaCompanionView decodes at size x DPR, not 1024x1024', (tester) async {
+      tester.view.devicePixelRatio = 3.0;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(const MaterialApp(
+        home: Center(child: NoyaCompanionView(state: NoyaState.idle, size: 40)),
+      ));
+      final image = tester.widget<Image>(find.byType(Image).first).image;
+      expect(image, isA<ResizeImage>());
+      expect((image as ResizeImage).width, 120);
     });
   });
 }

@@ -28,7 +28,7 @@ class ProgressHeader extends StatelessWidget {
           children: [
             if (onBack != null && currentStep > 1)
               IconButton(
-                icon: const Icon(Icons.arrow_back_rounded, color: FlowColors.textPrimary),
+                icon: Icon(Icons.arrow_back_rounded, color: FlowColors.textPrimaryOf(context)),
                 onPressed: onBack,
                 splashRadius: 24,
               )
@@ -36,7 +36,7 @@ class ProgressHeader extends StatelessWidget {
               const SizedBox(width: 48),
             Text(
               'Step $currentStep of $totalSteps',
-              style: FlowTypography.labelMedium(color: FlowColors.textMuted).copyWith(
+              style: FlowTypography.labelMedium(color: FlowColors.textMutedOf(context)).copyWith(
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -50,7 +50,7 @@ class ProgressHeader extends StatelessWidget {
           child: Container(
             height: 6,
             width: double.infinity,
-            color: FlowColors.darkCard,
+            color: FlowColors.surface(context),
             child: FractionallySizedBox(
               alignment: Alignment.centerLeft,
               widthFactor: progress,

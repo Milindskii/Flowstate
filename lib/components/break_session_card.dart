@@ -83,7 +83,13 @@ class _BreakSessionCardState extends State<BreakSessionCard> {
   @override
   Widget build(BuildContext context) {
     final state = Provider.of<AppStateProvider>(context);
+    return ValueListenableBuilder<int>(
+      valueListenable: state.breakTick,
+      builder: (context, _, __) => _buildCard(context, state),
+    );
+  }
 
+  Widget _buildCard(BuildContext context, AppStateProvider state) {
     final totalTargetSeconds = state.breakDurationMinutes * 60;
     final remainingSeconds = totalTargetSeconds - state.breakElapsedSeconds;
     final double progress = totalTargetSeconds > 0
@@ -93,7 +99,7 @@ class _BreakSessionCardState extends State<BreakSessionCard> {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: FlowColors.darkCard,
+        color: FlowColors.surface(context),
         borderRadius: FlowRadii.cardLargeRadius,
         border: Border.all(
           color: FlowColors.accentMint.withValues(alpha: 0.45),
@@ -138,7 +144,7 @@ class _BreakSessionCardState extends State<BreakSessionCard> {
               ),
               Text(
                 '${state.breakDurationMinutes} min',
-                style: FlowTypography.labelSmall(color: FlowColors.textMuted).copyWith(
+                style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -152,7 +158,7 @@ class _BreakSessionCardState extends State<BreakSessionCard> {
             style: FlowTypography.headlineMedium().copyWith(
               fontWeight: FontWeight.w800,
               fontSize: 22.0,
-              color: FlowColors.textPrimary,
+              color: FlowColors.textPrimaryOf(context),
             ),
           ),
           const SizedBox(height: 6),
@@ -160,7 +166,7 @@ class _BreakSessionCardState extends State<BreakSessionCard> {
           // Calming prompt
           Text(
             'Step away from the screen, stretch, or hydrate. Flowstate will return to your work when you’re ready.',
-            style: FlowTypography.bodyMedium(color: FlowColors.textSecondary).copyWith(
+            style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
               height: 1.35,
             ),
           ),
@@ -170,9 +176,9 @@ class _BreakSessionCardState extends State<BreakSessionCard> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             decoration: BoxDecoration(
-              color: FlowColors.darkCardElevated,
+              color: FlowColors.surfaceElevated(context),
               borderRadius: FlowRadii.buttonRadius,
-              border: Border.all(color: FlowColors.darkBorder, width: 1.0),
+              border: Border.all(color: FlowColors.border(context), width: 1.0),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -186,12 +192,12 @@ class _BreakSessionCardState extends State<BreakSessionCard> {
                         fontSize: 32,
                         fontWeight: FontWeight.w800,
                         letterSpacing: -0.5,
-                        color: FlowColors.textPrimary,
+                        color: FlowColors.textPrimaryOf(context),
                       ),
                     ),
                     Text(
                       'remaining',
-                      style: FlowTypography.bodySmall(color: FlowColors.textMuted).copyWith(
+                      style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)).copyWith(
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -202,7 +208,7 @@ class _BreakSessionCardState extends State<BreakSessionCard> {
                   borderRadius: FlowRadii.pillRadius,
                   child: LinearProgressIndicator(
                     value: progress,
-                    backgroundColor: FlowColors.darkBorder,
+                    backgroundColor: FlowColors.border(context),
                     valueColor: const AlwaysStoppedAnimation<Color>(FlowColors.accentMint),
                     minHeight: 4,
                   ),
@@ -217,22 +223,22 @@ class _BreakSessionCardState extends State<BreakSessionCard> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: FlowColors.darkCardElevated,
+                color: FlowColors.surfaceElevated(context),
                 borderRadius: FlowRadii.inputRadius,
-                border: Border.all(color: FlowColors.darkBorder, width: 1.0),
+                border: Border.all(color: FlowColors.border(context), width: 1.0),
               ),
               child: Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.arrow_forward_rounded,
-                    color: FlowColors.textSecondary,
+                    color: FlowColors.textSecondaryOf(context),
                     size: 15,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Up next: ${widget.nextTask!.title}',
-                      style: FlowTypography.labelSmall(color: FlowColors.textSecondary).copyWith(
+                      style: FlowTypography.labelSmall(color: FlowColors.textSecondaryOf(context)).copyWith(
                         fontWeight: FontWeight.w600,
                       ),
                       maxLines: 1,
@@ -241,7 +247,7 @@ class _BreakSessionCardState extends State<BreakSessionCard> {
                   ),
                   Text(
                     '${widget.nextTask!.durationMinutes}m',
-                    style: FlowTypography.labelSmall(color: FlowColors.textMuted),
+                    style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)),
                   ),
                 ],
               ),
@@ -314,15 +320,15 @@ class _BreakSessionCardState extends State<BreakSessionCard> {
                     },
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 4),
-                      foregroundColor: FlowColors.textSecondary,
-                      side: const BorderSide(color: FlowColors.darkBorder, width: 1.0),
+                      foregroundColor: FlowColors.textSecondaryOf(context),
+                      side: BorderSide(color: FlowColors.border(context), width: 1.0),
                       shape: const RoundedRectangleBorder(
                         borderRadius: FlowRadii.buttonRadius,
                       ),
                     ),
                     child: Text(
                       '+5 min',
-                      style: FlowTypography.labelMedium(color: FlowColors.textSecondary).copyWith(
+                      style: FlowTypography.labelMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
                         fontWeight: FontWeight.w600,
                       ),
                     ),

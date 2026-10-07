@@ -12,21 +12,23 @@ from app.models.flow_progression import FlowProfile
 from app.models.ai_usage import AIUsageRecord
 from app.schemas.task import TaskCandidateResponse, TaskType, TaskDifficulty, TaskPriority, TaskSource, FieldProvenance
 from app.core.security import create_access_token
-from app.services.ai_economy_service import AIEconomyService, _AI_RATE_LIMIT_CACHE
+from app.services.ai_economy_service import AIEconomyService
 from app.services.ai_service import AIService
 
 def unique_user(prefix="ai_test"):
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
+def ensure_user(user_id: str) -> None:
+    """Direct DB setup needs the user row first (PostgreSQL enforces the ai_usage_records -> users foreign key)."""
+    with SessionLocal() as db:
+        if not db.query(User).filter(User.id == user_id).first():
+            db.add(User(id=user_id, email=f"{user_id}@flowstate.local", name="t"))
+            db.commit()
+
+
 def make_auth_header(user_id: str):
     token = create_access_token({"sub": user_id, "email": f"{user_id}@flowstate.local"})
     return {"Authorization": f"Bearer {token}"}
-
-@pytest.fixture(autouse=True)
-def reset_rate_limits():
-    _AI_RATE_LIMIT_CACHE.clear()
-    yield
-    _AI_RATE_LIMIT_CACHE.clear()
 
 def mock_gemini_tasks(tasks=None, ambiguities=None, needs_confirmation=False):
     if tasks is None:
@@ -192,6 +194,7 @@ async def test_duplicate_request_does_not_double_charge():
 async def test_pro_user_gets_pro_allowance():
     user_id = unique_user("pro_user")
     headers = make_auth_header(user_id)
+    ensure_user(user_id)
 
     with SessionLocal() as db:
         usage = AIEconomyService.get_or_create_usage(db, user_id)
@@ -229,7 +232,7 @@ async def test_non_pro_user_cannot_spoof_pro_status():
                 "product_id": "flowstate_pro_monthly",
             },
         )
-        assert spoof_res.status_code in [400, 402]
+        assert spoof_res.status_code == 410
 
         unverified_res = await ac.post(
             "/api/v1/subscription/verify",
@@ -239,7 +242,7 @@ async def test_non_pro_user_cannot_spoof_pro_status():
                 "product_id": "flowstate_pro_monthly",
             },
         )
-        assert unverified_res.status_code == 503
+        assert unverified_res.status_code == 410
 
         # User is strictly NOT Pro
         st_res = await ac.get("/api/v1/ai/status", headers=headers)
@@ -250,6 +253,7 @@ async def test_non_pro_user_cannot_spoof_pro_status():
 async def test_rate_limit_works():
     user_id = unique_user("rate_limit")
     headers = make_auth_header(user_id)
+    ensure_user(user_id)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         with patch.object(AIService, "extract_structured_plan_with_gemini", return_value=mock_gemini_tasks()):

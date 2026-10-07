@@ -24,9 +24,9 @@ class SecondaryButton extends StatelessWidget {
       width: fullWidth ? double.infinity : null,
       height: 52.0, // Mobile thumb target (> 44px)
       decoration: BoxDecoration(
-        color: FlowColors.darkCard,
+        color: FlowColors.surface(context),
         borderRadius: FlowRadii.buttonRadius,
-        border: Border.all(color: FlowColors.darkBorder, width: 1.0),
+        border: Border.all(color: FlowColors.border(context), width: 1.0),
       ),
       child: Material(
         color: Colors.transparent,
@@ -51,7 +51,7 @@ class SecondaryButton extends StatelessWidget {
                     label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: FlowTypography.labelLarge(color: FlowColors.textPrimary).copyWith(
+                    style: FlowTypography.labelLarge(color: FlowColors.textPrimaryOf(context)).copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                   ),

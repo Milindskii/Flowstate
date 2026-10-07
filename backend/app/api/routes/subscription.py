@@ -14,6 +14,7 @@ from ...schemas.ai import (
 from ...services.ai_economy_service import AIEconomyService
 
 router = APIRouter(prefix="/subscription", tags=["Pro Subscription & Purchases"])
+_RETIRED_DETAIL = "This endpoint has been retired. Pro status is managed by your Flowstate account."
 
 @router.get("/plans", response_model=List[ProPlanInfo])
 def get_pro_plans():
@@ -41,16 +42,10 @@ def verify_google_play_subscription(
     db: Session = Depends(get_db),
 ):
     """
-    Server-side Google Play subscription verification contract.
-    Validates token and unlocks Pro entitlement. Rejects unverified or simulated requests.
+    Retired. Pro is never unlocked by a token the client hands us: it is activated server-side from a verified
+    payment-provider webhook and read back through the entitlement endpoints.
     """
-    return AIEconomyService.verify_google_play_purchase(
-        db=db,
-        user_id=current_user.id,
-        purchase_token=request.purchase_token,
-        product_id=request.product_id,
-        order_id=request.order_id,
-    )
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail=_RETIRED_DETAIL)
 
 @router.post("/streak-recover")
 def recover_streak_purchase(
@@ -58,13 +53,5 @@ def recover_streak_purchase(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    ₹50 Streak Recovery Google Play Purchase Verification Contract.
-    Strictly server-verified. Never grants streak restoration without a valid token.
-    """
-    return AIEconomyService.verify_streak_recovery(
-        db=db,
-        user_id=current_user.id,
-        purchase_token=request.purchase_token,
-        cost_inr=request.cost_inr,
-    )
+    """Retired: a client-reported purchase is never trusted. Streak recovery will return with server-side billing."""
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail=_RETIRED_DETAIL)

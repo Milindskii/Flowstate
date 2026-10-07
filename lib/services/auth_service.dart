@@ -92,13 +92,28 @@ class AuthService {
 
       // Listen to real-time auth state changes
       Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+        final event = data.event;
         final newSession = data.session;
-        _token = newSession?.accessToken;
-        _api.setAuthToken(_token);
-        if (newSession?.user != null) {
-          _currentUser = AuthUser.fromSupabase(newSession!.user);
-        } else {
+
+        if (event == AuthChangeEvent.signedOut) {
+          _token = null;
+          _api.setAuthToken(null);
           _currentUser = null;
+          return;
+        }
+
+        if (newSession != null) {
+          _token = newSession.accessToken;
+          _api.setAuthToken(_token);
+          _currentUser = AuthUser.fromSupabase(newSession.user);
+        } else {
+          // If event has null session, only clear if Supabase client also confirms no session
+          final liveSession = Supabase.instance.client.auth.currentSession;
+          if (liveSession == null) {
+            _token = null;
+            _api.setAuthToken(null);
+            _currentUser = null;
+          }
         }
       });
     } catch (_) {
@@ -106,17 +121,59 @@ class AuthService {
     }
   }
 
-  AuthUser? get currentUser => _currentUser;
-  String? get token => _token;
-  bool get isAuthenticated => (_token != null && _token!.isNotEmpty) && _currentUser != null;
+  AuthUser? get currentUser {
+    if (_currentUser != null && !_currentUser!.id.startsWith('guest_')) {
+      return _currentUser;
+    }
+    try {
+      final supaUser = Supabase.instance.client.auth.currentUser;
+      if (supaUser != null) {
+        _currentUser = AuthUser.fromSupabase(supaUser);
+        return _currentUser;
+      }
+    } catch (_) {}
+    return _currentUser;
+  }
+
+  String? get token {
+    if (_token != null && _token!.isNotEmpty) return _token;
+    try {
+      return Supabase.instance.client.auth.currentSession?.accessToken;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool get isAuthenticated {
+    try {
+      final liveSession = Supabase.instance.client.auth.currentSession;
+      if (liveSession != null && !liveSession.isExpired) {
+        return true;
+      }
+    } catch (_) {}
+    return ((_token != null && _token!.isNotEmpty) || _api.isAuthenticated) &&
+        _currentUser != null &&
+        !_currentUser!.id.startsWith('guest_');
+  }
 
   Future<AuthUser?> restoreSession() async {
     try {
-      final session = Supabase.instance.client.auth.currentSession;
+      var session = Supabase.instance.client.auth.currentSession;
+      if (session == null) {
+        // Brief window for Supabase on web or storage to finish loading
+        await Future.delayed(const Duration(milliseconds: 150));
+        session = Supabase.instance.client.auth.currentSession;
+      }
       if (session != null) {
-        _token = session.accessToken;
+        if (session.isExpired) {
+          try {
+            final refreshRes = await Supabase.instance.client.auth.refreshSession();
+            session = refreshRes.session ?? session;
+          } catch (_) {}
+        }
+        _token = session?.accessToken;
         _api.setAuthToken(_token);
-        final user = Supabase.instance.client.auth.currentUser;
+        final user = Supabase.instance.client.auth.currentUser ?? session?.user;
         if (user != null) {
           _currentUser = AuthUser.fromSupabase(user);
           return _currentUser;
@@ -143,13 +200,15 @@ class AuthService {
       email: email.trim(),
       password: password,
     );
-    _token = res.session?.accessToken;
-    _api.setAuthToken(_token);
-    if (res.user != null) {
-      _currentUser = AuthUser.fromSupabase(res.user!);
-      return _currentUser!;
+    final session = res.session;
+    if (session == null || session.accessToken.isEmpty) {
+      throw const AuthException('Login succeeded but no valid session was returned. Please verify your email.');
     }
-    throw Exception('Login succeeded but user profile was not returned.');
+    _token = session.accessToken;
+    _api.setAuthToken(_token);
+    final user = res.user ?? session.user;
+    _currentUser = AuthUser.fromSupabase(user);
+    return _currentUser!;
   }
 
   Future<AuthUser> signUpWithEmail(String email, String password) async {
@@ -157,13 +216,52 @@ class AuthService {
       email: email.trim(),
       password: password,
     );
-    _token = res.session?.accessToken;
-    _api.setAuthToken(_token);
-    if (res.user != null) {
-      _currentUser = AuthUser.fromSupabase(res.user!);
+    var session = res.session;
+    if (session == null) {
+      // Attempt immediate sign in in case user is confirmed or auto-login is supported
+      try {
+        final signInRes = await Supabase.instance.client.auth.signInWithPassword(
+          email: email.trim(),
+          password: password,
+        );
+        session = signInRes.session;
+      } catch (_) {
+        // If signInWithPassword fails, session remains null
+      }
+    }
+
+    if (session != null && session.accessToken.isNotEmpty) {
+      _token = session.accessToken;
+      _api.setAuthToken(_token);
+      final user = res.user ?? session.user;
+      _currentUser = AuthUser.fromSupabase(user);
       return _currentUser!;
     }
-    throw Exception('Sign up succeeded but user profile was not returned.');
+
+    // When email verification is required by Supabase, no session is issued yet.
+    // Throw actionable AuthException so the user is informed to verify their email
+    // instead of silently entering the app without an authenticated session.
+    throw const AuthException(
+      'Account created! Please check your email to verify your account before logging in.',
+    );
+  }
+
+  /// Resolves the OAuth redirect URL dynamically based on the current platform and environment.
+  /// On Flutter Web: returns the dynamic browser origin (e.g. 'http://localhost:64823') derived
+  /// from [Uri.base.origin] so Supabase redirects back to the active port.
+  /// On Mobile/Native: returns the custom deep link scheme ('io.flowstate://login-callback').
+  static String? getOAuthRedirectUrl({bool isWeb = kIsWeb, Uri? baseUri}) {
+    if (isWeb) {
+      try {
+        final uri = baseUri ?? Uri.base;
+        final origin = uri.origin;
+        if (origin.isNotEmpty && origin != 'null') {
+          return origin;
+        }
+      } catch (_) {}
+      return null;
+    }
+    return 'io.flowstate://login-callback';
   }
 
   Future<AuthUser> loginWithGoogle({Duration timeout = const Duration(minutes: 2)}) async {
@@ -195,7 +293,7 @@ class AuthService {
 
       final launched = await Supabase.instance.client.auth.signInWithOAuth(
         OAuthProvider.google,
-        redirectTo: kIsWeb ? null : 'io.flowstate://login-callback',
+        redirectTo: getOAuthRedirectUrl(),
       );
 
       if (!launched) {

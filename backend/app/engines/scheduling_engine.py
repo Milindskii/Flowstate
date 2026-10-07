@@ -16,7 +16,6 @@ Core Principles:
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta, timezone, time
 from zoneinfo import ZoneInfo
-import re
 
 # ── TASK TYPE & PRIORITY VALUES ───────────────────────────────────────────────
 TASK_VALUE_MAP: Dict[str, float] = {
@@ -196,7 +195,9 @@ class PlanningProfile:
             weights: List[float] = []
             pm_focus_ratings: List[int] = []
 
-            for idx, perf in enumerate(sorted_history[:30]):
+            # legacy rows (before 2026-10-07) carried made-up scores and planned-as-actual minutes: not evidence
+            real_history = [p for p in sorted_history if getattr(p, "provenance", None) != "legacy"]
+            for idx, perf in enumerate(real_history[:30]):
                 w = 0.90 ** idx  # Exponential recency weighting
                 est = getattr(perf, "estimated_minutes", None)
                 act = getattr(perf, "actual_minutes", None)
@@ -206,7 +207,7 @@ class PlanningProfile:
                 start_dt = getattr(perf, "actual_start", None) or getattr(perf, "scheduled_start", None)
                 if start_dt and hasattr(start_dt, "hour") and 13 <= start_dt.hour <= 17:
                     f_score = getattr(perf, "focus_score", None)
-                    if f_score is not None:
+                    if f_score is not None and getattr(perf, "provenance", None) in (None, "reflection"):
                         pm_focus_ratings.append(int(f_score))
 
             if weights and sum(weights) > 0:
@@ -302,8 +303,12 @@ class SchedulingEngine:
         performance_history: Optional[List[Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Builds an optimized timeline for tasks strictly adhering to cognitive windows,
-        hard constraints, and current local time.
+        LEGACY compatibility entry point (kept so existing callers/tests keep working).
+
+        No product path calls this any more: Build My Day, Replan, the Calendar and Today all go through
+        ``app.engines.planner.plan`` (spec section 4). Note the legacy semantics here: any task with a
+        ``scheduled_start`` is treated as an immovable anchor and anchors are not overlap-checked.
+        New code must use the planner.
         """
         if not tasks:
             return []
@@ -450,6 +455,50 @@ class SchedulingEngine:
         Evaluates candidate slots for a task across today and tomorrow,
         eliminates hard constraints, scores each slot, and returns the highest-scoring slot.
         """
+        return self.evaluate_best_slot_with_reason(task, existing_busy, profile, now_local, tz)[0]
+
+    @staticmethod
+    def buffer_minutes_for(task_type: str) -> int:
+        """Soft gap kept after a task (15 min for cognitively heavy work, else 10)."""
+        return 15 if task_type in ("deep_work", "study") else 10
+
+    def urgency_sort_key(self, task: Any, now_local: datetime, tz: ZoneInfo):
+        """Placement order: overdue -> due today -> high/urgent -> rest; then priority, then type weight."""
+        deadline = getattr(task, "deadline_at", None)
+        is_overdue = False
+        is_due_today = False
+        if deadline:
+            d = deadline if getattr(deadline, "tzinfo", None) is not None else deadline.replace(tzinfo=tz)
+            if d < now_local:
+                is_overdue = True
+            elif d.astimezone(tz).date() == now_local.date():
+                is_due_today = True
+        pri = str(getattr(task, "priority", "medium") or "medium").lower()
+        pri_weight = TASK_VALUE_MAP.get(pri, 0.5)
+        type_weight = TASK_TYPE_WEIGHTS.get(self._resolve_task_type_str(task), 0.5)
+        if is_overdue:
+            rank = 0
+        elif is_due_today:
+            rank = 1
+        elif pri in ("urgent", "high"):
+            rank = 2
+        else:
+            rank = 3
+        return (rank, -pri_weight, -type_weight)
+
+    def evaluate_best_slot_with_reason(
+        self,
+        task: Any,
+        existing_busy: List[Tuple[datetime, datetime]],
+        profile: PlanningProfile,
+        now_local: datetime,
+        tz: ZoneInfo,
+    ) -> Tuple[Optional[SlotScoreResult], Optional[str]]:
+        """Same as evaluate_best_slot_for_task but also explains a None result.
+
+        Reasons: explicit_time_in_past | explicit_time_conflict | explicit_time_after_deadline |
+        no_feasible_slot.
+        """
         dur = getattr(task, "estimated_minutes", 45) or 45
         t_type = self._resolve_task_type_str(task)
         deadline = getattr(task, "deadline_at", None)
@@ -461,8 +510,9 @@ class SchedulingEngine:
         temporal = getattr(task, "temporal", None)
         target_date = getattr(temporal, "target_date", None) if temporal else None
         earliest_start = getattr(temporal, "earliest_start", None) if temporal else None
-        latest_end = getattr(temporal, "latest_end", None) if temporal else None
+        user_latest_end = getattr(temporal, "latest_end", None) if temporal else None
         relative_before = getattr(temporal, "relative_before", None) if temporal else None
+        relative_after = getattr(temporal, "relative_after", None) if temporal else None
         preferred_start = getattr(temporal, "preferred_start", None) if temporal else None
         preferred_window_start = getattr(temporal, "preferred_window_start", None) if temporal else None
         preferred_window_end = getattr(temporal, "preferred_window_end", None) if temporal else None
@@ -473,10 +523,41 @@ class SchedulingEngine:
             return value if value.tzinfo else value.replace(tzinfo=tz)
 
         earliest_start = _aware(earliest_start)
-        latest_end = _aware(latest_end)
+        user_latest_end = _aware(user_latest_end)
         preferred_start = _aware(preferred_start)
         preferred_window_start = _aware(preferred_window_start)
         preferred_window_end = _aware(preferred_window_end)
+
+        # ── MEAL ANCHOR TABLE ──────────────────────────────────────────────────
+        # Default meal times (overridable by profile meal times when available).
+        # Provenance: source=default — treated as soft context, not hard medical fact.
+        MEAL_DEFAULT_TIMES: Dict[str, time] = {
+            "breakfast": time(7, 30),
+            "lunch":     time(13, 0),
+            "dinner":    time(20, 0),
+        }
+
+        # Extract time-of-day component from relative constraints so we can re-anchor
+        # them per candidate day. This is the root fix for the 'after dinner tomorrow'
+        # bug where earliest_start was pinned to TODAY's 20:00.
+        relative_after_time: Optional[time] = None
+        relative_before_time: Optional[time] = None
+        if relative_after and relative_after in MEAL_DEFAULT_TIMES:
+            relative_after_time = MEAL_DEFAULT_TIMES[relative_after]
+        # A plain `earliest_start` is an ABSOLUTE instant and is never re-anchored onto other days.
+        # (It used to be: "not before tomorrow 09:30" then allowed today after 09:30, so a postponed task
+        # could land earlier than the time the user pushed it to.) Only meal-relative bounds are per-day.
+        if relative_before and relative_before in MEAL_DEFAULT_TIMES:
+            relative_before_time = MEAL_DEFAULT_TIMES[relative_before]
+        elif user_latest_end and relative_before and relative_before not in ("bedtime",):
+            relative_before_time = user_latest_end.time()
+
+        # Extract preferred_window time-of-day components for per-candidate-day re-anchoring.
+        # BUG FIX: preferred_window dates are anchored to today at parse time.
+        # When a candidate slot is on tomorrow, the window must be projected onto tomorrow's date.
+        pref_window_time_start: Optional[time] = preferred_window_start.time() if preferred_window_start else None
+        pref_window_time_end: Optional[time] = preferred_window_end.time() if preferred_window_end else None
+        pref_start_time: Optional[time] = preferred_start.time() if preferred_start else None
 
         # Explicit starts are immutable anchors. The planner may explain them but must not move them.
         # EXCEPTION: A fixed_start in the past is invalid; fall through to candidate generation.
@@ -484,72 +565,104 @@ class SchedulingEngine:
         fixed_start = _aware(fixed_start)
         if fixed_start:
             # HARD INVARIANT: No newly scheduled task may be placed in the past.
-            if fixed_start < now_local:
-                # Past fixed time: do NOT honour it. Fall through to scoring
-                # so the scheduler finds the next best feasible future slot.
-                fixed_start = None
+            if fixed_start < now_local - timedelta(seconds=60):
+                # D6: an explicit time in the past is never silently moved.
+                return None, "explicit_time_in_past"
             else:
                 fixed_end = fixed_start + timedelta(minutes=dur)
                 has_collision = any(fixed_start < b_end and fixed_end > b_start for b_start, b_end in existing_busy)
                 violates_deadline = bool(deadline and fixed_end > deadline)
-                if has_collision or violates_deadline:
-                    return None
+                if violates_deadline:
+                    return None, "explicit_time_after_deadline"
+                if has_collision:
+                    return None, "explicit_time_conflict"
+                day_diff = max(0, (fixed_start.date() - now_local.date()).days)
                 return SlotScoreResult(
-                    slot=CandidateSlot(fixed_start, fixed_end, 0 if fixed_start.date() == now_local.date() else 1),
+                    slot=CandidateSlot(fixed_start, fixed_end, day_diff),
                     score=1.0,
                     primary_reason="explicit_time",
                     secondary_reasons=["user_specified_time"],
                     explanation=f"Scheduled at your requested time ({fixed_start.strftime('%I:%M %p').lstrip('0')}).",
-                )
+                ), None
 
         pri_str = str(getattr(task, "priority", "medium") or "medium").lower()
 
         candidate_slots: List[CandidateSlot] = []
 
-        # ── Day 0 (Today) ──
+        # ── Dynamic day-range candidate generation ─────────────────────────────
+        # CRITICAL FIX: The scheduler previously only generated candidates for
+        # today and tomorrow. Any target_date further away (e.g. "Gym Friday"
+        # said on a Monday) produced zero feasible slots → fell back to
+        # "Tomorrow 4:30 PM", ignoring the user's intent entirely.
+        #
+        # New behaviour:
+        #   - When target_date is set: generate ONLY the target day (maximum
+        #     8 days ahead).
+        #   - When deadline is set: generate days from today up to the deadline
+        #     day (maximum 8 days).
+        #   - Otherwise: generate today + tomorrow (legacy, unchanged).
+        #
+        # day_offset is kept as the integer distance from today so the
+        # explanation engine can still say "Today" / "Tomorrow" / weekday name.
+
         today_date = now_local.date()
-        wake_h = profile.weekend_wake_time if today_date.weekday() >= 5 else profile.weekday_wake_time
-        today_day_start = datetime.combine(today_date, time(int(wake_h), int((wake_h % 1) * 60)), tzinfo=tz)
-        today_bedtime = datetime.combine(today_date, time(int(profile.bedtime), int((profile.bedtime % 1) * 60)), tzinfo=tz)
-        cursor_today = max(now_local, today_day_start)
-        # Round up to 15m
-        rem = cursor_today.minute % 15
-        if rem > 0:
-            cursor_today += timedelta(minutes=(15 - rem))
-            cursor_today = cursor_today.replace(second=0, microsecond=0)
+        MAX_LOOKAHEAD_DAYS = 8
 
-        # Sleep remains protected, but an imminent explicit deadline can use a
-        # small, explainable overrun rather than being made impossible outright.
-        today_latest_end = today_bedtime
-        if deadline and deadline > now_local and (deadline - now_local) <= timedelta(hours=14):
-            today_latest_end = today_bedtime + timedelta(minutes=90)
+        # Determine which dates to cover
+        if target_date:
+            days_to_cover = [(target_date - today_date).days]
+            days_to_cover = [d for d in days_to_cover if 0 <= d <= MAX_LOOKAHEAD_DAYS]
+        elif deadline:
+            dl_date = deadline.date()
+            span = min((dl_date - today_date).days, MAX_LOOKAHEAD_DAYS)
+            days_to_cover = list(range(max(0, span - 1), span + 1)) if span >= 0 else [0]
+        else:
+            # No constraint: cover today and tomorrow (existing behaviour)
+            days_to_cover = [0, 1]
 
-        while cursor_today + timedelta(minutes=dur) <= today_latest_end:
-            c_start = cursor_today
-            c_end = cursor_today + timedelta(minutes=dur)
-            c_h = c_start.hour + c_start.minute / 60.0
-            is_peak = (profile.preferred_peak_start <= c_h <= profile.preferred_peak_end)
-            is_dip = (profile.preferred_dip_start <= c_h <= profile.preferred_dip_end)
-            buffer = 15 if t_type in ("deep_work", "study") else 10
-            candidate_slots.append(CandidateSlot(c_start, c_end, day_offset=0, is_peak_window=is_peak, is_dip_window=is_dip, buffer_minutes_after=buffer))
-            cursor_today += timedelta(minutes=15)
+        if not days_to_cover:
+            days_to_cover = [0, 1]  # safe fallback
 
-        # ── Day 1 (Tomorrow) ──
-        tomorrow_date = today_date + timedelta(days=1)
-        tmw_wake_h = profile.weekend_wake_time if tomorrow_date.weekday() >= 5 else profile.weekday_wake_time
-        tmw_start = datetime.combine(tomorrow_date, time(int(tmw_wake_h), int((tmw_wake_h % 1) * 60)), tzinfo=tz)
-        tmw_bedtime = datetime.combine(tomorrow_date, time(int(profile.bedtime), int((profile.bedtime % 1) * 60)), tzinfo=tz)
-        cursor_tmw = tmw_start
+        for day_offset in days_to_cover:
+            cand_date = today_date + timedelta(days=day_offset)
+            wake_h = profile.weekend_wake_time if cand_date.weekday() >= 5 else profile.weekday_wake_time
+            day_start_dt = datetime.combine(cand_date, time(int(wake_h), int((wake_h % 1) * 60)), tzinfo=tz)
+            # Clamp bedtime hour to 23 (24 means midnight end-of-day; Python time() only accepts 0-23)
+            bedtime_h = min(int(profile.bedtime), 23)
+            bedtime_m = int((profile.bedtime % 1) * 60)
+            day_bedtime_dt = datetime.combine(cand_date, time(bedtime_h, bedtime_m), tzinfo=tz)
 
-        while cursor_tmw + timedelta(minutes=dur) <= tmw_bedtime:
-            c_start = cursor_tmw
-            c_end = cursor_tmw + timedelta(minutes=dur)
-            c_h = c_start.hour + c_start.minute / 60.0
-            is_peak = (profile.preferred_peak_start <= c_h <= profile.preferred_peak_end)
-            is_dip = (profile.preferred_dip_start <= c_h <= profile.preferred_dip_end)
-            buffer = 15 if t_type in ("deep_work", "study") else 10
-            candidate_slots.append(CandidateSlot(c_start, c_end, day_offset=1, is_peak_window=is_peak, is_dip_window=is_dip, buffer_minutes_after=buffer))
-            cursor_tmw += timedelta(minutes=15)
+            if day_offset == 0:
+                cursor = max(now_local, day_start_dt)
+                # Zero sub-minute noise (rounding up), then round up to the 15-minute grid
+                if cursor.second or cursor.microsecond:
+                    cursor = cursor.replace(second=0, microsecond=0) + timedelta(minutes=1)
+                rem = cursor.minute % 15
+                if rem > 0:
+                    cursor += timedelta(minutes=(15 - rem))
+                # Imminent deadline: allow small bedtime overrun
+                day_limit = day_bedtime_dt
+                if deadline and deadline > now_local and (deadline - now_local) <= timedelta(hours=14):
+                    day_limit = day_bedtime_dt + timedelta(minutes=90)
+            else:
+                cursor = day_start_dt
+                day_limit = day_bedtime_dt
+
+            while cursor + timedelta(minutes=dur) <= day_limit:
+                c_start = cursor
+                c_end = cursor + timedelta(minutes=dur)
+                c_h = c_start.hour + c_start.minute / 60.0
+                is_peak = (profile.preferred_peak_start <= c_h <= profile.preferred_peak_end)
+                is_dip = (profile.preferred_dip_start <= c_h <= profile.preferred_dip_end)
+                buffer = 15 if t_type in ("deep_work", "study") else 10
+                candidate_slots.append(CandidateSlot(
+                    c_start, c_end,
+                    day_offset=day_offset,
+                    is_peak_window=is_peak,
+                    is_dip_window=is_dip,
+                    buffer_minutes_after=buffer,
+                ))
+                cursor += timedelta(minutes=15)
 
         # ── HARD CONSTRAINTS FILTER ──
         feasible_slots = []
@@ -570,17 +683,33 @@ class SchedulingEngine:
             # 3. User-stated temporal bounds. These are hard; preferences are scored below.
             if target_date and slot.start_time.date() != target_date:
                 continue
-            if earliest_start and slot.start_time < earliest_start:
+
+            # ── Re-anchor relative meal constraints per candidate day ──────────
+            # CRITICAL FIX: earliest_start / latest_end from meal references
+            # (after dinner, after lunch, after breakfast) are stored with today's
+            # date at parse time. When the candidate slot is on tomorrow, we must
+            # re-evaluate the bound against TOMORROW's meal time, not today's.
+            # E.g. 'after dinner tomorrow' must mean tomorrow 20:00, not today 20:00.
+            slot_date = slot.start_time.date()
+            effective_earliest = earliest_start
+            effective_latest = user_latest_end
+
+            if relative_after_time and (not earliest_start or earliest_start.date() != slot_date):
+                # Re-anchor: earliest = same time-of-day on the candidate day
+                effective_earliest = datetime.combine(slot_date, relative_after_time, tzinfo=tz)
+            if relative_before_time and relative_before not in ("bedtime",) and (not user_latest_end or user_latest_end.date() != slot_date):
+                effective_latest = datetime.combine(slot_date, relative_before_time, tzinfo=tz)
+
+            if effective_earliest and slot.start_time < effective_earliest:
                 continue
-            if latest_end and slot.end_time > latest_end:
+            if effective_latest and slot.end_time > effective_latest:
                 continue
+
             if relative_before == "bedtime":
-                bedtime = datetime.combine(
-                    slot.start_time.date(),
-                    time(int(profile.bedtime), int((profile.bedtime % 1) * 60)),
-                    tzinfo=tz,
-                )
-                if slot.end_time > bedtime:
+                _bt_h = min(int(profile.bedtime), 23)
+                _bt_m = int((profile.bedtime % 1) * 60)
+                bedtime_dt = datetime.combine(slot_date, time(_bt_h, _bt_m), tzinfo=tz)
+                if slot.end_time > bedtime_dt:
                     continue
 
             # 4. No past scheduling
@@ -591,21 +720,31 @@ class SchedulingEngine:
 
         if not feasible_slots:
             # A deadline or an explicit temporal bound may never be bypassed by a fallback.
-            if deadline or target_date or earliest_start or latest_end or relative_before:
-                return None
-            # No hard user constraint exists: preserve the legacy earliest-available fallback.
+            if deadline or target_date or earliest_start or user_latest_end or relative_before:
+                return None, "no_feasible_slot"
+            # No hard user constraint exists: earliest opening after the busy schedule,
+            # but never past that day's bedtime (finding 18).
             fallback_start = now_local + timedelta(minutes=5)
             if existing_busy:
                 max_busy_end = max(b[1] for b in existing_busy)
                 fallback_start = max(fallback_start, max_busy_end + timedelta(minutes=10))
-            fb_slot = CandidateSlot(fallback_start, fallback_start + timedelta(minutes=dur), day_offset=0)
+            fallback_start = fallback_start.replace(second=0, microsecond=0)
+            fb_end = fallback_start + timedelta(minutes=dur)
+            fb_bed = datetime.combine(
+                fallback_start.date(), time(min(int(profile.bedtime), 23), int((profile.bedtime % 1) * 60)), tzinfo=tz
+            )
+            if fb_end > fb_bed or fb_end.date() != fallback_start.date():
+                return None, "no_feasible_slot"
+            fb_slot = CandidateSlot(
+                fallback_start, fb_end, day_offset=max(0, (fallback_start.date() - now_local.date()).days)
+            )
             return SlotScoreResult(
                 slot=fb_slot,
                 score=0.1,
                 primary_reason="available_slot",
                 secondary_reasons=["best_fit_in_busy_schedule"],
                 explanation="Scheduled into the earliest available opening in your schedule.",
-            )
+            ), None
 
         # ── SLOT SCORING ──
         best_result: Optional[SlotScoreResult] = None
@@ -632,12 +771,27 @@ class SchedulingEngine:
             secondary_reasons: List[str] = []
 
             c_h = slot.start_time.hour + slot.start_time.minute / 60.0
+            slot_date = slot.start_time.date()
+
+            # ── Re-anchor preferred_window onto the candidate day ─────────────
+            # BUG FIX: preferred_window_start/end are parsed with today's date.
+            # When a candidate slot is on tomorrow, we must compare window times
+            # against the same time-of-day on the SLOT's date, not today's date.
+            # E.g. 'around 6 PM' (22:30 now) must score tomorrow 18:00 high, not low.
+            slot_pref_window_start: Optional[datetime] = None
+            slot_pref_window_end: Optional[datetime] = None
+            slot_pref_start: Optional[datetime] = None
+            if pref_window_time_start and pref_window_time_end:
+                slot_pref_window_start = datetime.combine(slot_date, pref_window_time_start, tzinfo=tz)
+                slot_pref_window_end = datetime.combine(slot_date, pref_window_time_end, tzinfo=tz)
+            if pref_start_time:
+                slot_pref_start = datetime.combine(slot_date, pref_start_time, tzinfo=tz)
 
             # Flexible user timing is a soft preference, not an invented fixed appointment.
             # preferred_window_start/end: reward slots inside the window, penalise slots outside.
             # preferred_start ("around X PM"): score by proximity — closer = higher reward.
-            if preferred_window_start and preferred_window_end:
-                if preferred_window_start <= slot.start_time <= preferred_window_end:
+            if slot_pref_window_start and slot_pref_window_end:
+                if slot_pref_window_start <= slot.start_time <= slot_pref_window_end:
                     score += 0.60
                     secondary_reasons.append("matches_preferred_time_window")
                     if primary_reason == "available_slot":
@@ -647,8 +801,8 @@ class SchedulingEngine:
                     # This is stronger than the old -0.20 so afternoon/evening/after-dinner
                     # preferences actually beat the default morning-focus heuristic.
                     score -= 0.55
-            elif preferred_start:
-                distance_minutes = abs((slot.start_time - preferred_start).total_seconds()) / 60.0
+            elif slot_pref_start:
+                distance_minutes = abs((slot.start_time - slot_pref_start).total_seconds()) / 60.0
                 # Inverse-distance reward: 0 min away = +0.60, 45 min away = +0.15, 90+ min = -0.20
                 if distance_minutes <= 15:
                     score += 0.60
@@ -680,6 +834,7 @@ class SchedulingEngine:
             if deadline:
                 hours_until = (deadline - slot.start_time).total_seconds() / 3600.0
                 dl_date = deadline.date()
+                tomorrow_date = today_date + timedelta(days=1)
                 if hours_until <= 14 and (dl_date <= today_date or (dl_date == tomorrow_date and deadline.hour <= 10)):
                     requires_tonight_for_deadline = True
 
@@ -766,8 +921,11 @@ class SchedulingEngine:
                         primary_reason = "sleep_protection"
                     secondary_reasons.append("protects_sleep_schedule")
 
-            # General late-night safety rule: do not schedule non-urgent tasks late tonight (e.g. 10:15 PM)
-            if slot.day_offset == 0 and c_h >= 20.0 and not requires_tonight_for_deadline:
+            # General late-night safety rule: do not schedule non-urgent tasks late at night (>=20:00).
+            # Applied to BOTH today and tomorrow — without this, tomorrow evening is artificially
+            # cheaper than today evening, causing 'after dinner' to always roll to tomorrow.
+            # Explicitly-stated evening/after-dinner preferences still win (+0.60 window bonus >> -0.35).
+            if c_h >= 20.0 and not requires_tonight_for_deadline:
                 score -= 0.35
 
             # 6. Anti-Procrastination Rule:
@@ -785,7 +943,13 @@ class SchedulingEngine:
 
             # Formulate user-facing explanation
             time_display = slot.start_time.strftime("%I:%M %p").lstrip("0")
-            day_display = "Today" if slot.day_offset == 0 else "Tomorrow"
+            if slot.day_offset == 0:
+                day_display = "Today"
+            elif slot.day_offset == 1:
+                day_display = "Tomorrow"
+            else:
+                # e.g. "Friday" for a slot 4 days from now
+                day_display = slot.start_time.strftime("%A")
 
             if primary_reason == "peak_window":
                 expl = f"{day_display} at {time_display} — That's one of your strongest focus windows with a clear uninterrupted block."
@@ -819,7 +983,7 @@ class SchedulingEngine:
                 highest_score = score
                 best_result = result
 
-        return best_result
+        return best_result, (None if best_result else "no_feasible_slot")
 
     @staticmethod
     def _resolve_task_type_str(task: Any) -> str:

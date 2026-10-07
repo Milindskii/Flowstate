@@ -2,7 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flowstate/services/timezone_service.dart';
+import 'package:flowstate/services/ai_plan_service.dart';
 import 'package:flowstate/screens/brain_dump_sheet.dart';
+import 'package:flowstate/components/companion/noya_reaction_controller.dart';
+import 'package:flowstate/components/noya_companion_view.dart';
+import 'package:flowstate/components/noya_motion_view.dart';
 import 'package:flowstate/screens/pro_subscription_screen.dart';
 import 'package:flowstate/screens/profile_settings_tab.dart';
 import 'package:flowstate/components/ai_economy_sheets.dart';
@@ -14,6 +19,7 @@ import 'package:flowstate/providers/theme_provider.dart';
 import 'package:flowstate/providers/flow_provider.dart';
 import 'package:flowstate/services/api_service.dart';
 import 'package:flowstate/services/task_parse_service.dart';
+import 'package:flowstate/services/flow_clock.dart';
 import 'package:flowstate/engines/scheduling_engine.dart';
 import 'package:flowstate/models/readiness_model.dart';
 
@@ -25,17 +31,31 @@ class MockAISubscriptionApiService extends ApiService {
   bool throwOnAiPlan = false;
   bool malformedAiPlan = false;
 
+  /// Opt-in: model the server's entitlement contract. A new account has ONE complimentary AI plan; only a
+  /// successful AI plan spends it, a failed attempt never does, and replaying a request key never spends it twice.
+  /// (The server's own accounting is covered in backend/tests/test_ai_entitlement.py; this fake lets the client's
+  /// behaviour around it be asserted: key reuse, which calls it makes, and what the user sees.)
+  bool trackEntitlement = false;
+  int freeUsesConsumed = 0;
+  final List<String?> planKeys = [];
+  final Map<String, dynamic> _planCache = {};
+
   @override
   Future<dynamic> post(String endpoint, {dynamic body}) async {
     if (endpoint == '/api/v1/ai/plan') {
       aiPlanCallCount++;
+      final key = body is Map ? body['idempotency_key'] as String? : null;
+      planKeys.add(key);
+      if (trackEntitlement && key != null && _planCache.containsKey(key)) {
+        return _planCache[key]; // replay: the stored plan, nothing charged again
+      }
       if (throwOnAiPlan) {
         throw const ApiException('Network connection failed');
       }
       if (malformedAiPlan) {
         return {'tasks': 'invalid-not-a-list', 'usage': {}};
       }
-      return {
+      final response = {
         'tasks': [
           {
             'title': 'Project deliverable',
@@ -60,6 +80,11 @@ class MockAISubscriptionApiService extends ApiService {
           'hourly_requests_remaining': 4,
         }
       };
+      if (trackEntitlement) {
+        freeUsesConsumed++;
+        if (key != null) _planCache[key] = response;
+      }
+      return response;
     }
     if (endpoint == '/api/v1/tasks') {
       if (body is Map) {
@@ -78,6 +103,23 @@ class MockAISubscriptionApiService extends ApiService {
         'status': 'pending',
       };
     }
+    if (endpoint == '/api/v1/tasks/batch-create-and-schedule') {
+      // Return created tasks so confirmCandidates can insert them into _tasks.
+      final items = (body is Map ? ((body['tasks'] ?? body['items']) as List? ?? []) : []);
+      int i = 0;
+      final tasks = items.map((item) {
+        final m = Map<String, dynamic>.from(item as Map);
+        m['id'] ??= 'task-batch-${DateTime.now().millisecondsSinceEpoch}-${i++}';
+        m['status'] ??= 'pending';
+        m['type'] ??= m['task_type'] ?? 'deep_work';
+        m['estimated_minutes'] ??= m['estimated_minutes'] ?? 30;
+        m['difficulty'] ??= 'medium';
+        m['priority'] ??= 'medium';
+        m['priority_source'] ??= 'unspecified';
+        return m;
+      }).toList();
+      return <String, dynamic>{'tasks': tasks, 'schedule': []};
+    }
     return <String, dynamic>{};
   }
 
@@ -95,12 +137,12 @@ class MockAISubscriptionApiService extends ApiService {
       return {
         'is_pro': returnPro,
         'subscription_tier': returnPro ? 'pro' : 'free',
-        'free_use_available': !returnFreeExhausted,
-        'free_uses_consumed': returnFreeExhausted ? 1 : 0,
+        'free_use_available': trackEntitlement ? freeUsesConsumed < 1 : !returnFreeExhausted,
+        'free_uses_consumed': trackEntitlement ? freeUsesConsumed : (returnFreeExhausted ? 1 : 0),
         'shields_available': shieldsCount,
         'shield_funded_uses': 0,
-        'can_use_ai': returnPro || !returnFreeExhausted || shieldsCount > 0,
-        'requires_shield': !returnPro && returnFreeExhausted && shieldsCount > 0,
+        'can_use_ai': returnPro || (trackEntitlement ? freeUsesConsumed < 1 : !returnFreeExhausted) || shieldsCount > 0,
+        'requires_shield': !returnPro && (trackEntitlement ? freeUsesConsumed >= 1 : returnFreeExhausted) && shieldsCount > 0,
         'hourly_requests_remaining': 5,
       };
     }
@@ -154,6 +196,9 @@ class MockAISubscriptionApiService extends ApiService {
   }
 }
 
+/// A fake whose complimentary AI plan is already spent: clear text plans locally with no AI call.
+MockAISubscriptionApiService _spentApi() => MockAISubscriptionApiService()..returnFreeExhausted = true;
+
 Widget createTestApp({
   required Widget child,
   ApiService? api,
@@ -191,9 +236,15 @@ Widget createTestApp({
 
 void main() {
   setUp(() {
+    FlowClock.enableAutoTick = false;
+    FlowClock().stopTimer();
     SharedPreferences.setMockInitialValues({
       kGeminiPrivacyAcceptedKey: true,
     });
+  });
+
+  tearDown(() {
+    FlowClock().stopTimer();
   });
 
   // ---------------------------------------------------------------------------
@@ -252,8 +303,10 @@ void main() {
       expect(find.textContaining('Voice'), findsNothing);
     });
 
-    testWidgets('2. Clear unformatted input parses locally WITHOUT calling Gemini', (tester) async {
-      final mockApi = MockAISubscriptionApiService();
+    // A new account's first plan is its complimentary AI plan (see the entitlement group below). Once that is
+    // spent, clear input plans locally and never calls AI.
+    testWidgets('2. Clear unformatted input parses locally WITHOUT calling AI once the complimentary use is spent', (tester) async {
+      final mockApi = _spentApi();
 
       await tester.pumpWidget(createTestApp(
         api: mockApi,
@@ -289,7 +342,7 @@ void main() {
     });
 
     testWidgets('3. Local parser schedules tasks; user confirmation creates tasks', (tester) async {
-      final mockApi = MockAISubscriptionApiService();
+      final mockApi = _spentApi(); // complimentary AI plan already used: the local parser plans
       final appState = AppStateProvider(customApi: mockApi);
 
       await tester.pumpWidget(createTestApp(
@@ -355,7 +408,9 @@ void main() {
       expect(find.text('Enhanced with AI'), findsOneWidget);
     });
 
-    testWidgets('5. Gemini network failure falls back seamlessly to local parser without blocking dialog', (tester) async {
+    // Spec 2026-10-03: an AI failure is never silent. The dump is kept and the user chooses
+    // Retry with AI or Use basic planner (labelled as not AI).
+    testWidgets('5. Gemini network failure shows an explicit choice, keeps the dump, never a blocking dialog', (tester) async {
       final mockApi = MockAISubscriptionApiService()..throwOnAiPlan = true;
 
       await tester.pumpWidget(createTestApp(
@@ -384,10 +439,16 @@ void main() {
       // NO blocking error dialog!
       expect(find.textContaining('Low internet connection'), findsNothing);
 
-      // Successfully fell back to local parser and displays subtle explanation
+      // Not silently replaced by a local plan: the failure is stated and the dump is kept.
+      expect(find.text('YOUR PLAN'), findsNothing);
+      expect(find.textContaining('AI planning failed'), findsOneWidget);
+      expect(find.text('Work on the stuff I told you about last week, dentist at 4'), findsOneWidget);
+
+      // The basic planner is one tap away and is labelled as not AI.
+      await tester.tap(find.text('Use basic planner'));
+      await tester.pumpAndSettle();
       expect(find.text('YOUR PLAN'), findsOneWidget);
-      expect(find.text('Planned by Flowstate'), findsOneWidget);
-      expect(find.textContaining("AI planning isn't available right now, so Flowstate used its built-in planner."), findsOneWidget);
+      expect(find.text('Basic plan (not AI)'), findsOneWidget);
 
       // Add & Schedule is ready and visible
       expect(find.byKey(const Key('add_and_schedule_button')), findsOneWidget);
@@ -574,7 +635,11 @@ void main() {
       await tester.tap(find.byKey(const Key('brain_dump_build_button')));
       await tester.pumpAndSettle();
 
-      // Successfully fell back to local parser without crashing
+      // No crash; the failure is explicit and the basic planner still produces a plan.
+      expect(tester.takeException(), isNull);
+      expect(find.textContaining('AI planning failed'), findsOneWidget);
+      await tester.tap(find.text('Use basic planner'));
+      await tester.pumpAndSettle();
       expect(find.text('YOUR PLAN'), findsOneWidget);
       expect(find.byKey(const Key('add_and_schedule_button')), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -625,6 +690,7 @@ void main() {
 
     testWidgets('16. Editing and re-building does not produce duplicate tasks', (tester) async {
       await tester.pumpWidget(createTestApp(
+        api: _spentApi(), // local planner (complimentary AI plan already used)
         child: Builder(
           builder: (ctx) => ElevatedButton(
             onPressed: () => showBrainDumpSheet(ctx),
@@ -719,6 +785,7 @@ void main() {
     // 6. Inferred priority requires visible confirmation
     testWidgets('6. Inferred/unspecified priority requires visible confirmation in preview', (tester) async {
       await tester.pumpWidget(createTestApp(
+        api: _spentApi(), // basic/local plan: it never invents a priority
         child: Builder(
           builder: (ctx) => ElevatedButton(
             onPressed: () => showBrainDumpSheet(ctx),
@@ -735,7 +802,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('YOUR PLAN'), findsOneWidget);
-      expect(find.text('Priority not specified'), findsWidgets);
+      // Spec 2026-10-03: a missing priority is never rendered as "Priority not specified",
+      // and the basic planner never invents one.
+      expect(find.text('Priority not specified'), findsNothing);
+      expect(find.textContaining('priority'), findsNothing);
     });
 
     // 7. Edit opens structured task editor
@@ -895,10 +965,11 @@ void main() {
 
     // 13. Add & Schedule creates and schedules exactly once
     testWidgets('13. Add & Schedule creates and schedules exactly once', (tester) async {
-      final mockApi = MockAISubscriptionApiService();
+      final mockApi = _spentApi(); // local plan (complimentary AI plan already used)
       final appState = AppStateProvider(customApi: mockApi);
 
       await tester.pumpWidget(createTestApp(
+        api: mockApi,
         customAppState: appState,
         child: Builder(
           builder: (ctx) => ElevatedButton(
@@ -961,25 +1032,47 @@ void main() {
     });
 
     // 16. Gemini remains optional
-    testWidgets('16. Gemini remains optional (offline network error falls back)', (tester) async {
-      final mockApi = MockAISubscriptionApiService()..throwOnAiPlan = true;
-      await tester.pumpWidget(createTestApp(
-        api: mockApi,
-        child: Builder(
-          builder: (ctx) => ElevatedButton(
-            onPressed: () => showBrainDumpSheet(ctx),
-            child: const Text('Open'),
+    // AI stays optional: an offline AI attempt is never silent and never a dead end. The failure is stated, the dump is
+    // kept, and the user chooses the basic planner (labelled as not AI). Once the complimentary use is spent, clear
+    // input plans locally without any AI attempt at all.
+    testWidgets('16. AI remains optional (offline error -> explicit basic planner; spent entitlement -> local, no AI call)', (tester) async {
+      Future<void> open(MockAISubscriptionApiService api) async {
+        await tester.pumpWidget(createTestApp(
+          api: api,
+          child: Builder(
+            builder: (ctx) => ElevatedButton(
+              onPressed: () => showBrainDumpSheet(ctx),
+              child: const Text('Open'),
+            ),
           ),
-        ),
-      ));
-      await tester.tap(find.text('Open'));
-      await tester.pumpAndSettle();
+        ));
+        await tester.tap(find.text('Open'));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'finish assignment');
+        await tester.pump();
+        await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+        await tester.pumpAndSettle();
+      }
 
-      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'finish assignment');
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      // (a) new account, AI unreachable: stated failure, dump kept, nothing silently planned.
+      final offline = MockAISubscriptionApiService()..throwOnAiPlan = true;
+      await open(offline);
+      expect(offline.aiPlanCallCount, 1);
+      expect(find.textContaining('AI planning failed'), findsOneWidget);
+      expect(find.text('YOUR PLAN'), findsNothing);
+      expect(find.text('finish assignment'), findsOneWidget);
+      // ... and the explicit basic planner still produces the plan.
+      await tester.tap(find.text('Use basic planner'));
       await tester.pumpAndSettle();
+      expect(find.text('YOUR PLAN'), findsOneWidget);
+      expect(find.text('Finish assignment'), findsOneWidget);
+      expect(find.text('Basic plan (not AI)'), findsOneWidget);
 
+      // (b) complimentary use spent: the same text plans locally and AI is never attempted.
+      await tester.pumpWidget(const SizedBox());
+      final spent = _spentApi()..throwOnAiPlan = true;
+      await open(spent);
+      expect(spent.aiPlanCallCount, 0);
       expect(find.text('YOUR PLAN'), findsOneWidget);
       expect(find.text('Finish assignment'), findsOneWidget);
     });
@@ -1070,6 +1163,125 @@ void main() {
 
       expect(find.byKey(const Key('brain_dump_text_field')), findsOneWidget);
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('Complimentary first AI plan (client behaviour around the entitlement)', () {
+    Future<void> openAndBuild(WidgetTester tester, MockAISubscriptionApiService api,
+        {String text = 'I need to get that project thing done sometime before my meeting'}) async {
+      await tester.pumpWidget(createTestApp(
+        api: api,
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), text);
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+    }
+
+    Future<bool> freeAvailable(MockAISubscriptionApiService api) async =>
+        ((await api.get('/api/v1/ai/status')) as Map)['free_use_available'] as bool;
+
+    testWidgets("a new account's first successful AI plan consumes the complimentary use exactly once", (tester) async {
+      final api = MockAISubscriptionApiService()..trackEntitlement = true;
+      expect(await freeAvailable(api), isTrue);
+      await openAndBuild(tester, api, text: 'finish python lab tomorrow, study arrays, dentist at 4, gym at 6');
+      // even clear input goes to the complimentary AI plan for a brand-new account
+      expect(api.aiPlanCallCount, 1);
+      expect(find.text('Enhanced with AI'), findsOneWidget);
+      expect(api.freeUsesConsumed, 1);
+      expect(await freeAvailable(api), isFalse);
+    });
+
+    testWidgets('a failed attempt does not consume the entitlement and the user stays eligible', (tester) async {
+      final api = MockAISubscriptionApiService()
+        ..trackEntitlement = true
+        ..throwOnAiPlan = true;
+      await openAndBuild(tester, api);
+      expect(find.textContaining('AI planning failed'), findsOneWidget);
+      expect(api.freeUsesConsumed, 0);
+      expect(await freeAvailable(api), isTrue);
+      expect(api.shieldsCount, 2);
+    });
+
+    testWidgets('retry after a failure succeeds with the same request key and nothing consumed beforehand', (tester) async {
+      final api = MockAISubscriptionApiService()
+        ..trackEntitlement = true
+        ..throwOnAiPlan = true;
+      await openAndBuild(tester, api);
+      expect(api.freeUsesConsumed, 0);
+
+      api.throwOnAiPlan = false; // the AI service is back
+      await tester.tap(find.text('Retry with AI'));
+      await tester.pumpAndSettle();
+
+      expect(api.aiPlanCallCount, 2, reason: 'Retry with AI reaches the AI again');
+      expect(api.planKeys[0], isNotNull);
+      expect(api.planKeys[1], api.planKeys[0], reason: 'the same request key, so a retry can never charge twice');
+      expect(find.text('Enhanced with AI'), findsOneWidget);
+      expect(api.freeUsesConsumed, 1);
+    });
+
+    test('replaying a request key does not consume the entitlement twice', () async {
+      final api = MockAISubscriptionApiService()..trackEntitlement = true;
+      TimezoneService.overrideForTesting = () async => 'Asia/Kolkata';
+      final service = AIPlanService(api: api);
+      final first = await service.generatePlan(rawText: 'plan my day', requestId: 'bmd-replay');
+      final replay = await service.generatePlan(rawText: 'plan my day', requestId: 'bmd-replay');
+      expect(api.freeUsesConsumed, 1);
+      expect(replay.tasks.length, first.tasks.length);
+      expect(api.planKeys, ['bmd-replay', 'bmd-replay']);
+    });
+
+    testWidgets('the explicit basic planner makes no AI call and consumes no AI usage', (tester) async {
+      final api = MockAISubscriptionApiService()
+        ..trackEntitlement = true
+        ..throwOnAiPlan = true;
+      await openAndBuild(tester, api);
+      final callsBefore = api.aiPlanCallCount;
+
+      await tester.tap(find.text('Use basic planner'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Basic plan (not AI)'), findsOneWidget);
+      expect(find.text('Enhanced with AI'), findsNothing);
+      expect(api.aiPlanCallCount, callsBefore, reason: 'the basic planner never calls AI');
+      expect(api.freeUsesConsumed, 0);
+      expect(await freeAvailable(api), isTrue, reason: 'the complimentary plan is still available afterwards');
+    });
+  });
+
+  group('Build My Day: Noya is visibly part of planning', () {
+    testWidgets('header Noya is alive: thinking-ready, then proud with a planReady reaction when the plan lands', (tester) async {
+      await tester.pumpWidget(createTestApp(
+        child: Builder(
+          builder: (ctx) => ElevatedButton(
+            onPressed: () => showBrainDumpSheet(ctx),
+            child: const Text('Open'),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      NoyaMotionView header() => tester.widget<NoyaMotionView>(
+          find.descendant(of: find.byKey(const Key('noya_companion_header')), matching: find.byType(NoyaMotionView)));
+      expect(header().reactions, isNotNull);
+
+      await tester.enterText(find.byKey(const Key('brain_dump_text_field')), 'study physics');
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
+      await tester.pumpAndSettle();
+
+      expect(header().pose, NoyaState.proud);
+      expect(header().reactions!.value?.reaction, NoyaReaction.planReady);
     });
   });
 }

@@ -69,6 +69,11 @@ def test_critical_temporal_relationships_are_preserved():
     gym = next(task for task in tasks if "gym" in task.title.lower())
     bug = next(task for task in tasks if "login" in task.title.lower())
     dsa = next(task for task in tasks if "dsa" in task.title.lower())
-    assert gym.scheduled_start is not None and gym.scheduled_start.time() == time(18, 0)
+    # "At 6 in the evening" without explicit am/pm → ambiguous → preferred, not fixed.
+    # The correct semantic is a preferred_start at 18:00, not a hard scheduled_start.
+    assert gym.scheduled_start is None, "Ambiguous 'at 6' must NOT produce a fixed scheduled_start"
+    assert gym.temporal is not None and gym.temporal.preferred_start is not None
+    assert gym.temporal.preferred_start.hour == 18 and gym.temporal.preferred_start.minute == 0
+    assert gym.temporal.flexibility == "preferred"
     assert bug.temporal is not None and bug.temporal.relative_after == "dinner"
     assert dsa.temporal is not None and dsa.temporal.relative_before == "bedtime"

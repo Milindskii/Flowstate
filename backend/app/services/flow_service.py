@@ -29,6 +29,7 @@ from ..core.economy_config import (
     DAILY_QUESTS_TEMPLATES,
     ACHIEVEMENTS_CATALOG,
 )
+from ..core.timezone import resolve_timezone
 from ..models.user import User
 from ..models.task import Task
 from ..models.user_preferences import UserPreferences
@@ -72,12 +73,11 @@ def _make_aware(dt: datetime) -> datetime:
 
 class FlowService:
     def _get_user_timezone(self, db: Session, user_id: str) -> zoneinfo.ZoneInfo:
-        prefs = db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
-        tz_name = prefs.timezone if prefs and prefs.timezone else "Asia/Kolkata"
-        try:
-            return zoneinfo.ZoneInfo(tz_name)
-        except Exception:
-            return zoneinfo.ZoneInfo("Asia/Kolkata")
+        cache = db.info.setdefault("flow_user_tz", {})  # one lookup per request, not one per helper
+        if user_id not in cache:
+            prefs = db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
+            cache[user_id] = resolve_timezone(None, prefs.timezone if prefs else None)[0]
+        return cache[user_id]
 
     def _get_user_today_str(self, user_tz: zoneinfo.ZoneInfo) -> str:
         return datetime.now(user_tz).strftime("%Y-%m-%d")
@@ -91,9 +91,11 @@ class FlowService:
     ) -> Tuple[FlowProfile, FlowCompanion, FlowChallenge]:
         user_tz = self._get_user_timezone(db, user.id)
         current_week = self._get_current_week_identifier(user_tz)
+        changed = False  # a plain read must not pay for a commit + three refreshes on every GET
 
         profile = db.query(FlowProfile).filter(FlowProfile.user_id == user.id).first()
         if not profile:
+            changed = True
             profile = FlowProfile(
                 user_id=user.id,
                 flow_balance=0,
@@ -113,6 +115,7 @@ class FlowService:
         else:
             # Check weekly reset
             if profile.current_week_identifier != current_week:
+                changed = True
                 profile.weekly_flow_points = 0
                 profile.current_week_identifier = current_week
                 db.flush()
@@ -123,6 +126,7 @@ class FlowService:
             .first()
         )
         if not companion:
+            changed = True
             companion = FlowCompanion(
                 user_id=user.id,
                 species="fox",
@@ -146,6 +150,7 @@ class FlowService:
             .first()
         )
         if not challenge:
+            changed = True
             challenge = FlowChallenge(
                 user_id=user.id,
                 week_identifier=current_week,
@@ -160,10 +165,11 @@ class FlowService:
             db.add(challenge)
             db.flush()
 
-        db.commit()
-        db.refresh(profile)
-        db.refresh(companion)
-        db.refresh(challenge)
+        if changed:
+            db.commit()
+            db.refresh(profile)
+            db.refresh(companion)
+            db.refresh(challenge)
         return profile, companion, challenge
 
     def get_or_create_daily_quests(self, db: Session, user: User, today_str: str) -> List[FlowDailyQuest]:
@@ -974,6 +980,30 @@ class FlowService:
             flow_awarded=challenge.reward_flow,
             new_balance=profile.flow_balance,
         )
+
+    def claim_day_complete_xp(self, db: Session, user: User, day_str: str, xp: int):
+        """Noya's XP for a fully completed day. One ledger row per (user, "day_complete", date): a second claim is a
+        no-op that reports already_claimed. Returns (awarded, companion, leveled_up, already_claimed)."""
+        _, companion, _ = self.get_or_create_flow_profile(db, user)
+        db.add(FlowEconomicEvent(
+            user_id=user.id, idempotency_key=f"daycomplete-{user.id}-{day_str}", event_type="day_complete",
+            reference_id=day_str, flow_awarded=0, xp_awarded=xp))
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            _, companion, _ = self.get_or_create_flow_profile(db, user)
+            return 0, companion, False, True
+        companion.companion_xp += xp
+        old_level = companion.level
+        new_level, _xp_into_level, xp_needed = get_level_for_xp(companion.companion_xp)
+        companion.level = new_level
+        companion.xp_to_next_level = xp_needed
+        companion.is_evolution_ready = check_evolution_ready(new_level, companion.stage)
+        companion.last_progress_at = utcnow()
+        db.commit()
+        db.refresh(companion)
+        return xp, companion, new_level > old_level, False
 
     def claim_daily_quest(self, db: Session, user: User, quest_id: str) -> ClaimQuestResponse:
         quest = (

@@ -14,6 +14,7 @@ from app.core.security import create_access_token
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.user import User
+from app.models.task import Task, TaskStatus
 from app.models.task_performance import TaskPerformance
 
 @pytest.fixture
@@ -116,10 +117,16 @@ async def test_today_calibrated_state(unique_user_headers):
 
     # Insert enough completed performance sessions to reach calibrated state
     db = SessionLocal()
+    long_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    for i in range(settings.CALIBRATION_MIN_SESSIONS):
+        # task_performance.task_id is a real foreign key: each session belongs to a (long finished) task.
+        db.add(Task(id=f"task-dummy-{user_id}-{i}", user_id=user_id, title=f"Past task {i}", estimated_minutes=45,
+                    status=TaskStatus.completed, planned_date=long_ago.date(), completed_at=long_ago))
+    db.flush()
     for i in range(settings.CALIBRATION_MIN_SESSIONS):
         perf = TaskPerformance(
             id=f"perf-{user_id}-{i}",
-            task_id=f"task-dummy-{i}",
+            task_id=f"task-dummy-{user_id}-{i}",
             user_id=user_id,
             estimated_minutes=45,
             actual_minutes=45,
@@ -189,7 +196,9 @@ async def test_today_override_endpoint(unique_user_headers):
     """Test the POST /today/override endpoint records user decisions."""
     headers = unique_user_headers["headers"]
 
-    deadline = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
+    # No deadline: "Later" must be able to book the next window. With a deadline 3 hours away the old code booked
+    # tomorrow anyway, i.e. AFTER the deadline. That is now refused: the planner never violates a deadline
+    # (tests/test_override_planner.py::test_later_never_places_a_task_after_its_deadline covers that case).
     task_payload = {
         "title": "Override Test Task",
         "category": "Work",
@@ -197,7 +206,6 @@ async def test_today_override_endpoint(unique_user_headers):
         "difficulty": "medium",
         "priority": "medium",
         "estimated_minutes": 45,
-        "deadline_at": deadline,
         "source": "manual",
     }
 
@@ -223,3 +231,58 @@ async def test_today_override_endpoint(unique_user_headers):
         # Should suggest a next window for "later"
         assert override_data.get("next_window") is not None
         assert "label" in override_data["next_window"]
+
+
+@pytest.mark.asyncio
+async def test_today_later_updates_recommendation_to_another_task(unique_user_headers):
+    """When a user presses Later on Task A, Task B becomes the current recommendation."""
+    headers = unique_user_headers["headers"]
+
+    deadline = (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat()
+    task_a = {
+        "title": "Task Alpha (Original Top)",
+        "category": "Work",
+        "task_type": "deep_work",
+        "difficulty": "high",
+        "priority": "high",
+        "estimated_minutes": 60,
+        "deadline_at": deadline,
+        "source": "manual",
+    }
+    task_b = {
+        "title": "Task Beta (Alternative)",
+        "category": "Work",
+        "task_type": "deep_work",
+        "difficulty": "medium",
+        "priority": "medium",
+        "estimated_minutes": 30,
+        "deadline_at": deadline,
+        "source": "manual",
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.post("/api/v1/tasks", headers=headers, json=task_a)
+        await ac.post("/api/v1/tasks", headers=headers, json=task_b)
+
+        # First Today request: Alpha should be top
+        res1 = await ac.get("/api/v1/today", headers=headers)
+        assert res1.status_code == 200
+        d1 = res1.json()
+        assert d1["current_recommendation"]["task"]["title"] == "Task Alpha (Original Top)"
+        decision_id = d1["decision_id"]
+
+        # User presses "Later" on Task Alpha
+        later_res = await ac.post(
+            "/api/v1/today/override",
+            headers=headers,
+            json={"decision_id": decision_id, "reason": "later"},
+        )
+        assert later_res.status_code == 200
+        assert later_res.json()["recorded"] is True
+
+        # Second Today request: Beta should now become top recommendation!
+        res2 = await ac.get("/api/v1/today", headers=headers)
+        assert res2.status_code == 200
+        d2 = res2.json()
+        assert d2["current_recommendation"]["task"]["title"] == "Task Beta (Alternative)"
+

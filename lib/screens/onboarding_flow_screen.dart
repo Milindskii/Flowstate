@@ -1,13 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../components/flow_ambient_background.dart';
 import '../components/flow_interactive_timeline.dart';
-import '../components/flow_logo.dart';
 import '../components/flow_time_picker.dart';
+import '../components/noya_companion_view.dart';
+import '../components/noya_thinking.dart';
 import '../components/routine_building_view.dart';
 import '../models/onboarding_question.dart';
 import '../providers/app_state_provider.dart';
+import '../services/timezone_service.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_typography.dart';
@@ -61,6 +65,53 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
   void initState() {
     super.initState();
     _rebuildActiveQuestions();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _restorePartialProgress();
+    });
+  }
+
+  Future<void> _savePartialProgress() async {
+    if (!mounted) return;
+    final appState = Provider.of<AppStateProvider>(context, listen: false);
+    final userId = appState.currentUser?.id;
+    if (userId == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('flowstate_onboarding_answers_$userId', jsonEncode(_answers));
+      await prefs.setInt('flowstate_onboarding_step_$userId', _currentPage);
+    } catch (_) {}
+  }
+
+  Future<void> _restorePartialProgress() async {
+    if (!mounted) return;
+    final appState = Provider.of<AppStateProvider>(context, listen: false);
+    final userId = appState.currentUser?.id;
+    if (userId == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedStr = prefs.getString('flowstate_onboarding_answers_$userId');
+      final savedStep = prefs.getInt('flowstate_onboarding_step_$userId');
+      if (savedStr != null) {
+        final decoded = jsonDecode(savedStr);
+        if (decoded is Map<String, dynamic>) {
+          setState(() {
+            _answers.addAll(decoded);
+            _rebuildActiveQuestions();
+          });
+        }
+      }
+      if (savedStep != null && savedStep > 0 && mounted) {
+        final maxStep = _activeQuestions.length + 1;
+        final target = savedStep.clamp(0, maxStep);
+        if (target > 0) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _pageController.hasClients) {
+              _goToPage(target);
+            }
+          });
+        }
+      }
+    } catch (_) {}
   }
 
   @override
@@ -138,11 +189,14 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
       _currentPage = page;
       _updateVisualStateForCurrentStep(page);
     });
-    _pageController.animateToPage(
-      page,
-      duration: const Duration(milliseconds: 320),
-      curve: Curves.easeOutCubic,
-    );
+    if (_pageController.hasClients) {
+      _pageController.animateToPage(
+        page,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      );
+    }
+    _savePartialProgress();
   }
 
   Future<void> _finishOnboarding() async {
@@ -217,23 +271,47 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
         'session_disruptor': _answers['session_disruptor'] ?? 'phone',
         'primary_goal': _answers['primary_goal'] ?? 'start_difficult',
         'energy_predictability': _answers['energy_predictability'] ?? 'mostly_predictable',
-        'timezone': 'Asia/Kolkata',
+        // Device IANA zone (never an abbreviation); the previous hard-coded Asia/Kolkata mis-timed every other user.
+        'timezone': await TimezoneService.localIanaName() ?? 'Asia/Kolkata',
       };
 
-      try {
-        await appState.apiService.post('/api/v1/readiness/onboarding', body: payload);
-      } catch (_) {
-        // Fallback for offline mode
-      }
+      // Critical: the schedule is built from these answers, so this is awaited (Noya shows "thinking" for it).
+      // A failed write is queued for retry inside the provider; it is never silently dropped.
+      final profileSaved = await appState.submitOnboardingProfile(payload);
 
-      // Persist completed onboarding state
-      await appState.markOnboardingComplete();
-      await appState.refreshTodayData();
+      // Update local PersonalData state so readiness & scheduling immediately reflect peak window
+      final peakMapped = peak == 'afternoon'
+          ? 'Afternoon'
+          : (peak == 'evening' ? 'Evening' : (peak == 'midday' ? 'Midday' : 'Morning'));
+      appState.updatePersonalData(
+        appState.personalData.copyWith(
+          focusPeak: peakMapped,
+          sleepHours: (inertiaMins / 60.0) + 7.5,
+          bedtime: _answers['sleep_time'] as String? ?? '23:00',
+          wakeTime: _answers['wake_weekday'] as String? ?? '07:00',
+        ),
+      );
+
+      // Quick local completion, then open Today now. The rest is not on the critical path: it runs in the
+      // background and refreshes Today from the authoritative backend state (retrying; failure is safe).
+      await appState.markOnboardingCompleteLocally();
+      unawaited(appState.finishOnboardingInBackground(profileSaved: profileSaved));
+
+      // Clear saved partial progress since onboarding is complete
+      final userId = appState.currentUser?.id;
+      if (userId != null) {
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove('flowstate_onboarding_answers_$userId');
+          await prefs.remove('flowstate_onboarding_step_$userId');
+        } catch (_) {}
+      }
     } finally {
       if (mounted) {
         setState(() => _isSubmitting = false);
-        Navigator.of(context).pushReplacement(
+        Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const MainShell()),
+          (route) => false,
         );
       }
     }
@@ -251,7 +329,33 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
       },
       child: Scaffold(
         backgroundColor: const Color(0xFFF8FAFC),
-        body: FlowAmbientBackground(
+        body: Stack(children: [
+          _buildFlow(),
+          // Real work is pending (the personalization write): Noya shows it immediately, and only while it runs.
+          if (_isSubmitting)
+            Positioned.fill(
+              child: Container(
+                key: const Key('onboarding_thinking_overlay'),
+                color: const Color(0xFFF8FAFC).withValues(alpha: 0.88),
+                alignment: Alignment.center,
+                child: const Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    NoyaThinking(active: true, size: 120),
+                    SizedBox(height: 12),
+                    Text('Personalizing your plan…',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Color(0xFF334155))),
+                  ],
+                ),
+              ),
+            ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildFlow() {
+    return FlowAmbientBackground(
           visualState: _visualState,
           child: SafeArea(
             child: Column(
@@ -280,8 +384,6 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
               ],
             ),
           ),
-        ),
-      ),
     );
   }
 
@@ -350,8 +452,15 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Spacer(flex: 2),
-          const FlowLogo(size: 64),
-          const SizedBox(height: 32),
+          const Center(
+            child: NoyaCompanionView(
+              state: NoyaState.proud,
+              size: 104,
+              showAmbientGlow: true,
+              semanticLabel: 'Noya winking warmly to help you find your rhythm',
+            ),
+          ),
+          const SizedBox(height: 28),
           Text(
             "Let's find your rhythm.",
             style: FlowTypography.displayMedium(color: const Color(0xFF0F172A)).copyWith(

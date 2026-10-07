@@ -23,19 +23,93 @@ class FlowMotion {
   static const Duration screenDuration = Duration(milliseconds: 280);
   static const Duration onboardingDuration = Duration(milliseconds: 340);
 
+  // Character & micro-interaction timings (spec §10)
+  static const Duration instant = Duration(milliseconds: 100);
+  static const Duration posePivot = Duration(milliseconds: 260);
+  static const Duration poseFadeReduced = Duration(milliseconds: 120);
+  static const Duration enterFadeReduced = Duration(milliseconds: 150);
+  static const Duration characterEnter = Duration(milliseconds: 420);
+  static const Duration characterExit = Duration(milliseconds: 200);
+  static const Duration reaction = Duration(milliseconds: 700);
+  static const Duration celebration = Duration(milliseconds: 1600);
+  static const Duration highlightFade = Duration(milliseconds: 1200);
+
+  // Loop periods and windows (spec §10). Every loop is bounded by a window.
+  static const Duration breathPeriod = Duration(milliseconds: 3800);
+  static const Duration thinkPeriod = Duration(milliseconds: 2600);
+  static const Duration pacePeriod = Duration(milliseconds: 4000);
+  static const Duration focusPeriod = Duration(milliseconds: 5200);
+  static const Duration windDownPeriod = Duration(milliseconds: 6000);
+  static const Duration idleWindow = Duration(seconds: 30);
+  static const Duration focusBobWindow = Duration(seconds: 20);
+
   // Natural Curves
   static const Curve easeOut = Curves.easeOutCubic;
   static const Curve easeInOut = Curves.easeInOutCubic;
+  static const Curve exit = Curves.easeInCubic;
+  static const Curve emphasized = Cubic(0.2, 0.0, 0.0, 1.0);
+  static const Curve loop = Curves.easeInOutSine;
+
+  // Springs (spec §11): settle never overshoots, reaction ≈3.5%, celebration ≈12%.
+  static const SpringDescription settleSpring = SpringDescription(mass: 1, stiffness: 420, damping: 41);
+  static const SpringDescription reactionSpring = SpringDescription(mass: 1, stiffness: 420, damping: 30);
+  static const SpringDescription celebrationSpring = SpringDescription(mass: 1, stiffness: 420, damping: 22);
+
+  /// Global default for looping (repeating) animations. `test/flutter_test_config.dart` sets this to
+  /// false so `pumpAndSettle` can settle; a test opts back in with [FlowMotionScope].
+  static bool debugLoopsEnabled = true;
 
   /// Returns true if reduced motion is requested by system accessibility settings
   static bool isReducedMotion(BuildContext context) {
     return MediaQuery.maybeOf(context)?.disableAnimations ?? false;
   }
 
+  /// Whether repeating animations may run here: never under reduced motion; otherwise the nearest
+  /// [FlowMotionScope] decides, falling back to [debugLoopsEnabled].
+  static bool loopsEnabled(BuildContext context) {
+    if (isReducedMotion(context)) return false;
+    return FlowMotionScope.maybeOf(context)?.loopsEnabled ?? debugLoopsEnabled;
+  }
+
+  /// Standard in-place state switch (spec §8.9): incoming child fades in and rises 8 px.
+  static Widget switcher({required Widget child, Duration duration = standardDuration}) {
+    return AnimatedSwitcher(
+      duration: duration,
+      switchInCurve: easeOut,
+      switchOutCurve: exit,
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: AnimatedBuilder(
+          animation: animation,
+          builder: (context, child) => Transform.translate(
+            offset: Offset(0, 8 * (1 - animation.value)),
+            child: child,
+          ),
+          child: child,
+        ),
+      ),
+      child: child,
+    );
+  }
+
   /// Returns Duration.zero if reduced motion is enabled, otherwise returns [duration]
   static Duration responsiveDuration(BuildContext context, Duration duration) {
     return isReducedMotion(context) ? Duration.zero : duration;
   }
+}
+
+/// Overrides whether repeating animations run below this point (see [FlowMotion.loopsEnabled]).
+/// Reduced motion still wins.
+class FlowMotionScope extends InheritedWidget {
+  final bool loopsEnabled;
+
+  const FlowMotionScope({super.key, required this.loopsEnabled, required super.child});
+
+  static FlowMotionScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<FlowMotionScope>();
+
+  @override
+  bool updateShouldNotify(FlowMotionScope oldWidget) => loopsEnabled != oldWidget.loopsEnabled;
 }
 
 /// Flutter-native one-time staggered or direct fade-and-slide entrance.
@@ -196,10 +270,17 @@ class _FlowFadeIndexedStackState extends State<FlowFadeIndexedStack>
   late int _currentIndex;
   int? _previousIndex;
 
+  /// Tabs that have been shown at least once. A tab is built on its first visit and then kept alive, so the
+  /// app does not build (and fetch for) every tab at launch.
+  final Set<int> _visited = {};
+
+  Widget _child(int i) => _visited.contains(i) ? widget.children[i] : const SizedBox.shrink();
+
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.index;
+    _visited.add(widget.index);
     _animController = AnimationController(
       vsync: this,
       duration: widget.duration,
@@ -232,6 +313,7 @@ class _FlowFadeIndexedStackState extends State<FlowFadeIndexedStack>
       setState(() {
         _previousIndex = oldIndex;
         _currentIndex = widget.index;
+        _visited.add(widget.index);
       });
       _animController.forward(from: 0.0);
     }
@@ -255,7 +337,7 @@ class _FlowFadeIndexedStackState extends State<FlowFadeIndexedStack>
             enabled: isCurrent,
             child: Offstage(
               offstage: !isCurrent,
-              child: widget.children[i],
+              child: _child(i),
             ),
           );
         }),
@@ -284,7 +366,7 @@ class _FlowFadeIndexedStackState extends State<FlowFadeIndexedStack>
               ignoring: !isIncoming,
               child: FadeTransition(
                 opacity: opacityAnim,
-                child: widget.children[i],
+                child: _child(i),
               ),
             ),
           ),

@@ -1,12 +1,15 @@
+import uuid
 import time
 import json
 import threading
 from typing import Optional, Dict, Tuple, Any, List
 from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..models.ai_usage import AIUsageRecord, AIPlanningRequestCache
+from ..core.config import settings
+from ..models.ai_usage import AIUsageRecord, AIPlanningAttempt
 from ..models.flow_progression import FlowProfile
 from ..models.user import User
 from ..schemas.ai import (
@@ -15,19 +18,33 @@ from ..schemas.ai import (
     ProSubscriptionStatusResponse,
 )
 
-# Technical Rate Limiting: Max 5 requests per hour per user
-MAX_AI_REQUESTS_PER_HOUR = 5
-_AI_RATE_LIMIT_CACHE: Dict[str, list] = {}
+# Per-process lock used only to serialize same-user confirm/apply flows (batch create, calendar apply).
+# AI planning itself is serialized across instances by the database (services/ai_gateway.py).
 _AI_REQUEST_LOCKS: Dict[str, threading.Lock] = {}
 _AI_REQUEST_LOCKS_GUARD = threading.Lock()
+
+
+def effective_is_pro(usage: AIUsageRecord, now: Optional[datetime] = None) -> bool:
+    """Server-side Pro check: the flag AND an unexpired subscription (plus a short grace period).
+
+    ``subscription_expires_at`` being NULL means a non-expiring grant (e.g. set by support)."""
+    if not usage.is_pro:
+        return False
+    expires = usage.subscription_expires_at
+    if expires is None:
+        return True
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    return (now or datetime.now(timezone.utc)) <= expires + timedelta(days=settings.PRO_GRACE_DAYS)
+
 
 class AIEconomyService:
     """
     Authoritative server-side management of:
     1. AI Economy (1 Free plan, subsequent plans cost 1 Flow Shield, Pro gets unlimited allowance)
     2. Atomic usage consumption & safe rollback on failures
-    3. Technical rate limiting (5 requests/hour/user)
-    4. Idempotency guarantees to prevent double-charging
+    3. Status/usage reads (reservation, rate limits and idempotency live in ai_gateway)
+    4. Idempotency guarantees to prevent double-charging (see ai_gateway)
     5. Pro subscription entitlement verification (never trusting client flags)
     """
 
@@ -36,28 +53,6 @@ class AIEconomyService:
         """Return a per-user lock so double taps cannot race the usage finalization."""
         with _AI_REQUEST_LOCKS_GUARD:
             return _AI_REQUEST_LOCKS.setdefault(user_id, threading.Lock())
-
-    @classmethod
-    def check_technical_rate_limit(cls, user_id: str) -> None:
-        """Enforces 5 AI planning requests per hour sliding window."""
-        now = time.time()
-        one_hour_ago = now - 3600
-        requests = _AI_RATE_LIMIT_CACHE.get(user_id, [])
-        valid_requests = [t for t in requests if t > one_hour_ago]
-        _AI_RATE_LIMIT_CACHE[user_id] = valid_requests
-
-        if len(valid_requests) >= MAX_AI_REQUESTS_PER_HOUR:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Rate limit exceeded: maximum {MAX_AI_REQUESTS_PER_HOUR} AI planning requests allowed per hour. Please try again later.",
-            )
-
-    @classmethod
-    def record_technical_request(cls, user_id: str) -> None:
-        now = time.time()
-        requests = _AI_RATE_LIMIT_CACHE.get(user_id, [])
-        requests.append(now)
-        _AI_RATE_LIMIT_CACHE[user_id] = requests
 
     @classmethod
     def get_or_create_usage(cls, db: Session, user_id: str) -> AIUsageRecord:
@@ -74,8 +69,13 @@ class AIEconomyService:
                 subscription_status="inactive",
             )
             db.add(record)
-            db.commit()
-            db.refresh(record)
+            try:
+                db.commit()
+            except IntegrityError:  # a concurrent first request created it
+                db.rollback()
+                record = db.query(AIUsageRecord).filter(AIUsageRecord.user_id == user_id).one()
+            else:
+                db.refresh(record)
         return record
 
     @classmethod
@@ -89,8 +89,12 @@ class AIEconomyService:
                 db.flush()
             from .flow_service import FlowService
             flow_service = FlowService()
-            profile, _, _ = flow_service.get_or_create_flow_profile(db, user)
-            db.commit()
+            try:
+                profile, _, _ = flow_service.get_or_create_flow_profile(db, user)
+                db.commit()
+            except IntegrityError:  # a concurrent first request created it
+                db.rollback()
+                profile = db.query(FlowProfile).filter(FlowProfile.user_id == user_id).one()
         return profile
 
     @classmethod
@@ -99,14 +103,18 @@ class AIEconomyService:
         profile = cls.get_or_create_profile(db, user_id)
         shields = profile.shields_available if profile else 2
 
+        is_pro = effective_is_pro(usage)
         free_remaining = max(0, usage.free_uses_total - usage.free_uses_consumed)
-        can_plan_free = usage.is_pro or free_remaining > 0
-        requires_shield = (not usage.is_pro) and (free_remaining == 0)
+        can_plan_free = is_pro or free_remaining > 0
+        requires_shield = (not is_pro) and (free_remaining == 0)
 
         return AIUsageStatus(
-            is_pro=usage.is_pro,
+            is_pro=is_pro,
             free_uses_remaining=free_remaining,
             free_uses_total=usage.free_uses_total,
+            free_uses_consumed=usage.free_uses_consumed,
+            free_use_available=can_plan_free,
+            can_use_ai=(can_plan_free or shields > 0 or is_pro),
             shields_available=shields,
             can_plan_free=can_plan_free,
             requires_shield=requires_shield,
@@ -116,140 +124,27 @@ class AIEconomyService:
         )
 
     @classmethod
-    def check_idempotency(cls, db: Session, user_id: str, idempotency_key: Optional[str]) -> Optional[Dict[str, Any]]:
-        """Returns cached response data if this request was already successfully processed."""
-        if not idempotency_key:
-            return None
-        cached = (
-            db.query(AIPlanningRequestCache)
-            .filter(
-                AIPlanningRequestCache.idempotency_key == idempotency_key,
-                AIPlanningRequestCache.user_id == user_id,
-                AIPlanningRequestCache.status == "completed",
-            )
-            .first()
-        )
-        if cached and cached.response_json:
-            try:
-                return json.loads(cached.response_json)
-            except Exception:
-                return None
-        # The primary key is global. A collision from another user must never
-        # expose their cached plan or be allowed to overwrite it.
-        foreign_key = (
-            db.query(AIPlanningRequestCache)
-            .filter(
-                AIPlanningRequestCache.idempotency_key == idempotency_key,
-                AIPlanningRequestCache.user_id != user_id,
-            )
-            .first()
-        )
-        if foreign_key:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Idempotency key is already associated with another account.",
-            )
-        return None
-
-    @classmethod
-    def authorize_request(
+    def record_attempt(
         cls,
         db: Session,
+        *,
         user_id: str,
-        consume_shield: bool,
-    ) -> Tuple[str, Optional[FlowProfile]]:
-        """
-        Validates whether the user can perform an AI planning request.
-        Returns charge_type: "pro" | "free" | "shield" and the FlowProfile if shield is required.
-        Raises HTTP exceptions if unauthorized.
-        """
-        usage = cls.get_or_create_usage(db, user_id)
-        profile = cls.get_or_create_profile(db, user_id)
-
-        # 1. Pro Users have unlimited / generous allowance
-        if usage.is_pro:
-            return "pro", profile
-
-        # 2. Free use available (1st use is 100% free)
-        if usage.free_uses_consumed < usage.free_uses_total:
-            return "free", profile
-
-        # 3. Free use exhausted -> Requires Shield
-        if not consume_shield:
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail="You have used your free AI plan. Using an additional AI planning session requires 1 Flow Shield. Confirm shield consumption to proceed.",
-            )
-
-        # User consented to spend 1 Shield: check inventory
-        if not profile or profile.shields_available <= 0:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No Flow Shields available. Earn more shields by maintaining a 7-day focus streak, or upgrade to Flowstate Pro.",
-            )
-
-        return "shield", profile
-
-    @classmethod
-    def finalize_usage(
-        cls,
-        db: Session,
-        user_id: str,
-        charge_type: str,
-        profile: Optional[FlowProfile],
-        idempotency_key: Optional[str],
-        response_payload: Dict[str, Any],
-    ) -> None:
-        """
-        Atomically commits the deduction ONLY after successful Gemini response.
-        """
-        usage = cls.get_or_create_usage(db, user_id)
-        now_dt = datetime.now(timezone.utc)
-
-        shield_used = False
-        if charge_type == "free":
-            usage.free_uses_consumed += 1
-            usage.total_ai_uses += 1
-            usage.last_ai_use_at = now_dt
-        elif charge_type == "shield":
-            if profile and profile.shields_available > 0:
-                profile.shields_available -= 1
-                profile.shields_used_count += 1
-                usage.shield_uses_consumed += 1
-                usage.total_ai_uses += 1
-                usage.last_ai_use_at = now_dt
-                shield_used = True
-        elif charge_type == "pro":
-            usage.total_ai_uses += 1
-            usage.last_ai_use_at = now_dt
-
-        # Store in idempotency cache
-        if idempotency_key:
-            cache_entry = (
-                db.query(AIPlanningRequestCache)
-                .filter(
-                    AIPlanningRequestCache.idempotency_key == idempotency_key,
-                    AIPlanningRequestCache.user_id == user_id,
-                )
-                .first()
-            )
-            if not cache_entry:
-                cache_entry = AIPlanningRequestCache(
-                    idempotency_key=idempotency_key,
-                    user_id=user_id,
-                    status="completed",
-                    # Candidate contracts contain timezone-aware datetimes. Cache their
-                    # JSON API representation, never Python objects, for safe retries.
-                    response_json=json.dumps(response_payload, default=lambda value: value.isoformat()),
-                    shield_used=shield_used,
-                )
-                db.add(cache_entry)
-            else:
-                cache_entry.status = "completed"
-                cache_entry.response_json = json.dumps(response_payload, default=lambda value: value.isoformat())
-                cache_entry.shield_used = shield_used
-
+        request_id: str,
+        status: str,
+        failure_code: Optional[str] = None,
+        failure_reason: Optional[str] = None,
+        latency_ms: Optional[int] = None,
+    ) -> str:
+        """Diagnostics row for one Build My Day attempt (one real Gemini call, or a client-reported
+        failure). Never touches credits. Returns the new attempt_id."""
+        attempt = AIPlanningAttempt(
+            attempt_id=uuid.uuid4().hex, request_id=request_id, user_id=user_id, status=status,
+            failure_code=failure_code, failure_reason=(failure_reason or None) and str(failure_reason)[:2000],
+            latency_ms=latency_ms,
+        )
+        db.add(attempt)
         db.commit()
+        return attempt.attempt_id
 
     @classmethod
     def get_pro_plans(cls) -> List[ProPlanInfo]:
@@ -293,7 +188,7 @@ class AIEconomyService:
             else None
         )
         return ProSubscriptionStatusResponse(
-            is_pro=usage.is_pro,
+            is_pro=effective_is_pro(usage),
             tier=usage.subscription_tier,
             status=usage.subscription_status,
             renewal_date=renewal,

@@ -65,8 +65,9 @@ def test_master_repair_scenario_2_independence():
     assign_task = next(t for t in tasks if "assign" in t.title.lower())
     work_task = next(t for t in tasks if "work" in t.title.lower())
 
-    # Gym has fixed start
-    assert gym_task.scheduled_start is not None
+    # "gym at 6" without am/pm → ambiguous → preferred_start, NOT a fixed scheduled_start.
+    assert gym_task.scheduled_start is None, "'at 6' without am/pm must produce a preference, not a fixed start"
+    assert gym_task.temporal is not None and gym_task.temporal.preferred_start is not None
 
     # "tomorrow" is a target date, not an invented deadline.
     assert assign_task.deadline_at is None

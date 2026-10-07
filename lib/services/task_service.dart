@@ -1,5 +1,6 @@
 import '../models/task_item.dart';
 import 'api_service.dart';
+import 'timezone_service.dart';
 
 /// Task Management API Client
 class TaskService {
@@ -34,7 +35,8 @@ class TaskService {
 
   /// Retrieve tasks specifically scheduled or due today in user's timezone
   Future<List<TaskItem>> getTodayTasks() async {
-    final res = await _api.get('/api/v1/tasks/today');
+    final tz = await TimezoneService.localIanaName();
+    final res = await _api.get('/api/v1/tasks/today', queryParams: tz == null ? null : {'timezone': tz});
     if (res is List) {
       return res.map((item) => TaskItem.fromJson(item as Map<String, dynamic>)).toList();
     } else if (res is Map<String, dynamic> && res['items'] is List) {
@@ -57,20 +59,35 @@ class TaskService {
     return TaskItem.fromJson(res as Map<String, dynamic>);
   }
 
-  /// Update an existing task
+  /// Update an existing task. Errors propagate: a failed save must never look like a success
+  /// (the caller reverts local state and tells the user).
   Future<TaskItem> updateTask(TaskItem task) async {
-    try {
-      final res = await _api.put('/api/v1/tasks/${task.id}', body: task.toJson());
-      return TaskItem.fromJson(res as Map<String, dynamic>);
-    } catch (_) {
-      return task;
-    }
+    final res = await _api.put('/api/v1/tasks/${task.id}', body: task.toJson());
+    return TaskItem.fromJson(res as Map<String, dynamic>);
   }
 
   /// Partially update task attributes
   Future<TaskItem> patchTask(String taskId, Map<String, dynamic> fields) async {
     final res = await _api.patch('/api/v1/tasks/$taskId', body: fields);
     return TaskItem.fromJson(res as Map<String, dynamic>);
+  }
+
+  /// Build My Day confirm: ONE atomic, idempotent request (same [planId] => same result).
+  /// Throws [ApiException]; a 422 carries `data['detail']['errors']` for inline display.
+  Future<Map<String, dynamic>> batchCreateAndSchedule({
+    required String planId,
+    required List<Map<String, dynamic>> items,
+    String? timezone,
+    DateTime? currentLocalTime,
+  }) async {
+    final res = await _api.post('/api/v1/tasks/batch-create-and-schedule', body: {
+      'plan_id': planId,
+      'tasks': items,
+      if (timezone != null) 'timezone': timezone,
+      if (currentLocalTime != null) 'current_local_time': currentLocalTime.toUtc().toIso8601String(),
+    });
+    if (res is Map<String, dynamic>) return res;
+    throw const ApiException('Invalid confirm response from server');
   }
 
   /// Mark task as in-progress

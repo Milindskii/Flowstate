@@ -6,6 +6,7 @@ import '../models/task_item.dart';
 import '../providers/app_state_provider.dart';
 import '../providers/flow_provider.dart';
 import '../providers/theme_provider.dart';
+import '../services/plan_confirm_exception.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
@@ -18,7 +19,7 @@ import 'parsed_plan_confirm_sheet.dart';
 ///   Header: "Here's what I found"
 ///   Compact preview with:
 ///   - Title
-///   - Type · Duration
+///   - Type Â· Duration
 ///   - Priority
 ///   - Deadline or Fixed time
 ///   [ Build my day ]
@@ -48,18 +49,34 @@ class _AIPlanPreviewSheet extends StatelessWidget {
 
   const _AIPlanPreviewSheet({required this.planResult});
 
-  void _buildMyDay(BuildContext context, List<TaskItem> candidates) {
+  Future<void> _buildMyDay(BuildContext context, List<TaskItem> candidates) async {
     FlowHaptics.success();
+    // Capture everything that needs BuildContext BEFORE the async gap.
     final provider = Provider.of<AppStateProvider>(context, listen: false);
-    provider.confirmCandidates(candidates);
-    Navigator.of(context).pop(); // Close sheet
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    final textStyle = FlowTypography.bodySmall(color: FlowColors.textPrimaryOf(context));
+    final snackBg = FlowColors.surfaceElevated(context);
+    try {
+      await provider.confirmCandidates(candidates);
+    } on PlanConfirmException catch (e) {
+      // Nothing was saved; keep the sheet open so the user can retry or edit.
+      messenger.showSnackBar(SnackBar(
+        content: Text(e.message, style: textStyle),
+        backgroundColor: snackBg,
+        duration: const Duration(seconds: 4),
+        behavior: SnackBarBehavior.floating,
+      ));
+      return;
+    }
+    navigator.pop(); // Close sheet
 
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+    messenger.showSnackBar(SnackBar(
       content: Text(
         '${candidates.length} task${candidates.length == 1 ? '' : 's'} added to your day',
-        style: FlowTypography.bodySmall(color: FlowColors.textPrimaryOf(context)),
+        style: textStyle,
       ),
-      backgroundColor: FlowColors.surfaceElevated(context),
+      backgroundColor: snackBg,
       duration: const Duration(seconds: 2),
       behavior: SnackBarBehavior.floating,
     ));
@@ -318,7 +335,9 @@ class _AIPlanPreviewSheet extends StatelessWidget {
                       const Icon(Icons.schedule_rounded, size: 12, color: FlowColors.accentCyan),
                       const SizedBox(width: 4),
                       Text(
-                        _formatFixedStart(task.fixedStart!),
+                        // Now renders "Friday Â· 5:00 PM" when targetDate is set,
+                        // and falls back to "5:00 PM" when it is not.
+                        _formatFixedSchedule(task),
                         style: FlowTypography.labelSmall(color: FlowColors.textPrimaryOf(context))
                             .copyWith(fontWeight: FontWeight.w600),
                       ),
@@ -335,15 +354,15 @@ class _AIPlanPreviewSheet extends StatelessWidget {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text(
-                '$typeFormatted · ${task.isDurationExplicit ? '${task.estimatedMinutes} min' : 'Estimated ${task.estimatedMinutes} min'}',
+                '$typeFormatted Â· ${task.isDurationExplicit ? '${task.estimatedMinutes} min' : 'Estimated ${task.estimatedMinutes} min'}',
                 style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
               ),
-              Text('•', style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context))),
+              Text('â€¢', style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context))),
               Text(
-                task.isPriorityUnspecified || task.priority == null
-                    ? 'Priority not specified'
+                task.priority == null
+                    ? ''
                     : isPriorityInferred
-                        ? 'Suggested priority: ${_capitalize(task.priority!)}'
+                        ? 'Suggested: ${_capitalize(task.priority!)}'
                         : '${_capitalize(task.priority!)} priority',
                 style: FlowTypography.bodySmall(
                   color: isPriorityInferred
@@ -352,7 +371,7 @@ class _AIPlanPreviewSheet extends StatelessWidget {
                 ).copyWith(fontWeight: isPriorityInferred ? FontWeight.w600 : FontWeight.normal),
               ),
               if (task.deadline != null && task.deadline!.isNotEmpty) ...[
-                Text('•', style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context))),
+                Text('â€¢', style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context))),
                 Text(
                   'Due ${_capitalize(task.deadline!)}',
                   style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
@@ -360,7 +379,11 @@ class _AIPlanPreviewSheet extends StatelessWidget {
               ],
             ],
           ),
-          if (task.recommendedSlotDisplay != null || task.fixedStart != null) ...[
+
+          // Scheduler-suggested slot (only shown when the scheduler actually
+          // produced a recommendation). Previously this row also rendered the
+          // user's own fixed_start time under the label "Recommended:".
+          if (task.recommendedSlotDisplay != null) ...[
             const SizedBox(height: 8),
             Wrap(
               crossAxisAlignment: WrapCrossAlignment.center,
@@ -368,14 +391,14 @@ class _AIPlanPreviewSheet extends StatelessWidget {
               runSpacing: 4,
               children: [
                 Text(
-                  'Recommended: ',
+                  'Scheduler suggests: ',
                   style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)).copyWith(
                     fontWeight: FontWeight.w600,
                     fontSize: 12,
                   ),
                 ),
                 Text(
-                  task.recommendedSlotDisplay ?? (task.fixedStart != null ? _formatFixedStart(task.fixedStart!) : 'Upcoming'),
+                  task.recommendedSlotDisplay!,
                   style: FlowTypography.bodySmall(color: FlowColors.accentMint).copyWith(
                     fontWeight: FontWeight.w700,
                     fontSize: 12,
@@ -384,6 +407,7 @@ class _AIPlanPreviewSheet extends StatelessWidget {
               ],
             ),
           ],
+
           if (task.schedulingExplanation != null && task.schedulingExplanation!.isNotEmpty) ...[
             const SizedBox(height: 6),
             Container(
@@ -435,6 +459,44 @@ class _AIPlanPreviewSheet extends StatelessWidget {
       default:
         return _capitalize(type);
     }
+  }
+
+  /// Composes a human-readable fixed slot from `targetDate` + `fixedStart`.
+  ///
+  /// - `targetDate == null`           â†’ "5:00 PM"          (today implied)
+  /// - `targetDate == today (ISO)`    â†’ "Today Â· 5:00 PM"
+  /// - `targetDate == tomorrow (ISO)` â†’ "Tomorrow Â· 5:00 PM"
+  /// - `targetDate == Fri (this week)`â†’ "Fri Â· 5:00 PM"
+  /// - `targetDate == further out`    â†’ "Oct 2 Â· 5:00 PM"
+  String _formatFixedSchedule(ExtractedTaskItem task) {
+    final time = _formatFixedStart(task.fixedStart!);
+    final day = _formatTargetDay(task.targetDate);
+    return day == null ? time : '$day Â· $time';
+  }
+
+  /// Renders the target day as a short user-facing label. Returns null when
+  /// there is no usable target date, so callers can fall back gracefully.
+  String? _formatTargetDay(String? targetDate) {
+    if (targetDate == null || targetDate.isEmpty) return null;
+    final parsed = DateTime.tryParse(targetDate);
+    if (parsed == null) return null;
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final target = DateTime(parsed.year, parsed.month, parsed.day);
+    final diff = target.difference(today).inDays;
+
+    if (diff == 0) return 'Today';
+    if (diff == 1) return 'Tomorrow';
+    if (diff > 1 && diff < 7) {
+      const weekday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      return weekday[target.weekday - 1];
+    }
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[target.month - 1]} ${target.day}';
   }
 
   String _formatFixedStart(String time) {

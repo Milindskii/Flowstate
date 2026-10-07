@@ -146,44 +146,55 @@ def test_ranking_and_explanation():
 def test_recommendation_repository_isolation(db_session):
     """Verifies user-isolated decision and outcome persistence."""
     import uuid
+    from app.models.user import User
+
     repo = RecommendationRepository()
     dec_id = f"dec-{uuid.uuid4()}"
+    # The decision/outcome rows reference real users and a real task (foreign keys are enforced on PostgreSQL).
+    suffix = uuid.uuid4().hex[:8]
+    user_a, user_b, task_1 = f"user-a-{suffix}", f"user-b-{suffix}", f"t-1-{suffix}"
+    db_session.add_all([User(id=user_a, email=f"{user_a}@flowstate.local", name="A"),
+                        User(id=user_b, email=f"{user_b}@flowstate.local", name="B")])
+    db_session.flush()
+    db_session.add(Task(id=task_1, user_id=user_a, title="Isolation task", estimated_minutes=45,
+                        status=TaskStatus.todo))
+    db_session.commit()
 
     decision = RecommendationDecision(
         id=dec_id,
-        user_id="user-a",
+        user_id=user_a,
         readiness_score=82.0,
         readiness_confidence=0.85,
         engine_version="generic_v1",
-        recommended_task_id="t-1",
+        recommended_task_id=task_1,
     )
-    decision.candidate_scores = [{"task_id": "t-1", "score": 0.95}]
+    decision.candidate_scores = [{"task_id": task_1, "score": 0.95}]
     decision.recommendation_reasons = ["High priority", "Optimal morning window"]
 
     repo.create_decision(db_session, decision)
 
     # Same user can access
-    found = repo.get_decision(db_session, dec_id, "user-a")
+    found = repo.get_decision(db_session, dec_id, user_a)
     assert found is not None
     assert found.readiness_score == 82.0
     assert found.candidate_scores[0]["score"] == 0.95
 
     # Other user CANNOT access (strict user isolation)
-    isolated = repo.get_decision(db_session, dec_id, "user-b")
+    isolated = repo.get_decision(db_session, dec_id, user_b)
     assert isolated is None
 
     # Log outcome
     outcome = RecommendationOutcome(
         decision_id=dec_id,
-        user_id="user-a",
-        task_id="t-1",
+        user_id=user_a,
+        task_id=task_1,
         user_action="accepted",
         outcome="completed",
         actual_minutes=45,
     )
     repo.create_outcome(db_session, outcome)
 
-    found_outcome = repo.get_outcome_by_decision(db_session, dec_id, "user-a")
+    found_outcome = repo.get_outcome_by_decision(db_session, dec_id, user_a)
     assert found_outcome is not None
     assert found_outcome.user_action == "accepted"
     assert found_outcome.actual_minutes == 45

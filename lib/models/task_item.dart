@@ -263,6 +263,28 @@ class TaskItem {
   final String? schedulingExplanation;
   final String? recommendedSlotDisplay;
   final Map<String, dynamic>? schedulingReasons;
+  final bool autoReschedule; // Whether this task may move when Flowstate replans the day
+  /// True ONLY when the user (or an external calendar) fixed this start time. Scheduler-chosen
+  /// times are never locked and may be moved by Replan.
+  final bool timeLocked;
+  /// A fixed block (always also timeLocked): not work, never remaining/current/missed/completable.
+  final bool isCommitment;
+  /// "Intended for this day, time not chosen" (local calendar date). Replaces misusing deadlineAt.
+  final DateTime? plannedDate;
+  /// When the task was first entered (server created_at). Orders unscheduled tasks: first entered on top.
+  final DateTime? createdAt;
+  // Build My Day contract (spec 2026-10-03). *Source: 'explicit' (user-stated) | 'inferred'.
+  final String? candidateId;
+  final String? durationSource;
+  final String? focusLevel; // 'low' | 'medium' | 'high'
+  final String? focusSource;
+  final String? deadlineKind; // 'hard' (never exceeded) | 'soft' (preferred target)
+  final List<String> dependsOn; // candidate ids (preview) / task ids (persisted) that must finish first
+  // Only user-stated preferred times; never inferred.
+  final DateTime? preferredStart;
+  final DateTime? preferredWindowStart;
+  final DateTime? preferredWindowEnd;
+  final String? unscheduledReason; // preview only: why the planner could not place it
 
   TaskPriority get effectivePriority => priority ?? TaskPriority.medium;
 
@@ -304,6 +326,21 @@ class TaskItem {
     this.schedulingExplanation,
     this.recommendedSlotDisplay,
     this.schedulingReasons,
+    this.autoReschedule = true,
+    this.timeLocked = false,
+    this.isCommitment = false,
+    this.plannedDate,
+    this.createdAt,
+    this.candidateId,
+    this.durationSource,
+    this.focusLevel,
+    this.focusSource,
+    this.deadlineKind,
+    this.dependsOn = const [],
+    this.preferredStart,
+    this.preferredWindowStart,
+    this.preferredWindowEnd,
+    this.unscheduledReason,
   });
 
   TaskItem copyWith({
@@ -316,6 +353,7 @@ class TaskItem {
     String? category,
     bool? isCompleted,
     String? scheduledTime,
+    bool clearScheduledTime = false,
     bool? isPriority,
     TaskType? taskType,
     TaskPriority? priority,
@@ -323,8 +361,11 @@ class TaskItem {
     TaskStatus? status,
     TaskSource? source,
     DateTime? deadlineAt,
+    bool clearDeadlineAt = false,
     DateTime? scheduledStart,
+    bool clearScheduledStart = false,
     DateTime? scheduledEnd,
+    bool clearScheduledEnd = false,
     DateTime? startedAt,
     DateTime? completedAt,
     double? confidence,
@@ -334,6 +375,22 @@ class TaskItem {
     String? schedulingExplanation,
     String? recommendedSlotDisplay,
     Map<String, dynamic>? schedulingReasons,
+    bool? autoReschedule,
+    bool? timeLocked,
+    bool? isCommitment,
+    DateTime? plannedDate,
+    bool clearPlannedDate = false,
+    DateTime? createdAt,
+    String? candidateId,
+    String? durationSource,
+    String? focusLevel,
+    String? focusSource,
+    String? deadlineKind,
+    List<String>? dependsOn,
+    DateTime? preferredStart,
+    DateTime? preferredWindowStart,
+    DateTime? preferredWindowEnd,
+    String? unscheduledReason,
   }) {
     return TaskItem(
       id: id ?? this.id,
@@ -344,15 +401,15 @@ class TaskItem {
       deadline: deadline ?? this.deadline,
       category: category ?? this.category,
       isCompleted: isCompleted ?? this.isCompleted,
-      scheduledTime: scheduledTime ?? this.scheduledTime,
+      scheduledTime: clearScheduledTime ? null : (scheduledTime ?? this.scheduledTime),
       isPriority: isPriority ?? this.isPriority,
       taskType: taskType ?? this.taskType,
       priority: clearPriority ? null : (priority ?? this.priority),
       status: status ?? this.status,
       source: source ?? this.source,
-      deadlineAt: deadlineAt ?? this.deadlineAt,
-      scheduledStart: scheduledStart ?? this.scheduledStart,
-      scheduledEnd: scheduledEnd ?? this.scheduledEnd,
+      deadlineAt: clearDeadlineAt ? null : (deadlineAt ?? this.deadlineAt),
+      scheduledStart: clearScheduledStart ? null : (scheduledStart ?? this.scheduledStart),
+      scheduledEnd: clearScheduledEnd ? null : (scheduledEnd ?? this.scheduledEnd),
       startedAt: startedAt ?? this.startedAt,
       completedAt: completedAt ?? this.completedAt,
       confidence: confidence ?? this.confidence,
@@ -362,6 +419,21 @@ class TaskItem {
       schedulingExplanation: schedulingExplanation ?? this.schedulingExplanation,
       recommendedSlotDisplay: recommendedSlotDisplay ?? this.recommendedSlotDisplay,
       schedulingReasons: schedulingReasons ?? this.schedulingReasons,
+      autoReschedule: autoReschedule ?? this.autoReschedule,
+      timeLocked: timeLocked ?? this.timeLocked,
+      isCommitment: isCommitment ?? this.isCommitment,
+      plannedDate: clearPlannedDate ? null : (plannedDate ?? this.plannedDate),
+      createdAt: createdAt ?? this.createdAt,
+      candidateId: candidateId ?? this.candidateId,
+      durationSource: durationSource ?? this.durationSource,
+      focusLevel: focusLevel ?? this.focusLevel,
+      focusSource: focusSource ?? this.focusSource,
+      deadlineKind: deadlineKind ?? this.deadlineKind,
+      dependsOn: dependsOn ?? this.dependsOn,
+      preferredStart: preferredStart ?? this.preferredStart,
+      preferredWindowStart: preferredWindowStart ?? this.preferredWindowStart,
+      preferredWindowEnd: preferredWindowEnd ?? this.preferredWindowEnd,
+      unscheduledReason: unscheduledReason ?? this.unscheduledReason,
     );
   }
 
@@ -387,27 +459,27 @@ class TaskItem {
 
     DateTime? deadlineDate;
     if (json['deadline_at'] != null) {
-      deadlineDate = DateTime.tryParse(json['deadline_at'].toString());
+      deadlineDate = DateTime.tryParse(json['deadline_at'].toString())?.toLocal();
     }
 
     DateTime? schedStart;
     if (json['scheduled_start'] != null) {
-      schedStart = DateTime.tryParse(json['scheduled_start'].toString());
+      schedStart = DateTime.tryParse(json['scheduled_start'].toString())?.toLocal();
     }
 
     DateTime? schedEnd;
     if (json['scheduled_end'] != null) {
-      schedEnd = DateTime.tryParse(json['scheduled_end'].toString());
+      schedEnd = DateTime.tryParse(json['scheduled_end'].toString())?.toLocal();
     }
 
     DateTime? started;
     if (json['started_at'] != null) {
-      started = DateTime.tryParse(json['started_at'].toString());
+      started = DateTime.tryParse(json['started_at'].toString())?.toLocal();
     }
 
     DateTime? completed;
     if (json['completed_at'] != null) {
-      completed = DateTime.tryParse(json['completed_at'].toString());
+      completed = DateTime.tryParse(json['completed_at'].toString())?.toLocal();
     }
 
     // Determine human-readable deadline label
@@ -459,8 +531,24 @@ class TaskItem {
       schedulingExplanation: json['scheduling_explanation'] as String?,
       recommendedSlotDisplay: json['recommended_slot_display'] as String?,
       schedulingReasons: json['scheduling_reasons'] as Map<String, dynamic>?,
+      autoReschedule: (json['auto_reschedule'] as bool?) ?? true,
+      timeLocked: (json['time_locked'] as bool?) ?? false,
+      isCommitment: (json['is_commitment'] as bool?) ?? false,
+      plannedDate: json['planned_date'] != null ? DateTime.tryParse(json['planned_date'].toString()) : null,
+      createdAt: json['created_at'] != null ? DateTime.tryParse(json['created_at'].toString())?.toLocal() : null,
+      candidateId: json['candidate_id'] as String?,
+      durationSource: json['duration_source'] as String?,
+      focusLevel: json['focus_level'] as String?,
+      focusSource: json['focus_source'] as String?,
+      deadlineKind: json['deadline_kind'] as String?,
+      dependsOn: (json['depends_on'] as List?)?.map((e) => e.toString()).toList() ?? const [],
+      preferredStart: _instant(json['preferred_start']),
+      preferredWindowStart: _instant(json['preferred_window_start']),
+      preferredWindowEnd: _instant(json['preferred_window_end']),
     );
   }
+
+  static DateTime? _instant(dynamic v) => v == null ? null : DateTime.tryParse(v.toString())?.toLocal();
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -490,7 +578,14 @@ class TaskItem {
         if (schedulingExplanation != null) 'scheduling_explanation': schedulingExplanation,
         if (recommendedSlotDisplay != null) 'recommended_slot_display': recommendedSlotDisplay,
         if (schedulingReasons != null) 'scheduling_reasons': schedulingReasons,
+        'auto_reschedule': autoReschedule,
+        'time_locked': timeLocked,
+        'is_commitment': isCommitment,
+        'planned_date': plannedDate == null ? null : DateFormat('yyyy-MM-dd').format(plannedDate!),
+        if (createdAt != null) 'created_at': createdAt!.toUtc().toIso8601String(),
       };
+
+  bool get isActive => status == TaskStatus.inProgress;
 
   String get energyRequired {
     if (difficulty == TaskDifficulty.high || taskType == TaskType.deepWork) {
@@ -507,6 +602,7 @@ class TaskItem {
     }
     switch (priority!) {
       case TaskPriority.urgent:
+        return 'Urgent';
       case TaskPriority.high:
         return 'High';
       case TaskPriority.medium:
@@ -528,4 +624,36 @@ class TaskItem {
         return 2;
     }
   }
+}
+
+/// Task list order, derived only from persisted fields so it is identical after a reload:
+/// 1. owning day (planned_date, else the slot's local day; undated last);
+/// 2. scheduled tasks by start time, before unscheduled ones;
+/// 3. unscheduled: an explicitly set priority first (urgent → low), otherwise first entered on top.
+/// Never by completion time or response order, so completing a task keeps its place.
+int compareTaskOrder(TaskItem a, TaskItem b) {
+  DateTime? day(TaskItem t) {
+    final d = t.plannedDate ?? t.scheduledStart?.toLocal();
+    return d == null ? null : DateTime(d.year, d.month, d.day);
+  }
+
+  int nullsLast(Comparable? x, Comparable? y) {
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return x.compareTo(y);
+  }
+
+  final byDay = nullsLast(day(a), day(b));
+  if (byDay != 0) return byDay;
+  final byStart = nullsLast(a.scheduledStart, b.scheduledStart);
+  if (byStart != 0) return byStart;
+  if (a.scheduledStart == null) {
+    // unspecified priority ranks as medium; only an explicit choice moves a task up or down
+    int rank(TaskItem t) => t.isPriorityExplicit ? t.effectivePriority.index - TaskPriority.medium.index : 0;
+    final byPriority = rank(b).compareTo(rank(a));
+    if (byPriority != 0) return byPriority;
+  }
+  final byCreated = nullsLast(a.createdAt, b.createdAt);
+  return byCreated != 0 ? byCreated : a.id.compareTo(b.id);
 }

@@ -113,53 +113,35 @@ class _WhatShouldIDoScreenState extends State<WhatShouldIDoScreen> {
     }
   }
 
+  /// "Later" for THIS task (the one the user opened, not whatever Today recommends). Nothing moves until the user
+  /// confirms; the window is chosen by the server's planner, so no time is promised here before it is booked.
   Future<void> _handleLater() async {
     FlowHaptics.selection();
-    final provider = Provider.of<AppStateProvider>(context, listen: false);
-
     setState(() {
       _isLaterFlow = true;
-      _isSubmittingLater = true;
+      _isSubmittingLater = false;
+      _nextWindow = null;
     });
-
-    final res = await provider.recordOverride(reason: 'later');
-
-    if (mounted) {
-      setState(() {
-        _isSubmittingLater = false;
-        if (res != null && res['next_window'] is Map<String, dynamic>) {
-          _nextWindow = res['next_window'] as Map<String, dynamic>;
-        } else {
-          _nextWindow = {
-            'label': 'Tomorrow · 9:30 AM',
-            'suggested_date': DateTime.now().add(const Duration(days: 1)).toIso8601String().split('T')[0],
-            'suggested_time': '09:30',
-          };
-        }
-      });
-    }
   }
 
   Future<void> _confirmMoveToNextWindow() async {
     FlowHaptics.success();
     final provider = Provider.of<AppStateProvider>(context, listen: false);
-    final targetLabel = _nextWindow?['label'] ?? 'Tomorrow · 9:30 AM';
-
-    final updated = _currentTask.copyWith(
-      scheduledTime: _nextWindow?['suggested_time'] ?? '9:30 AM',
-      deadline: targetLabel,
-    );
-    provider.updateTask(updated);
-
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    final title = _currentTask.title;
+    setState(() => _isSubmittingLater = true);
+    // Registered on the server with or without a Today recommendation: the slot stays as "skipped" history on the
+    // Calendar and the task moves to its next good window.
+    final message = await provider.skipTask(_currentTask.id);
+    if (!mounted) return;
+    setState(() => _isSubmittingLater = false);
+    messenger.showSnackBar(
       SnackBar(
-        content: Text('Moved "${_currentTask.title}" to $targetLabel'),
+        content: Text(message ?? 'Moved "$title" later.'),
         duration: const Duration(seconds: 2),
       ),
     );
-
-    await provider.refreshTodayData();
-    if (mounted && Navigator.of(context).canPop()) {
+    if (Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
     }
   }
@@ -179,22 +161,19 @@ class _WhatShouldIDoScreenState extends State<WhatShouldIDoScreen> {
       );
       if (time != null && mounted) {
         final provider = Provider.of<AppStateProvider>(context, listen: false);
-        final formattedTime = time.format(context);
-        final targetLabel = '${date.month}/${date.day} · $formattedTime';
-        final updated = _currentTask.copyWith(
-          scheduledTime: formattedTime,
-          deadline: targetLabel,
-        );
-        provider.updateTask(updated);
-
-        ScaffoldMessenger.of(context).showSnackBar(
+        final messenger = ScaffoldMessenger.of(context);
+        final targetLabel = '${date.month}/${date.day} · ${time.format(context)}';
+        final title = _currentTask.title;
+        // a real new slot (scheduled_start), saved on the server, not just new display text
+        final ok = await provider.rescheduleTask(_currentTask.id, targetDate: date, targetTime: time);
+        if (!mounted) return;
+        messenger.showSnackBar(
           SnackBar(
-            content: Text('Rescheduled "${_currentTask.title}" to $targetLabel'),
+            content: Text(ok ? 'Rescheduled "$title" to $targetLabel' : "Couldn't save the new time for \u201c$title\u201d."),
             duration: const Duration(seconds: 2),
           ),
         );
-        await provider.refreshTodayData();
-        if (mounted && Navigator.of(context).canPop()) {
+        if (ok && Navigator.of(context).canPop()) {
           Navigator.of(context).pop();
         }
       }
@@ -213,11 +192,9 @@ class _WhatShouldIDoScreenState extends State<WhatShouldIDoScreen> {
     FlowHaptics.success();
     final provider = Provider.of<AppStateProvider>(context, listen: false);
 
-    // Record override to backend for future personalization
-    provider.recordOverride(
-      reason: _selectedReason,
-      chosenTaskId: alternativeTask.id,
-    );
+    // "Do this instead": the chosen task becomes the one to do now (recorded on the server, the Calendar follows).
+    // Nothing else is postponed on its behalf.
+    provider.setPreferredActiveTask(alternativeTask.id);
 
     setState(() {
       _currentTask = alternativeTask;
@@ -332,6 +309,11 @@ class _WhatShouldIDoScreenState extends State<WhatShouldIDoScreen> {
               feeling: fb.feeling,
               durationFeedback: fb.durationFeedback,
               blockerNote: fb.blockerNote,
+              energyScore: fb.energyScore,
+              focusScore: fb.focusScore,
+              difficultyScore: fb.difficultyScore,
+              distractionScore: fb.distractionScore,
+              completedAt: fb.completedAt,
             );
             if (fb.taskFinished) {
               state.toggleTaskCompletion(_currentTask.id);
@@ -348,7 +330,7 @@ class _WhatShouldIDoScreenState extends State<WhatShouldIDoScreen> {
 
     // "Later" Rescheduling View
     if (_isLaterFlow) {
-      final nextWindowLabel = _nextWindow?['label'] ?? 'Tomorrow · 9:30 AM';
+      final nextWindowLabel = _nextWindow?['label'] ?? 'Its next free window';
       return Container(
         decoration: BoxDecoration(
           color: FlowColors.surface(context),

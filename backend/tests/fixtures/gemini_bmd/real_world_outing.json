@@ -1,0 +1,28 @@
+{
+  "tasks": [
+    {"ref": "t1", "title": "Write college observations", "type": "study", "category": "College", "estimated_minutes": 150,
+     "duration_source": "explicit", "difficulty": "high", "priority": "high", "priority_source": "inferred",
+     "focus_level": "high", "focus_source": "inferred", "depends_on": [], "target_date": "2026-10-04",
+     "deadline": null, "fixed_start": null, "confidence": 0.9},
+    {"ref": "t2", "title": "Work on college project", "type": "study", "category": "College", "estimated_minutes": 120,
+     "duration_source": "inferred", "difficulty": "high", "priority": "high", "priority_source": "inferred",
+     "focus_level": "high", "focus_source": "inferred", "depends_on": [], "target_date": "2026-10-04",
+     "deadline": "2026-10-06", "deadline_kind": "hard", "deadline_phrase": "by", "fixed_start": null, "confidence": 0.9},
+    {"ref": "t3", "title": "Work on Flowstate app deployment", "type": "deep_work", "category": "Work", "estimated_minutes": 90,
+     "duration_source": "inferred", "difficulty": "high", "priority": "high", "priority_source": "explicit",
+     "focus_level": "high", "focus_source": "inferred", "depends_on": [], "target_date": "2026-10-04",
+     "deadline": null, "fixed_start": null, "confidence": 0.9},
+    {"ref": "t4", "title": "Gym session", "type": "physical", "category": "Fitness", "estimated_minutes": 60,
+     "duration_source": "inferred", "difficulty": "physical", "priority": "low", "priority_source": "explicit",
+     "focus_level": "low", "focus_source": "inferred", "depends_on": [], "target_date": "2026-10-04",
+     "deadline": null, "fixed_start": null, "confidence": 0.9}
+  ],
+  "planning_context": {
+    "fixed_events": [
+      {"title": "Going out", "start_time": "18:30", "end_time": "20:30", "duration_minutes": 120, "target_date": "2026-10-04"}
+    ],
+    "travel_segments": [], "protected_periods": [], "availability_windows": [], "task_dependencies": [],
+    "priority_order": [], "deferred_tasks": [], "energy_preference": null, "buffer_preference": "spacious"
+  },
+  "ambiguities": []
+}

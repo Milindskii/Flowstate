@@ -1,7 +1,9 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../theme/flow_colors.dart';
+import 'package:flutter/foundation.dart';
 import '../noya_companion_view.dart';
+import '../noya_motion_view.dart';
 import 'flow_companion_animation_controller.dart';
 
 /// High-fidelity custom vector graphic for Flowstate animal companions.
@@ -13,12 +15,18 @@ class CompanionGraphic extends StatelessWidget {
   final CompanionAnimState state;
   final bool animate;
 
+  /// Noya's mood loop and reactions (fox/Noya only; other species render statically).
+  final NoyaMood mood;
+  final ValueListenable<NoyaReactionEvent?>? reactions;
+
   const CompanionGraphic({
     super.key,
     required this.species,
     this.size = 40.0,
     this.state = CompanionAnimState.idle,
     this.animate = true,
+    this.mood = NoyaMood.rest,
+    this.reactions,
   });
 
   @override
@@ -26,9 +34,11 @@ class CompanionGraphic extends StatelessWidget {
     final normSpecies = species.toLowerCase().trim();
 
     if (normSpecies == 'fox' || normSpecies.isEmpty || normSpecies == 'noya') {
-      return NoyaCompanionView.fromAnimState(
-        animState: state,
+      return NoyaMotionView(
+        mood: mood,
+        pose: NoyaCompanionView.stateForAnimState(state),
         size: size,
+        reactions: reactions,
       );
     }
 

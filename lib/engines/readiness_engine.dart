@@ -31,15 +31,19 @@ class ReadinessEngine {
     totalScore = totalScore.clamp(40, 98);
 
     // Determine focus window based on user peak
-    String windowRange = '9:30 AM - 11:45 AM';
-    String status = 'Strong focus window coming up';
+    final peak = personalData.focusPeak.toLowerCase();
+    String windowRange = '8:30 AM – 11:30 AM';
+    String status = 'Morning focus peak projected';
 
-    if (personalData.focusPeak == 'Afternoon') {
-      windowRange = '2:00 PM - 4:15 PM';
+    if (peak == 'afternoon') {
+      windowRange = '2:00 PM – 5:00 PM';
       status = 'Afternoon focus peak projected';
-    } else if (personalData.focusPeak == 'Evening') {
-      windowRange = '7:00 PM - 9:30 PM';
+    } else if (peak == 'evening') {
+      windowRange = '6:00 PM – 9:30 PM';
       status = 'Evening deep work peak';
+    } else if (peak == 'midday') {
+      windowRange = '11:30 AM – 2:00 PM';
+      status = 'Midday focus peak projected';
     }
 
     // Circadian energy curve points (6am to 6pm)
