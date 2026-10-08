@@ -1579,82 +1579,13 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
           // TYPE · DURATION
           Text(
             '${task.taskType.label} · ${task.isDurationExplicit ? '${task.durationMinutes} min' : 'Estimated ${task.durationMinutes} min'}',
-            style: FlowTypography.bodySmall(
-                    color: FlowColors.textSecondaryOf(context))
-                .copyWith(
-              fontWeight: FontWeight.w600,
-            ),
+            style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context))
+                .copyWith(fontWeight: FontWeight.w600),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
 
-          // PRIORITY (shown only when there is a real value; a missing one is never rendered as text)
-          if (isExplicit && task.priority != null)
-            Text(
-              '${_capitalize(task.priority!.value)} priority',
-              style: FlowTypography.bodySmall(
-                  color: FlowColors.textSecondaryOf(context)),
-            )
-          else if (isInferred && task.priority != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: FlowColors.warning.withValues(alpha: 0.12),
-                borderRadius: FlowRadii.pillRadius,
-              ),
-              child: Text(
-                'Suggested: ${_capitalize(task.priority!.value)}',
-                style: FlowTypography.bodySmall(color: FlowColors.warning)
-                    .copyWith(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 11,
-                ),
-              ),
-            ),
-          if (task.focusLevel == 'high') ...[
-            const SizedBox(height: 4),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: accent.withValues(alpha: 0.12),
-                borderRadius: FlowRadii.pillRadius,
-              ),
-              child: Text(
-                'High focus',
-                style: FlowTypography.bodySmall(color: accent)
-                    .copyWith(fontWeight: FontWeight.w600, fontSize: 11),
-              ),
-            ),
-          ],
-          const SizedBox(height: 4),
-
-          // TIME / DEADLINE (Only explicit user constraint)
-          if (isFixedTime)
-            Text(
-              '$timeDisplay · Fixed time',
-              style: FlowTypography.bodySmall(
-                color: FlowColors.accentCyan,
-              ).copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            )
-          else if (task.deadline.isNotEmpty && task.deadline != 'Today')
-            Text(
-              'Due ${task.deadline}',
-              style: FlowTypography.bodySmall(
-                  color: FlowColors.textSecondaryOf(context)),
-            ),
-
-          if (_confirmErrors[task.id] != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              _confirmErrors[task.id]!,
-              style: FlowTypography.bodySmall(color: FlowColors.warning)
-                  .copyWith(fontWeight: FontWeight.w600),
-            ),
-          ],
-
-          // RECOMMENDED TIME
-          const SizedBox(height: 8),
+          // THE DECISION: when it is planned (or recommended), as one line, with at most one small badge.
+          // "Show the decision, hide the machinery": the reasoning is one tap away (below).
           Wrap(
             crossAxisAlignment: WrapCrossAlignment.center,
             spacing: 6,
@@ -1662,91 +1593,73 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
             children: [
               Text(
                 isFixedTime ? 'Scheduled: ' : 'Recommended: ',
-                style: FlowTypography.bodySmall(
-                        color: FlowColors.textMutedOf(context))
-                    .copyWith(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12,
-                ),
+                style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context))
+                    .copyWith(fontWeight: FontWeight.w600, fontSize: 13),
               ),
               Text(
                 task.recommendedSlotDisplay ??
-                    (isFixedTime
-                        ? timeDisplay!
-                        : (task.unscheduledReason != null
-                            ? 'Not scheduled'
-                            : 'Upcoming')),
-                style: FlowTypography.bodySmall(
-                  color: isFixedTime
-                      ? FlowColors.accentCyan
-                      : FlowColors.accentMint,
-                ).copyWith(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                ),
+                    (isFixedTime ? timeDisplay! : (task.unscheduledReason != null ? 'Not scheduled' : 'Upcoming')),
+                key: Key('preview_time_${task.id}'),
+                style: FlowTypography.bodySmall(color: isFixedTime ? FlowColors.accentCyan : FlowColors.accentMint)
+                    .copyWith(fontWeight: FontWeight.w700, fontSize: 13),
               ),
-              if (isFixedTime)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: FlowColors.accentCyan.withValues(alpha: 0.15),
-                    borderRadius: FlowRadii.pillRadius,
-                  ),
-                  child: Text(
-                    'Fixed',
-                    style:
-                        FlowTypography.labelSmall(color: FlowColors.accentCyan)
-                            .copyWith(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
+              if (_cardBadge(task, isFixedTime: isFixedTime, isExplicit: isExplicit, isInferred: isInferred, accent: accent)
+                  case final badge?)
+                badge,
             ],
           ),
 
-          // WHY / EXPLANATION
-          if (task.schedulingExplanation != null &&
-              task.schedulingExplanation!.isNotEmpty) ...[
+          if (_confirmErrors[task.id] != null) ...[
             const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: FlowColors.surfaceContainer(context),
-                borderRadius: FlowRadii.cardRadius,
-                border: Border.all(
-                    color: FlowColors.border(context).withValues(alpha: 0.6)),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Why: ',
-                    style: FlowTypography.labelSmall(
-                            color: FlowColors.textMutedOf(context))
-                        .copyWith(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 11,
-                    ),
-                  ),
-                  Expanded(
-                    child: Text(
-                      task.schedulingExplanation!,
-                      style: FlowTypography.bodySmall(
-                              color: FlowColors.textSecondaryOf(context))
-                          .copyWith(
-                        fontSize: 11,
-                        height: 1.3,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+            Text(
+              _confirmErrors[task.id]!,
+              style: FlowTypography.bodySmall(color: FlowColors.warning).copyWith(fontWeight: FontWeight.w600),
             ),
           ],
+
+          // DETAILS (collapsed): the scheduling reason, priority and deadline, only when the user asks.
+          if (_hasCardDetails(task, isExplicit: isExplicit, isInferred: isInferred, isFixedTime: isFixedTime))
+            _CardDetails(
+              key: Key('preview_details_${task.id}'),
+              lines: [
+                if (task.schedulingExplanation != null && task.schedulingExplanation!.isNotEmpty)
+                  task.schedulingExplanation!,
+                if (task.priority != null && (isExplicit || isInferred))
+                  isExplicit
+                      ? '${_capitalize(task.priority!.value)} priority'
+                      : 'Suggested priority: ${_capitalize(task.priority!.value)}',
+                if (task.focusLevel == 'high') 'Needs high focus',
+                if (task.deadline.isNotEmpty && task.deadline != 'Today') 'Due ${task.deadline}',
+              ],
+            ),
         ],
       ),
+    );
+  }
+
+  bool _hasCardDetails(TaskItem task, {required bool isExplicit, required bool isInferred, required bool isFixedTime}) =>
+      (task.schedulingExplanation?.isNotEmpty ?? false) ||
+      (task.priority != null && (isExplicit || isInferred)) ||
+      task.focusLevel == 'high' ||
+      (task.deadline.isNotEmpty && task.deadline != 'Today');
+
+  /// The one small state badge a card may show: Fixed time beats a suggested priority.
+  Widget? _cardBadge(TaskItem task,
+      {required bool isFixedTime, required bool isExplicit, required bool isInferred, required Color accent}) {
+    String? label;
+    Color color = FlowColors.accentCyan;
+    if (isFixedTime) {
+      label = 'Fixed time';
+    } else if (isInferred && task.priority != null) {
+      label = 'Suggested ${_capitalize(task.priority!.value)}';
+      color = FlowColors.warning;
+    }
+    if (label == null) return null;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.14), borderRadius: FlowRadii.pillRadius),
+      child: Text(label,
+          style: FlowTypography.labelSmall(color: color).copyWith(fontSize: 10.5, fontWeight: FontWeight.w700)),
     );
   }
 
@@ -2254,5 +2167,50 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
   String _capitalize(String s) {
     if (s.isEmpty) return s;
     return s[0].toUpperCase() + s.substring(1);
+  }
+}
+
+
+/// "Why this time": the reasoning behind a plan card, collapsed until asked for.
+class _CardDetails extends StatefulWidget {
+  final List<String> lines;
+  const _CardDetails({super.key, required this.lines});
+
+  @override
+  State<_CardDetails> createState() => _CardDetailsState();
+}
+
+class _CardDetailsState extends State<_CardDetails> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = FlowColors.textMutedOf(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () => setState(() => _open = !_open),
+          borderRadius: FlowRadii.pillRadius,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Why this time', style: FlowTypography.labelSmall(color: muted).copyWith(fontWeight: FontWeight.w700)),
+                Icon(_open ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 16, color: muted),
+              ],
+            ),
+          ),
+        ),
+        if (_open)
+          for (final line in widget.lines)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(line,
+                  style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(fontSize: 11.5, height: 1.3)),
+            ),
+      ],
+    );
   }
 }

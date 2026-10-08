@@ -32,7 +32,8 @@ class TimezoneService {
     }
     if (_cached != null) return _cached;
     try {
-      final info = await FlutterTimezone.getLocalTimezone();
+      // A platform channel that never answers must not hold a request (Replan, Build My Day) open forever.
+      final info = await FlutterTimezone.getLocalTimezone().timeout(const Duration(seconds: 3));
       final id = info.identifier;
       if (isIana(id)) {
         _cached = id;

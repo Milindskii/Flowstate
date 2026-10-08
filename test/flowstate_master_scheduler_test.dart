@@ -135,7 +135,7 @@ void main() {
       expect(eval.explanation, contains('protect your upcoming deadline'));
     });
 
-    testWidgets('6. Preview Sheet renders Recommended time and Why explanation', (tester) async {
+    testWidgets('6. Preview Sheet shows the Recommended time and keeps the Why explanation one tap away', (tester) async {
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -159,9 +159,14 @@ void main() {
       await tester.tap(find.byKey(const Key('brain_dump_build_button')));
       await tester.pumpAndSettle();
 
-      // Assert Recommended and Why are visible
+      // The decision is visible; the reasoning is collapsed until asked for ("show the decision, hide the machinery")
       expect(find.textContaining('Recommended:'), findsWidgets);
-      expect(find.textContaining('Why:'), findsWidgets);
+      expect(find.textContaining('Why:'), findsNothing);
+      expect(find.text('Why this time'), findsWidgets);
+      await tester.tap(find.text('Why this time').first);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.textContaining('Needs high focus').evaluate().length + find.textContaining('priority').evaluate().length, greaterThan(0),
+          reason: 'opening the details shows the reasoning lines');
       expect(find.byKey(const Key('add_and_schedule_button')), findsOneWidget);
     });
   });

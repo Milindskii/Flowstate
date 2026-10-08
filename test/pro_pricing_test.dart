@@ -34,7 +34,7 @@ void main() {
 
   test('yearly: ₹999 a year is ₹2.74 a day, cheaper per day than monthly, marked best value, and not purchasable yet', () {
     expect(ProPlanConfig.dailyPriceForYearly(999), '₹2.74/day');
-    final plans = ProPlanConfig.defaultPlans;
+    const plans = ProPlanConfig.defaultPlans;
     expect(plans.map((p) => p.id), ['flowstate_pro_monthly', 'flowstate_pro_yearly']);
     final yearly = plans.last;
     expect(yearly.yearlyPriceInr, 999);

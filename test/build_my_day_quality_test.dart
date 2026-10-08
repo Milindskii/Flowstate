@@ -290,13 +290,24 @@ void main() {
       expect(find.text('Mon · 3:15 PM'), findsOneWidget);
     });
 
-    testWidgets('explicit vs inferred priority labels; no "Priority not specified"; high focus chip', (tester) async {
+    testWidgets('cards stay calm: one small badge; priority and focus live in the collapsed details', (tester) async {
       final api = _PlanApi();
       await _openAndBuild(tester, api);
-      expect(find.text('High priority'), findsOneWidget);
-      expect(find.text('Suggested: Medium'), findsOneWidget);
+      // collapsed: no priority/focus lines on the card, only the (inferred) one small badge
+      expect(find.text('High priority'), findsNothing);
+      expect(find.text('Needs high focus'), findsNothing);
+      expect(find.text('Suggested Medium'), findsOneWidget);
       expect(find.text('Priority not specified'), findsNothing);
-      expect(find.text('High focus'), findsOneWidget);
+      // opening a card's details shows the machinery
+      await tester.ensureVisible(find.text('Why this time').first);
+      for (final f in find.text('Why this time').evaluate().toList()) {
+        await tester.tap(find.byWidget(f.widget).first, warnIfMissed: false);
+        await tester.pump();
+      }
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('High priority'), findsOneWidget);
+      expect(find.text('Suggested priority: Medium'), findsOneWidget);
+      expect(find.text('Needs high focus'), findsOneWidget);
     });
   });
 

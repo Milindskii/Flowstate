@@ -27,7 +27,7 @@ class _RoutineApi extends ApiService {
     calls.add('POST $endpoint');
     bodies.add(Map<String, dynamic>.from(body as Map));
     if (endpoint == '/api/v1/routines') {
-      final b = body as Map;
+      final b = body;
       final r = {
         'id': 'r${routines.length + 1}',
         'title': b['title'],
@@ -46,7 +46,7 @@ class _RoutineApi extends ApiService {
     if (endpoint.endsWith('/continuation')) {
       final id = endpoint.split('/')[4];
       final r = routines.firstWhere((x) => x['id'] == id);
-      if ((body as Map)['decision'] == 'continue') {
+      if (body['decision'] == 'continue') {
         r['confirmed_through'] = '2026-10-18';
         r['continuation_due'] = false;
         r['paused'] = false;
@@ -64,7 +64,7 @@ class _RoutineApi extends ApiService {
     bodies.add(Map<String, dynamic>.from(body as Map));
     final id = endpoint.split('/').last;
     final r = routines.firstWhere((x) => x['id'] == id);
-    final b = body as Map;
+    final b = body;
     if (b['weekdays'] != null) r['weekdays'] = b['weekdays'];
     if (b['start_hhmm'] != null) r['start_hhmm'] = b['start_hhmm'];
     return {'routine': r, 'created_count': 0};
