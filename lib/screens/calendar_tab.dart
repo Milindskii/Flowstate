@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../components/companion/noya_reaction_controller.dart';
+import '../components/calendar_stop_sheet.dart';
 import '../components/flow_date_strip.dart';
+import '../components/noya_notice.dart';
 import '../components/flow_month_picker.dart';
 import '../components/flow_day_path.dart';
 import '../components/noya_motion_view.dart';
@@ -201,9 +203,31 @@ class _CalendarTabState extends State<CalendarTab> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Calendar',
-                          style: FlowTypography.headlineMedium(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w800),
+                        // Tapping the title explains the road in a few plain words.
+                        Semantics(
+                          button: true,
+                          label: 'Calendar. What the road means',
+                          excludeSemantics: true,
+                          child: InkWell(
+                            key: const Key('calendar_title_button'),
+                            borderRadius: FlowRadii.chipRadius,
+                            onTap: () {
+                              FlowHaptics.lightTap();
+                              showCalendarLegendSheet(context);
+                            },
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'Calendar',
+                                  style: FlowTypography.headlineMedium(color: FlowColors.textPrimaryOf(context))
+                                      .copyWith(fontWeight: FontWeight.w800),
+                                ),
+                                const SizedBox(width: 6),
+                                Icon(Icons.info_outline_rounded, size: 18, color: FlowColors.textMutedOf(context)),
+                              ],
+                            ),
+                          ),
                         ),
                         const SizedBox(height: 4),
                         Text(
@@ -375,10 +399,16 @@ class _CalendarTabState extends State<CalendarTab> {
     // THE stop list: one stop per task, sorted once by its anchor (history slot / first place seen / planned slot),
     // with a stable id. State changes (done, skipped, bypassed, recovered, Do this now) redraw the stop and the route;
     // they never move a stop or remount it.
-    final orderedItems = buildCanonicalDayStops(
-      live: enrichedItems.where((i) => i.deviation == null).toList(),
-      history: history,
-      anchors: state.dayPathAnchorsFor(selectedDate),
+    // ... and the journey moves on by itself: a stop the traveller went past (a later stop is done or running) is
+    // passed without any "Do this later"; the "Do this now" pick is shown open so it can be NOW.
+    final orderedItems = markPassedStops(
+      buildCanonicalDayStops(
+        live: enrichedItems.where((i) => i.deviation == null).toList(),
+        history: history,
+        anchors: state.dayPathAnchorsFor(selectedDate),
+      ),
+      now: now,
+      keepOpenTaskId: isToday ? state.preferredActiveTaskId : null,
     );
 
     // Where the traveller is (only on today): the Do-this-now pick, a running task, else the next open stop in path
@@ -441,6 +471,7 @@ class _CalendarTabState extends State<CalendarTab> {
             item: item,
             state: state,
             isCurrent: isToday && item.id == nowItemId,
+            category: categoryOf(item),
           );
         }
       },
@@ -470,191 +501,91 @@ class _CalendarTabState extends State<CalendarTab> {
     required ScheduleItem item,
     required AppStateProvider state,
     required bool isCurrent,
+    String? category,
   }) {
-    final dark = FlowColors.isDark(context);
     final accent = Theme.of(context).colorScheme.primary;
     final id = item.taskId ?? (item.id.startsWith('sched-') ? item.id.substring(6) : item.id);
     final matchingTask = CalendarTab.taskBehind(state.tasks, item);
+    final skipColor = FlowColors.routeSkippedOf(context);
+    final missColor = FlowColors.warningOf(context);
+    final notices = NoyaNoticeCenter.instance;
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: FlowColors.surface(context),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(FlowRadii.cardLarge)),
-      ),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: FlowColors.textMutedOf(context).withValues(alpha: 0.3),
-                      borderRadius: FlowRadii.pillRadius,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            item.title,
-                            style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context))
-                                .copyWith(fontWeight: FontWeight.w700),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '${item.time} ${item.period} · ${item.durationMinutes} min',
-                            style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (isCurrent)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: accent.withValues(alpha: dark ? 0.2 : 0.12),
-                          borderRadius: FlowRadii.pillRadius,
-                          border: Border.all(color: accent.withValues(alpha: 0.6)),
-                        ),
-                        child: Text(
-                          'IN FOCUS',
-                          style: FlowTypography.labelSmall(color: accent).copyWith(fontWeight: FontWeight.w700),
-                        ),
-                      )
-                    else if (item.isSkipped)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF59E0B).withValues(alpha: dark ? 0.2 : 0.12),
-                          borderRadius: FlowRadii.pillRadius,
-                          border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.6)),
-                        ),
-                        child: Text(
-                          'SKIPPED',
-                          style: FlowTypography.labelSmall(color: const Color(0xFFF59E0B)).copyWith(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                const Divider(height: 1),
-                const SizedBox(height: 8),
-                // A commitment (going out) is a fixed block, not work: no start/complete/skip.
-                if (!isCurrent && !item.isCommitment)
-                  _buildActionTile(
-                    context: sheetContext,
-                    key: const Key('calendar_action_do_now'),
-                    icon: Icons.alt_route_rounded,
-                    iconColor: accent,
-                    title: item.isMissed ? 'Redo now' : 'Do this now',
-                    subtitle: item.isMissed
-                        ? 'Its time passed. Start it now; the miss stays on record'
-                        : 'Reroute your planned path to start this task immediately',
-                    onTap: () {
-                      Navigator.pop(sheetContext);
-                      FlowHaptics.selection();
-                      state.setPreferredActiveTask(id);
-                    },
-                  ),
-                if (!item.isCommitment)
-                _buildActionTile(
-                  context: sheetContext,
-                  key: const Key('calendar_action_mark_done'),
-                  icon: Icons.check_circle_outline_rounded,
-                  iconColor: FlowColors.successOf(context),
-                  title: 'Mark as completed',
-                  subtitle: item.isSkipped
-                      ? 'Record as recovered after deviation'
-                      : 'Mark finished along today\'s path',
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    FlowHaptics.success();
-                    state.toggleTaskCompletion(id);
-                  },
-                ),
-                if (!item.isSkipped && !isCurrent && !item.isCommitment)
-                  _buildActionTile(
-                    context: sheetContext,
-                    key: const Key('calendar_action_skip'),
-                    icon: Icons.arrow_forward_rounded,
-                    iconColor: const Color(0xFFF59E0B),
-                    title: 'Skip / Defer for now',
-                    subtitle: 'Bypass this stop and reroute the active path',
-                    onTap: () {
-                      Navigator.pop(sheetContext);
-                      FlowHaptics.selection();
-                      state.skipTask(id);
-                    },
-                  ),
-                if (matchingTask != null)
-                  _buildActionTile(
-                    context: sheetContext,
-                    key: const Key('calendar_action_edit'),
-                    icon: Icons.edit_outlined,
-                    iconColor: FlowColors.textSecondaryOf(context),
-                    title: 'Edit task details',
-                    subtitle: 'Change time, duration, focus requirement, or priority',
-                    onTap: () {
-                      Navigator.pop(sheetContext);
-                      FlowHaptics.lightTap();
-                      EditTaskSheet.show(context, matchingTask);
-                    },
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
+    final (String?, Color?) badge = isCurrent
+        ? ('Up now', accent)
+        : item.isSkipped
+            ? ('Skipped', skipColor)
+            : item.isMissed
+                ? (item.state == 'passed' ? 'Bypassed' : 'Missed', missColor)
+                : (null, null);
 
-  Widget _buildActionTile({
-    required BuildContext context,
-    required Key key,
-    required IconData icon,
-    required Color iconColor,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      key: key,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-      leading: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: iconColor.withValues(alpha: FlowColors.isDark(context) ? 0.15 : 0.1),
-          shape: BoxShape.circle,
+    final actions = <StopAction>[
+      // A commitment (going out) is a fixed block, not work: no start/complete/skip.
+      if (!isCurrent && !item.isCommitment)
+        StopAction(
+          key: const Key('calendar_action_do_now'),
+          icon: Icons.play_arrow_rounded,
+          color: accent,
+          title: item.isMissed ? 'Redo now' : 'Do this now',
+          subtitle: item.isMissed ? 'Start it now; the miss stays on record' : 'Move it to right now',
+          run: () async {
+            final res = await state.doTaskNow(id);
+            if (res.failed) throw StateError(res.message);
+            if (res.moved) {
+              notices.success(res.message, title: item.title);
+            } else {
+              notices.info(res.message);
+            }
+          },
         ),
-        child: Icon(icon, color: iconColor, size: 20),
-      ),
-      title: Text(
-        title,
-        style: FlowTypography.bodyLarge(color: FlowColors.textPrimaryOf(context))
-            .copyWith(fontWeight: FontWeight.w600),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)),
-      ),
-      onTap: onTap,
+      if (!item.isCommitment)
+        StopAction(
+          key: const Key('calendar_action_mark_done'),
+          icon: Icons.check_circle_outline_rounded,
+          color: FlowColors.successOf(context),
+          title: 'Mark as completed',
+          subtitle: item.isSkipped || item.isMissed ? 'Done after all: drawn as a recovery' : 'Done along today\'s path',
+          run: () async {
+            FlowHaptics.success();
+            state.toggleTaskCompletion(id);
+            notices.success('Task completed!', title: item.title);
+          },
+        ),
+      if (!item.isSkipped && !isCurrent && !item.isCommitment)
+        StopAction(
+          key: const Key('calendar_action_skip'),
+          icon: Icons.redo_rounded,
+          color: skipColor,
+          title: 'Skip for now',
+          subtitle: 'Bypass this stop; it moves to its next good time',
+          run: () async {
+            final message = await state.skipTask(id);
+            if (message != null) notices.info(message);
+          },
+        ),
+      if (matchingTask != null)
+        StopAction(
+          key: const Key('calendar_action_edit'),
+          icon: Icons.edit_outlined,
+          color: FlowColors.textSecondaryOf(context),
+          title: 'Edit task',
+          subtitle: 'Time, date, duration or details',
+          run: () async {
+            FlowHaptics.lightTap();
+            // opens after this sheet has closed
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (context.mounted) EditTaskSheet.show(context, matchingTask);
+            });
+          },
+        ),
+    ];
+
+    showCalendarStopSheet(
+      context,
+      item: item,
+      category: category,
+      badge: badge.$1,
+      badgeColor: badge.$2,
+      actions: actions,
     );
   }
 }

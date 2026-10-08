@@ -109,13 +109,20 @@ class DayRoutePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (!geometry.hasRoute) return;
-    _paintBed(canvas);
+    final g = geometry;
+    final main = [for (var i = 0; i < g.sampleYs.length; i++) Offset(_x(i), g.sampleYs[i])];
+    // Beds first (the road and every branch share one bed language), then the coloured lines on top, so a branch
+    // that leaves the road blends into it instead of being drawn over it.
+    _paintBed(canvas, main);
+    for (final b in g.branches) {
+      if (b.points.length >= 2) _paintBed(canvas, b.points);
+    }
     _paintCenterLine(canvas);
     _paintBranches(canvas);
   }
 
-  /// The way back to a recovered stop: a thinner orange line from where the traveller really was to the stop, over
-  /// the road bed. It is a second path only because a second journey happened; nothing else adds a line.
+  /// The way back to a recovered stop, from where the traveller really was to the stop. It is the SAME road: the same
+  /// bed, shadow, edges, line width and round caps as the main route; only its colour (orange) says what it is.
   void _paintBranches(Canvas canvas) {
     for (final b in geometry.branches) {
       if (b.points.length < 2) continue;
@@ -129,25 +136,28 @@ class DayRoutePainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round
-          ..strokeWidth = DayRouteGeometry.nearHalfWidth * 0.5
+          ..strokeWidth = centerLineWidth
           ..color = palette.recovery,
       );
     }
   }
 
-  void _paintBed(Canvas canvas) {
+  /// Width of the coloured line on every stretch of road (main route and branches alike).
+  static const double centerLineWidth = DayRouteGeometry.nearHalfWidth * 0.9;
+
+  void _paintBed(Canvas canvas, List<Offset> pts) {
     final g = geometry;
-    final n = g.sampleYs.length;
+    final n = pts.length;
     final left = <Offset>[];
     final right = <Offset>[];
     for (var i = 0; i < n; i++) {
-      final a = Offset(_x(math.max(0, i - 1)), g.sampleYs[math.max(0, i - 1)]);
-      final b = Offset(_x(math.min(n - 1, i + 1)), g.sampleYs[math.min(n - 1, i + 1)]);
+      final a = pts[math.max(0, i - 1)];
+      final b = pts[math.min(n - 1, i + 1)];
       final tangent = (b - a);
       final len = tangent.distance == 0 ? 1.0 : tangent.distance;
       final normal = Offset(-tangent.dy / len, tangent.dx / len);
-      final c = Offset(_x(i), g.sampleYs[i]);
-      final hw = g.halfWidthAt(g.sampleYs[i]);
+      final c = pts[i];
+      final hw = g.halfWidthAt(c.dy);
       left.add(c + normal * hw);
       right.add(c - normal * hw);
     }
@@ -186,7 +196,7 @@ class DayRoutePainter extends CustomPainter {
         Offset(_x(i + 1), g.sampleYs[i + 1]),
         Paint()
           ..strokeCap = StrokeCap.round
-          ..strokeWidth = g.halfWidthAt(g.sampleYs[i]) * 0.9
+          ..strokeWidth = centerLineWidth
           ..color = _color(_stateAt(i + 1)),
       );
     }

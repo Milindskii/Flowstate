@@ -187,3 +187,38 @@ String? pickDayPathNowId(
   }
   return null;
 }
+
+/// The journey moves on by itself: a stop the traveller went PAST is marked as passed, with no user action.
+///
+/// A stop is passed when its time has come (its start is at or before [now]), it is still open (not done, skipped,
+/// failed or already missed), and a LATER stop in path order has since been completed or is running. The traveller
+/// is beyond it, so the road bends around it exactly like a missed stop (it is drawn as missed with the `passed`
+/// state) and it stays at its own slot, recoverable later. A slot that simply ended is already missed by the clock
+/// (see ScheduleItem.withDerivedState); this covers the stop whose slot is still running when the user moves on.
+///
+/// [keepOpenTaskId] (the "Do this now" pick) is the user's explicit choice: it is never passed, and it is shown open
+/// even if it was missed or skipped before, so it can be the NOW stop. Commitments and unslotted stops never pass.
+List<ScheduleItem> markPassedStops(List<ScheduleItem> stops, {required DateTime now, String? keepOpenTaskId}) {
+  var furthest = -1;
+  for (var i = 0; i < stops.length; i++) {
+    final s = stops[i];
+    if (s.isCommitment || s.deviation != null) continue;
+    if (s.isCompleted || (s.isActive && !s.isCompleted)) furthest = i;
+  }
+  return [
+    for (var i = 0; i < stops.length; i++)
+      () {
+        final s = stops[i];
+        if (keepOpenTaskId != null && s.taskId != null && dayPathTaskKey(s) == keepOpenTaskId) {
+          if (s.isCompleted || s.deviation != null || s.isFailed) return s;
+          return s.copyWith(isMissed: false, isSkipped: false, state: 'scheduled');
+        }
+        final open = !s.isCompleted && !s.isSkipped && !s.isFailed && !s.isMissed && !s.isActive && s.deviation == null;
+        final started = s.startTime != null && !s.startTime!.isAfter(now);
+        if (i < furthest && open && started && !s.isCommitment && !isUnscheduledItem(s)) {
+          return s.copyWith(isMissed: true, state: 'passed');
+        }
+        return s;
+      }(),
+  ];
+}

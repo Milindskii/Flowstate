@@ -810,3 +810,58 @@ def skip_task(
     return OverrideResponse(recorded=True, next_window=next_window,
                             message=f"Skipped. Next good window: {next_window.get('label', 'later')}")
 
+
+
+class DoNowResponse(BaseModel):
+    moved: bool
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    message: str
+
+
+@router.post("/do-now/{task_id}", response_model=DoNowResponse)
+def do_task_now(
+    task_id: str,
+    req: Optional[SkipTaskRequest] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """"Do this now" from anywhere (Calendar stop, Task page), with or without a Today recommendation.
+
+    The shared deterministic planner is asked for the current minute. When that clashes with a fixed block or another
+    task it falls back to the nearest valid slot; with no valid slot nothing changes and ``moved`` is false, so the app
+    never shows a move that did not happen. A missed slot is kept as "missed" history (the Calendar stop stays where
+    it was). Repeating the call while the task already starts now changes nothing (idempotent). Never charges Shields.
+    """
+    now_utc = datetime.now(timezone.utc)
+    user_tz, user_tz_str = resolve_user_timezone(current_user, req.timezone if req else None)
+    task_obj = db.query(Task).filter(Task.id == task_id, Task.user_id == current_user.id).first()
+    if task_obj is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "not_found", "message": "Task not found."})
+    if task_obj.is_commitment:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+            "code": "commitment_not_movable",
+            "message": f"“{task_obj.title}” is a fixed commitment; it can't be skipped, moved or started."})
+    if task_obj.status not in (TaskStatus.todo, TaskStatus.in_progress, TaskStatus.postponed):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+            "code": "not_open", "message": "Only an open task can be started."})
+
+    start = _make_aware(task_obj.scheduled_start)
+    if start is not None and abs((start - now_utc).total_seconds()) <= 5 * 60:
+        end = _make_aware(task_obj.scheduled_end) or start + timedelta(minutes=task_obj.estimated_minutes)
+        return DoNowResponse(moved=True, start_time=start, end_time=end, message="It's already up now.")
+
+    now_local = now_utc.astimezone(user_tz)
+    proposed = now_local.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    placement = _place_override(db, current_user, task_obj, user_tz, user_tz_str, now_utc, proposed_start=proposed)
+    if placement is None:
+        return DoNowResponse(moved=False, message="There's no free time for it right now, so nothing was changed.")
+    _note_origin(db, current_user, task_obj, now_utc, user_tz)  # a Redo of a missed task keeps the miss on record
+    _persist_placement(task_obj, placement, user_tz)
+    if task_obj.status == TaskStatus.postponed:
+        task_obj.status = TaskStatus.todo
+    db.commit()
+    starts_now = abs((placement.start - now_utc).total_seconds()) <= 5 * 60
+    label = planning_service.describe_slot(placement.start, user_tz, now_utc).get("label", "soon")
+    return DoNowResponse(moved=True, start_time=placement.start, end_time=placement.end,
+                         message="Moved to now." if starts_now else f"The nearest free time is {label}.")

@@ -853,25 +853,86 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     _deferredTaskIds.remove(cleanId);
     _skippedTaskIds.remove(cleanId);
 
-    // Identify which tasks were bypassed by this deviation (user chose C instead of B):
-    final targetTask = _tasks.where((t) => t.id == cleanId).firstOrNull;
-    if (targetTask != null && targetTask.scheduledStart != null) {
-      for (final t in _tasks) {
-        if (!t.isCompleted &&
-            t.id != cleanId &&
-            t.scheduledStart != null &&
-            t.scheduledStart!.isBefore(targetTask.scheduledStart!)) {
-          _skippedTaskIds.add(t.id);
-          _skipDates[t.id] = DateFormat('yyyy-MM-dd').format(pickedOn);
-        }
-      }
-    }
+    // Nothing else is marked: the stops this choice leaves behind are passed by the journey itself (the Calendar derives
+    // it from what actually happens next, see markPassedStops). A "Do this now" is never recorded as a skip of others.
 
     _saveRouteStates();
     _dayScheduleCache.clear();
     notifyListeners();
     // the server moves the chosen task to now: re-read the day so the path shows it (its stop stays anchored)
     unawaited(recordOverride(chosenTaskId: cleanId).then((_) => _afterTaskMutation()));
+  }
+
+  /// "Do this now" from a Calendar stop (or anywhere): the task really moves to the current minute.
+  ///
+  /// The task becomes the user's pick at once (the Calendar draws it as NOW, even if it was missed or skipped), then the
+  /// server's deterministic planner places it at the current minute or, when that clashes, the nearest valid slot
+  /// (`POST /today/do-now`). The stop keeps its place on the path. With no free time nothing changes and the result
+  /// says so; a failed request takes the pick back. Never costs a Shield.
+  Future<DoNowResult> doTaskNow(String taskId) async {
+    if (_isCommitmentRef(taskId)) return const DoNowResult(moved: false, message: 'A fixed commitment can\'t be started.');
+    final cleanId = taskId.startsWith('sched-') ? taskId.substring(6) : taskId;
+    final index = _tasks.indexWhere((t) => t.id == cleanId);
+    if (index == -1) return const DoNowResult(moved: false, message: 'That task is no longer here.', failed: true);
+    final before = _tasks[index];
+    if (before.isCompleted) return const DoNowResult(moved: false, message: 'That task is already done.');
+    final previousPick = _preferredActiveTaskId;
+    final previousPickDate = _preferredActiveDate;
+    final wasSkipped = _skippedTaskIds.contains(cleanId);
+    final wasDeferred = _deferredTaskIds.contains(cleanId);
+    _preferredActiveTaskId = cleanId;
+    final pickedOn = _clockNow();
+    _preferredActiveDate = DateTime(pickedOn.year, pickedOn.month, pickedOn.day);
+    _skippedTaskIds.remove(cleanId);
+    _deferredTaskIds.remove(cleanId);
+    _dayScheduleCache.clear();
+    notifyListeners();
+    if (_isDemoMode || !isAuthenticated) {
+      unawaited(_saveRouteStates());
+      return const DoNowResult(moved: true, message: 'Up now.');
+    }
+    try {
+      final tz = await _localTimezone();
+      final res = await apiService.post('/api/v1/today/do-now/$cleanId', body: {if (tz != null) 'timezone': tz});
+      final map = res is Map<String, dynamic> ? res : const <String, dynamic>{};
+      final moved = map['moved'] == true;
+      final message = (map['message'] as String?) ?? (moved ? 'Moved to now.' : 'Nothing was changed.');
+      if (moved) {
+        final start = DateTime.tryParse(map['start_time']?.toString() ?? '')?.toLocal();
+        final end = DateTime.tryParse(map['end_time']?.toString() ?? '')?.toLocal();
+        final i = _tasks.indexWhere((t) => t.id == cleanId);
+        if (i != -1 && start != null) {
+          _tasks[i] = _tasks[i].copyWith(
+            scheduledStart: start,
+            scheduledEnd: end ?? start.add(Duration(minutes: _tasks[i].durationMinutes)),
+            scheduledTime: DateFormat('h:mm a').format(start),
+            plannedDate: DateTime(start.year, start.month, start.day),
+            timeLocked: false,
+          );
+          SmartReminderService.instance.onTaskRescheduled(_tasks[i]);
+        }
+      } else {
+        // nothing moved on the server: the pick goes back to what it was, so the path never shows a fake NOW
+        _preferredActiveTaskId = previousPick;
+        _preferredActiveDate = previousPickDate;
+        if (wasSkipped) _skippedTaskIds.add(cleanId);
+        if (wasDeferred) _deferredTaskIds.add(cleanId);
+      }
+      unawaited(_saveRouteStates());
+      _recalculateSchedule();
+      notifyListeners();
+      await _afterTaskMutation();
+      return DoNowResult(moved: moved, message: message);
+    } catch (e) {
+      debugPrint('Do this now not saved: $e');
+      _preferredActiveTaskId = previousPick;
+      _preferredActiveDate = previousPickDate;
+      if (wasSkipped) _skippedTaskIds.add(cleanId);
+      if (wasDeferred) _deferredTaskIds.add(cleanId);
+      _dayScheduleCache.clear();
+      notifyListeners();
+      return const DoNowResult(moved: false, message: "Couldn't move it to now. Try again.", failed: true);
+    }
   }
 
   /// The day a skip marks the task's stop on: the day the task is on (a skip made on tomorrow's task belongs to
@@ -2793,3 +2854,11 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 }
 
+/// What "Do this now" did: [moved] when the task really starts now (or at the nearest free time the message names);
+/// [failed] when the request did not go through (nothing changed, the user may retry).
+class DoNowResult {
+  final bool moved;
+  final String message;
+  final bool failed;
+  const DoNowResult({required this.moved, required this.message, this.failed = false});
+}

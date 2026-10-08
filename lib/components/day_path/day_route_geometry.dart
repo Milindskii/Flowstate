@@ -34,6 +34,22 @@ enum RouteSegmentState {
   recovered,
 }
 
+/// Where a stop's label may be drawn: a horizontal span beside the node, inside the row, that neither the road (bed
+/// included) nor a recovery branch crosses within the label's height. [onLeft] says which side of the node it is on;
+/// the text hugs the node (right-aligned on the left, left-aligned on the right).
+class LabelSlot {
+  final double left;
+  final double right;
+  final bool onLeft;
+
+  const LabelSlot({required this.left, required this.right, required this.onLeft});
+
+  double get width => math.max(0, right - left);
+
+  @override
+  String toString() => 'LabelSlot(${left.toStringAsFixed(1)}..${right.toStringAsFixed(1)}, ${onLeft ? 'left' : 'right'})';
+}
+
 class StopGeometry {
   final String id;
   final int index;
@@ -56,6 +72,9 @@ class StopGeometry {
   /// bypassed stop) and a [RecoveryBranch] runs to it from where the traveller really was.
   final bool detached;
 
+  /// The road-free span its label uses (computed once the road and branches are known).
+  final LabelSlot? label;
+
   const StopGeometry({
     required this.id,
     required this.index,
@@ -66,9 +85,10 @@ class StopGeometry {
     required this.role,
     required this.walked,
     this.detached = false,
+    this.label,
   });
 
-  StopGeometry copyWith({bool? walked, bool? detached}) => StopGeometry(
+  StopGeometry copyWith({bool? walked, bool? detached, LabelSlot? label}) => StopGeometry(
         id: id,
         index: index,
         center: center,
@@ -78,6 +98,7 @@ class StopGeometry {
         role: role,
         walked: walked ?? this.walked,
         detached: detached ?? this.detached,
+        label: label ?? this.label,
       );
 }
 
@@ -248,17 +269,24 @@ class DayRouteGeometry {
   static Map<int, int?> recoveryOrigins(List<ScheduleItem> items, Map<String, DateTime>? completedAt) {
     final done = <int>[for (var i = 0; i < items.length; i++) if (items[i].isCompleted) i];
     final recovered = <int>[for (final i in done) if (items[i].isCompletedAfterDeviation) i];
-    if (recovered.isEmpty) return const {};
     final timed = completedAt != null && done.every((i) => completedAt[items[i].id] != null);
+    if (recovered.isEmpty && !timed) return const {};
     final out = <int, int?>{};
     if (timed) {
       final order = [...done]..sort((a, b) {
           final byTime = completedAt[items[a].id]!.compareTo(completedAt[items[b].id]!);
           return byTime != 0 ? byTime : a.compareTo(b);
         });
-      for (final r in recovered) {
-        final pos = order.indexOf(r);
-        out[r] = pos > 0 ? order[pos - 1] : null;
+      for (var pos = 0; pos < order.length; pos++) {
+        final r = order[pos];
+        final origin = pos > 0 ? order[pos - 1] : null;
+        // A flagged recovery always has an origin; an on-plan completion has one only when the traveller came BACK to
+        // it from a later stop (it was passed by, then done): that is a change of course, drawn like a recovery.
+        if (items[r].isCompletedAfterDeviation) {
+          out[r] = origin;
+        } else if (origin != null && origin > r) {
+          out[r] = origin;
+        }
       }
       return out;
     }
@@ -288,6 +316,93 @@ class DayRouteGeometry {
     const margin = nearHalfWidth + 4;
     if (preferred >= margin && preferred <= width - margin) return preferred;
     return s.center.dx - dir * detourDistance;
+  }
+
+  /// Half the height a stop's label may take (two title lines + one meta line + one state line), centred on the node.
+  static const double labelHalfHeight = 36;
+
+  /// Clear space kept between a label and the road bed / the node.
+  static const double labelAir = 6;
+
+  /// Screen-edge margin for labels.
+  static const double labelMargin = 12;
+
+  /// Below this width a label side is too cramped: the other side is used when it has more room.
+  static const double minLabelWidth = 112;
+
+  /// Visible node box half-width (the node plus its state badge).
+  static const double nodeBoxHalf = 24;
+
+  /// The road-free span beside [s] for its label: every polyline (the road, each recovery branch) that passes
+  /// within the label's height blocks the x range it covers (plus the bed and some air). The widest free span on
+  /// the stop's preferred side is used unless it is cramped and the other side offers more. Deterministic: the same
+  /// geometry always gives the same slot.
+  static LabelSlot labelSlotFor(StopGeometry s, List<List<Offset>> polylines, double width) {
+    final top = s.center.dy - labelHalfHeight;
+    final bottom = s.center.dy + labelHalfHeight;
+    const pad = nearHalfWidth + labelAir;
+    final blocked = <(double, double)>[(s.center.dx - nodeBoxHalf - labelAir, s.center.dx + nodeBoxHalf + labelAir)];
+    for (final line in polylines) {
+      for (var k = 0; k + 1 < line.length; k++) {
+        final a = line[k];
+        final b = line[k + 1];
+        final lo = math.min(a.dy, b.dy);
+        final hi = math.max(a.dy, b.dy);
+        if (hi < top || lo > bottom) continue;
+        // the part of this segment inside the band
+        double xAt(double y) => (b.dy - a.dy).abs() < 1e-9 ? a.dx : a.dx + (b.dx - a.dx) * ((y - a.dy) / (b.dy - a.dy));
+        final y0 = math.max(lo, top);
+        final y1 = math.min(hi, bottom);
+        final x0 = xAt(y0);
+        final x1 = xAt(y1);
+        blocked.add((math.min(x0, x1) - pad, math.max(x0, x1) + pad));
+      }
+    }
+    // free spans on each side of the node, inside the screen margins
+    List<(double, double)> free(double from, double to) {
+      if (to - from <= 0) return const [];
+      final cuts = blocked.where((b) => b.$2 > from && b.$1 < to).toList()..sort((a, b) => a.$1.compareTo(b.$1));
+      final out = <(double, double)>[];
+      var x = from;
+      for (final c in cuts) {
+        if (c.$1 > x) out.add((x, c.$1));
+        x = math.max(x, c.$2);
+      }
+      if (to > x) out.add((x, to));
+      return out;
+    }
+
+    (double, double)? widest(List<(double, double)> spans, {required bool leftSide}) {
+      (double, double)? best;
+      for (final sp in spans) {
+        final w = sp.$2 - sp.$1;
+        if (best == null) {
+          best = sp;
+          continue;
+        }
+        final bw = best.$2 - best.$1;
+        // wider wins; on a near-tie the span closer to the node (the text stays attached to its stop)
+        final closer = leftSide ? sp.$2 > best.$2 : sp.$1 < best.$1;
+        if (w > bw + 8 || ((w - bw).abs() <= 8 && closer)) best = sp;
+      }
+      return best;
+    }
+
+    final leftSpan = widest(free(labelMargin, s.center.dx), leftSide: true);
+    final rightSpan = widest(free(s.center.dx, width - labelMargin), leftSide: false);
+    double w((double, double)? sp) => sp == null ? 0 : sp.$2 - sp.$1;
+    var onLeft = s.labelOnLeft;
+    final preferred = onLeft ? leftSpan : rightSpan;
+    final other = onLeft ? rightSpan : leftSpan;
+    if (w(preferred) < minLabelWidth && w(other) > w(preferred)) onLeft = !onLeft;
+    final span = onLeft ? leftSpan : rightSpan;
+    if (span == null) {
+      // nothing free at all (a pathological width): fall back to the plain side beside the node
+      return onLeft
+          ? LabelSlot(left: labelMargin, right: math.max(labelMargin, s.center.dx - nodeBoxHalf - labelAir), onLeft: true)
+          : LabelSlot(left: math.min(width - labelMargin, s.center.dx + nodeBoxHalf + labelAir), right: width - labelMargin, onLeft: false);
+    }
+    return LabelSlot(left: span.$1, right: span.$2, onLeft: onLeft);
   }
 
   /// The colour of the road arriving at [s].
@@ -433,11 +548,21 @@ class DayRouteGeometry {
       branches.add(RecoveryBranch(fromId: from.id, toId: to.id, points: pts));
     });
 
+    // Labels: placed like a map, AFTER the road and its branches are known, so text never sits on either.
+    final polylines = <List<Offset>>[
+      [for (var i = 0; i < sampleYs.length; i++) Offset(sampleXs[i], sampleYs[i])],
+      for (final b in branches) b.points,
+    ];
+    for (var i = 0; i < stops.length; i++) {
+      stops[i] = stops[i].copyWith(label: labelSlotFor(stops[i], polylines, width));
+    }
+    final finishWithLabel = end?.copyWith(label: labelSlotFor(end, polylines, width));
+
     return DayRouteGeometry(
       width: width,
       height: height,
       stops: stops,
-      finish: end,
+      finish: finishWithLabel,
       sampleYs: sampleYs,
       sampleXs: sampleXs,
       sampleStates: states,

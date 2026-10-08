@@ -15,8 +15,17 @@ enum NoticeKind {
   /// Level up, evolution, a new streak record, a Shield earned. Rare by construction.
   milestone,
 
-  /// A meaningful action just worked (routine saved, plan confirmed, reward claimed).
+  /// A meaningful action just worked (routine saved, plan confirmed, task completed).
   success,
+
+  /// Something the user asked for did not happen ("Couldn't complete that action. Try again.").
+  failure,
+
+  /// The user received something: XP, Flow, a Shield ("Shield claimed! +1 🛡️").
+  reward,
+
+  /// Plain information about a change the app made ("Your day was replanned.").
+  info,
 }
 
 class NoyaNotice {
@@ -35,8 +44,20 @@ class NoyaNotice {
         return NoyaState.cheering;
       case NoticeKind.success:
         return NoyaState.proud;
+      case NoticeKind.failure:
+        return NoyaState.encouraging;
+      case NoticeKind.reward:
+        return NoyaState.cheering;
+      case NoticeKind.info:
+        return NoyaState.idle;
     }
   }
+
+  /// Important events get the larger Noya card; trivial ones a small toast.
+  bool get isImportant => kind == NoticeKind.milestone || kind == NoticeKind.reward || kind == NoticeKind.questComplete;
+
+  /// Identical notices collapse: same kind, same words.
+  String get dedupeKey => '${kind.name}|${title ?? ''}|$message';
 }
 
 /// Decides whether a notice gets Noya's picture. Milestones always do (they are rare and are the point of her);
@@ -47,7 +68,8 @@ class NoyaNoticePolicy {
   NoyaNoticePolicy({this.cooldown = const Duration(seconds: 45)});
 
   bool useNoya(NoticeKind kind, DateTime now) {
-    final bypass = kind == NoticeKind.milestone;
+    if (kind == NoticeKind.info || kind == NoticeKind.failure) return false; // plain words: Noya keeps her weight
+    final bypass = kind == NoticeKind.milestone || kind == NoticeKind.reward;
     final last = _lastNoya;
     if (!bypass && last != null && now.difference(last) < cooldown) return false;
     _lastNoya = now;
@@ -57,7 +79,15 @@ class NoyaNoticePolicy {
   void reset() => _lastNoya = null;
 }
 
-/// App-wide place to show a notice. The key is handed to MaterialApp so providers can notify without a BuildContext.
+/// THE app-wide feedback channel: every screen and provider reports an event here instead of building its own popup.
+///
+/// * success / failure / reward / milestone / info (see [NoticeKind]);
+/// * important events (reward, milestone, quest) are a larger card with Noya; trivial ones a small toast;
+/// * never blocks: a floating snack bar that leaves on its own;
+/// * no spam: an identical notice inside [dedupeWindow] is dropped, and within [coalesceWindow] a new notice replaces the
+///   one on screen instead of stacking; a milestone always shows (it overrides the suppression).
+///
+/// The key is handed to MaterialApp so providers can notify without a BuildContext.
 class NoyaNoticeCenter {
   NoyaNoticeCenter({NoyaNoticePolicy? policy, DateTime Function()? clock})
       : policy = policy ?? NoyaNoticePolicy(),
@@ -65,26 +95,73 @@ class NoyaNoticeCenter {
 
   static final NoyaNoticeCenter instance = NoyaNoticeCenter();
 
+  static const Duration dedupeWindow = Duration(seconds: 4);
+  static const Duration coalesceWindow = Duration(milliseconds: 1500);
+
   final GlobalKey<ScaffoldMessengerState> messengerKey = GlobalKey<ScaffoldMessengerState>();
   final NoyaNoticePolicy policy;
   final DateTime Function() _clock;
 
+  String? _lastKey;
+  DateTime? _lastAt;
+  NoticeKind? _lastKind;
+
+  /// Every notice actually shown, oldest first (tests and diagnostics read it; capped).
+  final List<NoyaNotice> shown = [];
+
+  /// Whether [notice] should be shown now (and, if so, records it). Pure decision + bookkeeping, no UI.
+  bool admit(NoyaNotice notice) {
+    final now = _clock();
+    final last = _lastAt;
+    if (last != null && notice.kind != NoticeKind.milestone) {
+      final since = now.difference(last);
+      if (notice.dedupeKey == _lastKey && since < dedupeWindow) return false; // the same thing twice: once
+      // a trivial notice never pushes an important one off the screen right after it appeared
+      final onScreenImportant = _lastKind == NoticeKind.milestone || _lastKind == NoticeKind.reward;
+      if (onScreenImportant && !notice.isImportant && since < coalesceWindow) return false;
+    }
+    _lastKey = notice.dedupeKey;
+    _lastAt = now;
+    _lastKind = notice.kind;
+    shown.add(notice);
+    if (shown.length > 50) shown.removeAt(0);
+    return true;
+  }
+
+  void success(String message, {String? title}) => show(NoyaNotice(NoticeKind.success, message, title: title));
+  void failure(String message, {String? title}) => show(NoyaNotice(NoticeKind.failure, message, title: title));
+  void reward(String message, {String? title}) => show(NoyaNotice(NoticeKind.reward, message, title: title));
+  void milestone(String message, {String? title}) => show(NoyaNotice(NoticeKind.milestone, message, title: title));
+  void info(String message, {String? title}) => show(NoyaNotice(NoticeKind.info, message, title: title));
+
   void show(NoyaNotice notice) {
+    if (!admit(notice)) return;
     final messenger = messengerKey.currentState;
     if (messenger == null) return;
     final withNoya = policy.useNoya(notice.kind, _clock());
+    final ctx = messenger.context;
+    final important = notice.isImportant;
+    final failure = notice.kind == NoticeKind.failure;
     messenger.hideCurrentSnackBar();
     messenger.showSnackBar(
       SnackBar(
-        key: const Key('noya_notice'),
+        key: Key(important ? 'noya_notice_card' : 'noya_notice'),
         behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: notice.kind == NoticeKind.milestone ? 4 : 3),
-        backgroundColor: FlowColors.surfaceElevated(messenger.context),
+        duration: Duration(seconds: important ? 4 : 3),
+        backgroundColor: FlowColors.surfaceElevated(ctx),
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: important ? 14 : 10),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(important ? 20 : 14),
+          side: failure ? BorderSide(color: FlowColors.errorOf(ctx).withValues(alpha: 0.5)) : BorderSide.none,
+        ),
         content: Row(
           children: [
             if (withNoya) ...[
-              NoyaCompanionView(state: notice.noya, size: 40),
+              NoyaCompanionView(state: notice.noya, size: important ? 52 : 36),
               const SizedBox(width: 12),
+            ] else if (failure) ...[
+              Icon(Icons.error_outline_rounded, size: 20, color: FlowColors.errorOf(ctx)),
+              const SizedBox(width: 10),
             ],
             Expanded(
               child: Column(
@@ -93,10 +170,10 @@ class NoyaNoticeCenter {
                 children: [
                   if (notice.title != null)
                     Text(notice.title!,
-                        style: FlowTypography.labelLarge(color: FlowColors.textPrimaryOf(messenger.context))
+                        style: FlowTypography.labelLarge(color: FlowColors.textPrimaryOf(ctx))
                             .copyWith(fontWeight: FontWeight.w700)),
                   Text(notice.message,
-                      style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(messenger.context))),
+                      style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(ctx))),
                 ],
               ),
             ),

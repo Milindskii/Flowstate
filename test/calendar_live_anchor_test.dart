@@ -216,7 +216,8 @@ void main() {
 
     for (final id in home.keys) {
       expect(stop('sched-$id'), findsOneWidget, reason: '$id keeps one stable stop');
-      expect(onPath(tester, 'sched-$id'), home[id], reason: '$id stayed in place');
+      // sub-pixel tolerance: the scroll position may land on a fractional offset when the traveller's stop changes
+      expect((onPath(tester, 'sched-$id') - home[id]!).distance, lessThan(0.01), reason: '$id stayed in place');
     }
     expect(find.byKey(const Key('path_check_sched-B')), findsOneWidget, reason: 'B is drawn done');
   });
