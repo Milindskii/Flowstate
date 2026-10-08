@@ -53,6 +53,9 @@ class FlowProfileResponse(BaseModel):
     # decides eligibility itself.
     shield_refill_at: Optional[datetime] = None
     shield_max: int = MAX_FREE_SHIELDS
+    # True once today's streak Shield was activated (the server's local day): the app shows it as active and offers no
+    # second activation; the server refuses one anyway.
+    shield_active_today: bool = False
     server_now: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     weekly_flow_points: int
     current_week_identifier: Optional[str] = None
@@ -207,6 +210,7 @@ class UseShieldResponse(BaseModel):
     message: str
     shields_available: int
     current_streak: int
+    shield_active_today: bool = True
 
 
 class DayCompleteClaimRequest(BaseModel):

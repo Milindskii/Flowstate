@@ -538,7 +538,8 @@ class FlowService:
 
         return FlowOverviewResponse(
             companion=FlowCompanionResponse.model_validate(companion),
-            profile=FlowProfileResponse.model_validate(profile),
+            profile=FlowProfileResponse.model_validate(profile).model_copy(
+                update={"shield_active_today": profile.last_shield_used_date == today_str}),
             active_challenge=FlowChallengeResponse.model_validate(challenge) if challenge else None,
             weekly_quests=[FlowChallengeResponse.model_validate(q)
                            for q in self.get_weekly_quests(db, user, self._get_current_week_identifier(user_tz))],
@@ -793,10 +794,11 @@ class FlowService:
 
                     profile.shield_progress_days += 1
                     if profile.shield_progress_days >= SHIELD_EARN_DAYS:
-                        if profile.shields_available < MAX_FREE_SHIELDS:
-                            # SQL expression, not read-modify-write: a concurrent AI charge/refund is never overwritten
-                            profile.shields_available = FlowProfile.shields_available + 1
-                            shield_awarded = True
+                        # One conditional, capped UPDATE through the ledger (never read-modify-write, never past the
+                        # maximum), with an audit row unique per (user, streak day): a replayed or concurrent
+                        # completion of the same day can never pay twice.
+                        if self._mark_once(db, user.id, "shield_streak_award", today_str):
+                            shield_awarded = shield_ledger.grant_capped(db, user.id, 1) > 0
                         profile.shield_progress_days = 0
                 elif days_diff > 1:
                     # Missed a day! Check if user confirmed shield usage
@@ -1299,6 +1301,7 @@ class FlowService:
             message="Flow Shield activated. Your streak is protected.",
             shields_available=profile.shields_available,
             current_streak=profile.current_streak,
+            shield_active_today=True,
         )
 
     def _mark_once(self, db: Session, user_id: str, event_type: str, reference_id: str) -> bool:

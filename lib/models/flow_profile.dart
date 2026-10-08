@@ -27,6 +27,9 @@ class FlowProfile {
   final Duration? untilNextShield;
   final DateTime? readAt;
 
+  /// The server says today's streak Shield is already active: the app shows it as active and offers no second one.
+  final bool shieldActiveToday;
+
   /// Time left until the next free Shield at [now]; null when none is counting down.
   Duration? untilNextShieldAt(DateTime now) {
     final base = untilNextShield;
@@ -58,6 +61,7 @@ class FlowProfile {
     this.shieldRefillAt,
     this.untilNextShield,
     this.readAt,
+    this.shieldActiveToday = false,
   });
 
   double get shieldProgressFraction => (shieldProgressDays / 7.0).clamp(0.0, 1.0);
@@ -80,6 +84,7 @@ class FlowProfile {
     String? currentWeekIdentifier,
     String? leagueTier,
     bool? isPro,
+    bool? shieldActiveToday,
   }) {
     return FlowProfile(
       userId: userId ?? this.userId,
@@ -101,6 +106,7 @@ class FlowProfile {
       shieldRefillAt: shieldRefillAt,
       untilNextShield: untilNextShield,
       readAt: readAt,
+      shieldActiveToday: shieldActiveToday ?? this.shieldActiveToday,
     );
   }
 
@@ -127,6 +133,7 @@ class FlowProfile {
       shieldRefillAt: refill,
       untilNextShield: (refill != null && serverNow != null) ? refill.difference(serverNow) : null,
       readAt: DateTime.now(),
+      shieldActiveToday: json['shield_active_today'] as bool? ?? false,
     );
   }
 
@@ -148,6 +155,7 @@ class FlowProfile {
       'league_tier': leagueTier,
       'is_pro': isPro,
       'shield_max': shieldMax,
+      'shield_active_today': shieldActiveToday,
       'shield_refill_at': shieldRefillAt?.toUtc().toIso8601String(),
       // the cached copy counts down from the moment it was read, not from a stale server instant
       if (shieldRefillAt != null && untilNextShield != null)

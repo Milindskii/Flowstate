@@ -111,6 +111,13 @@ def sync_refill(db: Session, user_id: str, now: Optional[datetime] = None,
                 shield_refill_at=case((FlowProfile.shields_available + 1 >= MAX_FREE_SHIELDS, null()), else_=next_at),
             ))
         granted = changed = res.rowcount == 1
+        if granted:
+            # audit row in the same transaction; unique per (user, refill instant), so the ledger shows every free
+            # Shield the clock ever paid and a replay could not pay the same instant twice
+            from ..models.flow_progression import FlowEconomicEvent
+            db.add(FlowEconomicEvent(user_id=user_id, idempotency_key=f"shield_refill-{user_id}-{due.isoformat()}",
+                                     event_type="shield_refill", reference_id=due.isoformat(),
+                                     flow_awarded=0, xp_awarded=0))
 
     if changed:
         db.commit()

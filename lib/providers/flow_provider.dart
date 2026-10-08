@@ -422,14 +422,26 @@ class FlowProvider extends ChangeNotifier {
   Future<bool> useStreakShield() => _flight.run('use-shield', _useStreakShield);
 
   Future<bool> _useStreakShield() async {
+    // Already active today (the server said so): nothing to send. The server refuses a second one anyway; this only
+    // keeps a repeated tap from even asking.
+    if (_overview.profile.shieldActiveToday) return false;
     try {
       final res = await flowService.useStreakShield();
       if (res['success'] == true) {
+        // shown as active at once, from the server's own answer (never a locally invented balance)
+        _overview = _overview.copyWithProfile(_overview.profile.copyWith(
+          shieldActiveToday: true,
+          shieldsAvailable: (res['shields_available'] as num?)?.toInt(),
+        ));
+        notifyListeners();
         await loadOverview();
         animController.triggerSuccess(message: 'Shield activated! Streak protected.');
         return true;
       }
-    } catch (_) {}
+    } catch (_) {
+      // refused (already active on another device, none left) or offline: re-read the account's real state
+      unawaited(loadOverview());
+    }
     return false;
   }
 

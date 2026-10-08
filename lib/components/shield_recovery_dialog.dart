@@ -5,6 +5,8 @@ import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
+import 'noya_notice.dart';
+import 'noya_shield_gate.dart' show formatShieldWait;
 
 /// Modal dialog for user-confirmed streak shield recovery and information.
 /// Flowstate shields are 100% free, earned strictly through 7-day streaks,
@@ -26,21 +28,27 @@ class ShieldRecoveryDialog extends StatefulWidget {
 
 class _ShieldRecoveryDialogState extends State<ShieldRecoveryDialog> {
   bool _isUsing = false;
+  bool _activated = false;
 
   Future<void> _handleActivateShield(FlowProvider flow, int streak) async {
+    if (_isUsing || _activated) return; // a repeated tap never sends a second request
     setState(() => _isUsing = true);
     final success = await flow.useStreakShield();
     if (!mounted) return;
-    setState(() => _isUsing = false);
-    Navigator.of(context).pop();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(success
-            ? 'Streak shield activated! Your $streak-day streak is preserved.'
-            : 'Could not activate shield. Please try again.'),
-        backgroundColor: success ? FlowColors.positive : FlowColors.accentAmber,
-      ),
-    );
+    setState(() {
+      _isUsing = false;
+      _activated = success;
+    });
+    if (success) {
+      NoyaNoticeCenter.instance.success(
+          streak > 0 ? 'Your $streak-day streak is protected today.' : 'Your streak is protected today.',
+          title: 'Shield activated 🛡️');
+      Navigator.of(context).pop();
+    } else {
+      NoyaNoticeCenter.instance.failure(flow.overview.profile.shieldActiveToday
+          ? 'Your Shield is already active today.'
+          : "Couldn't activate a Shield. Try again.");
+    }
   }
 
   @override
@@ -50,6 +58,8 @@ class _ShieldRecoveryDialogState extends State<ShieldRecoveryDialog> {
     final shieldsCount = profile.shieldsAvailable;
     final streak = profile.currentStreak;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final activeToday = profile.shieldActiveToday || _activated;
+    final wait = profile.untilNextShieldAt(DateTime.now());
 
     return AlertDialog(
       backgroundColor: FlowColors.surface(context),
@@ -75,17 +85,21 @@ class _ShieldRecoveryDialogState extends State<ShieldRecoveryDialog> {
           const SizedBox(height: 16),
 
           Text(
-            'Streak Shields',
+            '🛡️ $shieldsCount / ${profile.shieldMax} Shields',
+            key: const Key('shield_dialog_balance'),
             style: FlowTypography.headlineMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
               fontWeight: FontWeight.w800,
               fontSize: 20,
             ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 8),
-
+          const SizedBox(height: 6),
+          // The countdown is the server's clock (see FlowProfile.untilNextShieldAt): the device clock cannot move it.
           Text(
-            'Current Streak: $streak days\nAvailable Shields: $shieldsCount / ${profile.shieldMax}',
+            wait == null
+                ? (shieldsCount >= profile.shieldMax ? 'You have the most Shields you can hold' : 'Current streak: $streak days')
+                : (wait == Duration.zero ? 'Next Shield arriving now' : 'Next Shield in ${formatShieldWait(wait)}'),
+            key: const Key('shield_dialog_next'),
             style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
             textAlign: TextAlign.center,
           ),
@@ -127,11 +141,32 @@ class _ShieldRecoveryDialogState extends State<ShieldRecoveryDialog> {
           const SizedBox(height: 20),
 
           // Action Buttons
-          if (shieldsCount > 0) ...[
+          if (activeToday) ...[
+            Container(
+              key: const Key('shield_active_today'),
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: FlowColors.positive.withValues(alpha: 0.12),
+                borderRadius: FlowRadii.buttonRadius,
+              ),
+              child: Text(
+                '✓ Shield active today',
+                textAlign: TextAlign.center,
+                style: FlowTypography.labelLarge(color: FlowColors.positive).copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('Close', style: FlowTypography.labelMedium(color: FlowColors.textSecondaryOf(context))),
+            ),
+          ] else if (shieldsCount > 0) ...[
             SizedBox(
               width: double.infinity,
               height: 48,
               child: ElevatedButton(
+                key: const Key('shield_activate_button'),
                 onPressed: _isUsing ? null : () => _handleActivateShield(flow, streak),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: FlowColors.accentCyan,
@@ -160,7 +195,9 @@ class _ShieldRecoveryDialogState extends State<ShieldRecoveryDialog> {
             ),
           ] else ...[
             Text(
-              'No Shields right now. Your next one arrives free in a few days, or build a 7-day focus streak to earn one sooner.',
+              wait == null
+                  ? 'No Shields right now. Build a 7-day focus streak or finish your weekly quest to earn one.'
+                  : 'No Shields right now. Your next free one arrives in ${formatShieldWait(wait)}.',
               style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)),
               textAlign: TextAlign.center,
             ),

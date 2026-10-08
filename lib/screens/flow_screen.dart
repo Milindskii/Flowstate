@@ -142,24 +142,12 @@ class _FlowScreenState extends State<FlowScreen> {
 
   Future<void> _claimQuest(BuildContext context, FlowProvider flow, FlowDailyQuest quest) async {
     FlowHaptics.success();
+    // Repeated taps share one request (single flight) and the server pays a quest once; the notice collapses repeats.
     final success = await flow.claimDailyQuest(quest.id);
-    if (context.mounted) {
-      if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Claimed +${quest.rewardFlow} Flow!'),
-            backgroundColor: FlowColors.mint,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Quest reward already claimed or unavailable.'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
+    if (success) {
+      NoyaNoticeCenter.instance.reward('+${quest.rewardFlow} Flow 🎉', title: 'Quest complete!');
+    } else {
+      NoyaNoticeCenter.instance.failure('That reward is already claimed or not ready yet.');
     }
   }
 
@@ -350,8 +338,8 @@ class _FlowScreenState extends State<FlowScreen> {
                               const SizedBox(width: 6),
                               Text(
                                 profile.untilNextShieldAt(DateTime.now())! == Duration.zero
-                                    ? '+1 ready'
-                                    : '+1 in ${formatShieldWait(profile.untilNextShieldAt(DateTime.now())!)}',
+                                    ? '· Next Shield now'
+                                    : '· Next Shield in ${formatShieldWait(profile.untilNextShieldAt(DateTime.now())!)}',
                                 key: const Key('flow_shield_refill_text'),
                                 style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)),
                               ),
@@ -744,18 +732,14 @@ class _FlowScreenState extends State<FlowScreen> {
   Future<void> _claimWeeklyQuest(BuildContext context, FlowProvider flow, FlowChallenge quest) async {
     FlowHaptics.success();
     final success = await flow.claimChallenge(quest.id);
-    if (!context.mounted) return;
     if (success) {
-      NoyaNoticeCenter.instance.show(NoyaNotice(
-          NoticeKind.success,
+      NoyaNoticeCenter.instance.reward(
           quest.rewardShields > 0
-              ? '+${quest.rewardFlow} Flow and +${quest.rewardShields} Shield added.'
-              : '+${quest.rewardFlow} Flow added.',
-          title: 'Quest claimed'));
+              ? '+${quest.rewardFlow} Flow and +${quest.rewardShields} 🛡️'
+              : '+${quest.rewardFlow} Flow 🎉',
+          title: 'Quest complete!');
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Quest reward already claimed or unavailable.'), duration: Duration(seconds: 2)),
-      );
+      NoyaNoticeCenter.instance.failure('That reward is already claimed or not ready yet.');
     }
   }
 

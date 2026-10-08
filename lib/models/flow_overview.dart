@@ -109,6 +109,30 @@ class FlowOverview {
     this.notification,
   });
 
+  /// The same overview with [p] as its profile (every other field kept).
+  FlowOverview copyWithProfile(FlowProfile p) => FlowOverview(
+        companion: companion,
+        profile: p,
+        activeChallenge: activeChallenge,
+        weeklyQuests: weeklyQuests,
+        dailyQuests: dailyQuests,
+        achievements: achievements,
+        weeklyProgress: weeklyProgress,
+        leagueTier: leagueTier,
+        weeklyFlowPoints: weeklyFlowPoints,
+        leagueStatusMessage: leagueStatusMessage,
+        personalBestFocusMinutes: personalBestFocusMinutes,
+        weeklyFocusSessions: weeklyFocusSessions,
+        weeklyFocusMinutes: weeklyFocusMinutes,
+        totalFocusMinutes: totalFocusMinutes,
+        totalSessionsCompleted: totalSessionsCompleted,
+        bestFocusDayMinutes: bestFocusDayMinutes,
+        consistencyScore: consistencyScore,
+        rhythmAcknowledgement: rhythmAcknowledgement,
+        activeSessionId: activeSessionId,
+        notification: notification,
+      );
+
   static FlowOverview defaultInitial({String userId = 'user-default'}) {
     return FlowOverview(
       companion: const FlowCompanion(
