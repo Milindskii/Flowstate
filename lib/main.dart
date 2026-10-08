@@ -41,7 +41,9 @@ Future<void> main() async {
 
   final sharedApi = ApiService();
   final appState = AppStateProvider(customApi: sharedApi);
-  final flowProvider = FlowProvider(api: sharedApi);
+  final flowProvider = FlowProvider(api: sharedApi, currentUserId: () => appState.currentUser?.id);
+  // Signing out wipes the account's progression (balance, Shields, quests): the next account starts from the server.
+  appState.onAccountCleared = flowProvider.reset;
 
   final reminderService = SmartReminderService.instance;
   reminderService.taskListProvider = () => appState.tasks;

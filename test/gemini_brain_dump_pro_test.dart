@@ -1392,7 +1392,12 @@ void main() {
 
         expect(api.aiPlanCallCount, 0);
         expect(find.byKey(const Key('shield_reason_text')), findsNothing);
-        expect(find.textContaining("don't have enough Shields"), findsOneWidget);
+        // Noya explains in place (not a dead-end card): what needs Shields, the price, the balance, how to earn
+        expect(find.byKey(const Key('noya_shield_gate')), findsOneWidget);
+        expect(find.text(shields == 0 ? "You're out of Shields." : "You don't have enough Shields."), findsOneWidget);
+        expect(find.text('An AI plan needs 2 Shields. You have $shields.'), findsOneWidget);
+        expect(find.byKey(const Key('shield_gate_earn')), findsOneWidget);
+        expect(find.byKey(const Key('shield_gate_later')), findsOneWidget);
         expect(find.text('Noya is resting'), findsOneWidget);
         expect(find.byKey(const Key('retry_ai_button')), findsNothing);
         expect(find.text(ambiguous), findsOneWidget);

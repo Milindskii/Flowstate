@@ -37,6 +37,9 @@ MIN_TASK_DURATION_FOR_PRIORITY_BONUS: int = 10  # Task estimate or focus duratio
 SHIELD_EARN_DAYS: int = 7
 MAX_FREE_SHIELDS: int = 3
 INITIAL_SHIELDS: int = 2
+# Free refill: while the balance is below MAX_FREE_SHIELDS the account earns one Shield every SHIELD_REFILL_DAYS days.
+# The clock is the server's (FlowProfile.shield_refill_at); the device clock never takes part.
+SHIELD_REFILL_DAYS: int = 3
 
 # AI economy: Shields a free-tier user pays for one Build My Day plan once the free allowance is used up.
 # Server-authoritative (ai_gateway charges exactly this many in one conditional UPDATE); /ai/status reports it
@@ -351,10 +354,19 @@ DAILY_QUESTS_TEMPLATES: List[Dict[str, Any]] = [
 # Weekly quests (reset every ISO week, Monday start, in the user's own timezone). The first is the legacy "weekly
 # challenge" and stays the app's `active_challenge`.
 WEEKLY_QUESTS_TEMPLATES: List[Dict[str, Any]] = [
-    {"type": "priority_tasks", "title": "Complete 5 priority tasks", "target_count": 5, "reward_flow": FLOW_REWARD_WEEKLY_CHALLENGE},
+    {"type": "priority_tasks", "title": "Complete 5 priority tasks", "target_count": 5, "reward_flow": FLOW_REWARD_WEEKLY_CHALLENGE,
+     "reward_shields": 1},
     {"type": "focus_sessions", "title": "Finish 4 focus sessions", "target_count": 4, "reward_flow": 60},
     {"type": "focus_minutes", "title": "Focus for 120 minutes", "target_count": 120, "reward_flow": 80},
 ]
 
 # Every task of a day done: the trophy at the end of the day path (once per user per local date)
 DAY_COMPLETE_XP: int = 25
+
+
+def weekly_quest_reward_shields(challenge_type: str) -> int:
+    """Shields the weekly quest of this type pays on claim (server-owned; 0 for a quest that pays none)."""
+    for t in WEEKLY_QUESTS_TEMPLATES:
+        if t["type"] == challenge_type:
+            return int(t.get("reward_shields", 0))
+    return 0

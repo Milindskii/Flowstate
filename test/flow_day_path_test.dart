@@ -102,7 +102,9 @@ void main() {
       await tester.pumpWidget(_host(_path()));
       final gym = find.byKey(const Key('path_stop_comp-gym'));
       expect(find.descendant(of: gym, matching: find.byKey(const Key('path_check_comp-gym'))), findsOneWidget);
-      expect(find.descendant(of: gym, matching: find.byIcon(Icons.check_rounded)), findsOneWidget);
+      // the node's check, plus the small outcome glyph that leads the title
+      expect(find.descendant(of: find.byKey(const Key('path_check_comp-gym')), matching: find.byIcon(Icons.check_rounded)), findsOneWidget);
+      expect(find.descendant(of: gym, matching: find.byKey(const Key('path_glyph_comp-gym'))), findsOneWidget);
       final check = tester.getSize(find.byKey(const Key('path_check_comp-gym')));
       expect(check.width, FlowDayPath.doneNodeSize, reason: 'a medium circle, not a dot');
 

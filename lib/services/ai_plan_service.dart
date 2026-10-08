@@ -40,17 +40,16 @@ class AIPlanService {
 
   const AIPlanService({required this.api});
 
-  /// Check server-owned AI usage status and entitlement
-  Future<AIUsageStatus> getUsageStatus() async {
+  /// Check server-owned AI usage status and entitlement. Null when the server could not be reached: the app never
+  /// invents a free plan or a Shield balance of its own, so an unknown status is reported as unknown.
+  Future<AIUsageStatus?> getUsageStatus() async {
     try {
       final response = await api.get('/api/v1/ai/status');
       if (response is Map<String, dynamic>) {
         return AIUsageStatus.fromJson(response);
       }
-    } catch (_) {
-      // Offline fallback: assume safe initial defaults
-    }
-    return AIUsageStatus.defaultFreeInitial();
+    } catch (_) {}
+    return null;
   }
 
   /// Request Gemini task structuring from raw user notes with strict JSON validation & economy enforcement.

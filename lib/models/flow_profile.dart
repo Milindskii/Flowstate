@@ -18,6 +18,26 @@ class FlowProfile {
   final String leagueTier;
   final bool isPro;
 
+  /// The most Shields an account holds, and the SERVER instant its next free one lands (null at the maximum).
+  final int shieldMax;
+  final DateTime? shieldRefillAt;
+
+  /// The server's wait for that Shield when this was read, and the device time it was read at: the countdown is the
+  /// server-measured wait minus the time elapsed here, so a wrong device clock cannot change it.
+  final Duration? untilNextShield;
+  final DateTime? readAt;
+
+  /// Time left until the next free Shield at [now]; null when none is counting down.
+  Duration? untilNextShieldAt(DateTime now) {
+    final base = untilNextShield;
+    final at = readAt;
+    if (base == null) return null;
+    if (at == null) return base;
+    final elapsed = now.difference(at);
+    final left = base - (elapsed.isNegative ? Duration.zero : elapsed);
+    return left.isNegative ? Duration.zero : left;
+  }
+
   const FlowProfile({
     required this.userId,
     this.flowBalance = 0,
@@ -34,6 +54,10 @@ class FlowProfile {
     this.currentWeekIdentifier,
     this.leagueTier = 'Bronze',
     this.isPro = false,
+    this.shieldMax = 3,
+    this.shieldRefillAt,
+    this.untilNextShield,
+    this.readAt,
   });
 
   double get shieldProgressFraction => (shieldProgressDays / 7.0).clamp(0.0, 1.0);
@@ -73,10 +97,16 @@ class FlowProfile {
       currentWeekIdentifier: currentWeekIdentifier ?? this.currentWeekIdentifier,
       leagueTier: leagueTier ?? this.leagueTier,
       isPro: isPro ?? this.isPro,
+      shieldMax: shieldMax,
+      shieldRefillAt: shieldRefillAt,
+      untilNextShield: untilNextShield,
+      readAt: readAt,
     );
   }
 
   factory FlowProfile.fromJson(Map<String, dynamic> json) {
+    final refill = DateTime.tryParse(json['shield_refill_at'] as String? ?? '');
+    final serverNow = DateTime.tryParse(json['server_now'] as String? ?? '');
     return FlowProfile(
       userId: json['user_id'] as String? ?? 'user-default',
       flowBalance: json['flow_balance'] as int? ?? 0,
@@ -93,6 +123,10 @@ class FlowProfile {
       currentWeekIdentifier: json['current_week_identifier'] as String?,
       leagueTier: json['league_tier'] as String? ?? 'Bronze',
       isPro: json['is_pro'] as bool? ?? false,
+      shieldMax: json['shield_max'] as int? ?? 3,
+      shieldRefillAt: refill,
+      untilNextShield: (refill != null && serverNow != null) ? refill.difference(serverNow) : null,
+      readAt: DateTime.now(),
     );
   }
 
@@ -113,6 +147,11 @@ class FlowProfile {
       'current_week_identifier': currentWeekIdentifier,
       'league_tier': leagueTier,
       'is_pro': isPro,
+      'shield_max': shieldMax,
+      'shield_refill_at': shieldRefillAt?.toUtc().toIso8601String(),
+      // the cached copy counts down from the moment it was read, not from a stale server instant
+      if (shieldRefillAt != null && untilNextShield != null)
+        'server_now': shieldRefillAt!.subtract(untilNextShieldAt(DateTime.now()) ?? untilNextShield!).toUtc().toIso8601String(),
     };
   }
 }

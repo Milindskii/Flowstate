@@ -1,6 +1,7 @@
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel, Field, ConfigDict
+from ..core.economy_config import MAX_FREE_SHIELDS
 
 class FlowWeeklyProgressResponse(BaseModel):
     week_identifier: str
@@ -48,6 +49,11 @@ class FlowProfileResponse(BaseModel):
     shields_available: int
     shields_used_count: int
     last_shield_used_date: Optional[str] = None
+    # Free-refill clock (server instants). The app counts down to `shield_refill_at` from `server_now`; it never
+    # decides eligibility itself.
+    shield_refill_at: Optional[datetime] = None
+    shield_max: int = MAX_FREE_SHIELDS
+    server_now: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     weekly_flow_points: int
     current_week_identifier: Optional[str] = None
     league_tier: str
@@ -62,6 +68,7 @@ class FlowChallengeResponse(BaseModel):
     target_count: int
     current_count: int
     reward_flow: int
+    reward_shields: int = 0
     is_completed: bool
     is_claimed: bool
     challenge_type: str
@@ -173,6 +180,8 @@ class ClaimChallengeResponse(BaseModel):
     challenge_id: str
     flow_awarded: int
     new_balance: int
+    shields_awarded: int = 0
+    shields_available: Optional[int] = None
 
 class SelectCompanionRequest(BaseModel):
     species: str

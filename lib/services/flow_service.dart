@@ -16,9 +16,25 @@ class FlowService {
   static const String _cacheKey = 'flowstate_flow_overview_cache';
   final ApiService _api;
 
-  FlowService({required ApiService api}) : _api = api;
+  /// The signed-in account's id. The offline copy is only ever shown to the account that fetched it: with this wired,
+  /// a copy belonging to anyone else (or with nobody signed in) is ignored, so balances can never cross accounts.
+  final String? Function()? _currentUserId;
 
-  /// Fetches Flow overview with read-only offline fallback.
+  FlowService({required ApiService api, String? Function()? currentUserId})
+      : _api = api,
+        _currentUserId = currentUserId;
+
+  /// Forgets the offline copy (sign-out, account switch).
+  Future<void> clearCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_cacheKey);
+    } catch (_) {}
+  }
+
+  /// Fetches the Flow overview. The server is the only source of progression and Shields: when it cannot be reached
+  /// the signed-in account's own last copy is shown read-only, and with none the failure is reported. Nothing is
+  /// ever made up (a blank overview would look like a reset).
   Future<FlowOverview> getOverview() async {
     try {
       final res = await _api.get('/api/v1/flow');
@@ -36,7 +52,7 @@ class FlowService {
       if (cached != null) {
         return cached;
       }
-      return FlowOverview.defaultInitial();
+      rethrow;
     }
   }
 
@@ -47,7 +63,13 @@ class FlowService {
       final str = prefs.getString(_cacheKey);
       if (str != null && str.isNotEmpty) {
         final data = jsonDecode(str) as Map<String, dynamic>;
-        return FlowOverview.fromJson(data);
+        final overview = FlowOverview.fromJson(data);
+        final idOf = _currentUserId;
+        if (idOf != null) {
+          final me = idOf();
+          if (me == null || overview.profile.userId != me) return null; // someone else's copy: never shown
+        }
+        return overview;
       }
     } catch (_) {}
     return null;

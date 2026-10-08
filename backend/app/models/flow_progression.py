@@ -13,6 +13,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from ..db.session import Base
+from ..db.types import UTCDateTime
 
 def utcnow():
     return datetime.now(timezone.utc)
@@ -52,6 +53,9 @@ class FlowProfile(Base):
     shields_available = Column(Integer, default=0, nullable=False) # 0 to 3
     shields_used_count = Column(Integer, default=0, nullable=False)
     last_shield_used_date = Column(String, nullable=True) # YYYY-MM-DD
+    # The server instant the next FREE Shield becomes claimable. NULL while the balance is at the maximum (no
+    # cooldown runs). Only app/services/shield_ledger.py writes it; the device clock is never consulted.
+    shield_refill_at = Column(UTCDateTime(), nullable=True)
 
     weekly_flow_points = Column(Integer, default=0, nullable=False)
     current_week_identifier = Column(String, nullable=True) # e.g. 2026-W38
@@ -102,6 +106,12 @@ class FlowChallenge(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     user = relationship("User", backref="flow_challenges")
+
+    @property
+    def reward_shields(self) -> int:
+        """Shields this quest pays on claim: owned by economy_config, not stored per row."""
+        from ..core.economy_config import weekly_quest_reward_shields
+        return weekly_quest_reward_shields(self.challenge_type)
 
 class FlowEconomicEvent(Base):
     """

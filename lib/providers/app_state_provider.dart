@@ -115,6 +115,10 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// (one source of truth: the server answer, with the unconfirmed edits laid on top until it catches up).
   final Set<String> _pendingCompletions = {};
 
+  /// Completions the user took back whose server copy is not yet reopened: reads that still list them as done are
+  /// laid back to open (see [_withPendingTaskEdits]) and the Calendar draws them open at once.
+  final Set<String> _pendingReopens = {};
+
   /// taskId -> the day strings it is being removed from (deleted: [_everyDay]; moved to another day: that day).
   final Map<String, Set<String>> _pendingRemovals = {};
   static const String _everyDay = '*';
@@ -208,6 +212,9 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// The server's progression changed (completion confirmed, trophy claimed): re-read the Flow overview once.
   VoidCallback? onFlowNeedsRefresh;
+
+  /// Called once when the account is signed out, after this provider has dropped its own account state.
+  VoidCallback? onAccountCleared;
 
   /// Fires once per user completion (never on un-complete, never on the backend echo), so Noya
   /// reacts exactly once. [lastOfDay] is true when nothing else is pending today.
@@ -357,13 +364,15 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// A task-list read with the unconfirmed edits laid back on top (see [_pendingCompletions]).
   List<TaskItem> _withPendingTaskEdits(List<TaskItem> remote) {
-    if (_pendingCompletions.isEmpty && _pendingRemovals.isEmpty) return remote;
+    if (_pendingCompletions.isEmpty && _pendingRemovals.isEmpty && _pendingReopens.isEmpty) return remote;
     return [
       for (final t in remote)
         if (!(_pendingRemovals[t.id]?.contains(_everyDay) ?? false))
           _pendingCompletions.contains(t.id) && !t.isCompleted
               ? t.copyWith(isCompleted: true, completedAt: t.completedAt ?? DateTime.now(), status: TaskStatus.completed)
-              : t,
+              : (_pendingReopens.contains(t.id) && t.isCompleted
+                  ? t.copyWith(isCompleted: false, completedAt: null, status: TaskStatus.todo)
+                  : t),
     ];
   }
 
@@ -731,6 +740,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       };
 
   /// Tasks the user has completed in this session that the server may not have confirmed yet.
+  Set<String> get locallyReopenedTaskIds => Set.unmodifiable(_pendingReopens);
   Set<String> get locallyCompletedTaskIds => {for (final t in _tasks) if (t.isCompleted) t.id};
 
   /// The device ledger's stop anchors for [date] (see buildCanonicalDayStops).
@@ -1275,7 +1285,14 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         _pendingCompletions.remove(task.id); // taken back: no unconfirmed completion to protect
         _completedAfterDeviationTaskIds.remove(task.id); // no longer done, so no longer "done late"
         SmartReminderService.instance.onTaskUpdated(_tasks[index], task);
+        // The undo belongs to the account, not only to this screen: the server reopens the task, and until it has
+        // answered, reads that still list it as done are corrected (the Calendar route recomputes at once).
+        if (!_isDemoMode && isAuthenticated && !_pendingTaskCreations.containsKey(task.id)) {
+          _pendingReopens.add(task.id);
+          unawaited(_sendReopenToBackend(task));
+        }
       } else {
+        _pendingReopens.remove(task.id);
         SmartReminderService.instance.onTaskCompleted(task.id);
       }
 
@@ -1321,11 +1338,36 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       _recalculateSchedule();
       // The Calendar draws the node done at once (locallyCompletedTaskIds); the authoritative day is re-read after
       // the server confirms (see _sendCompleteToBackend), never before, or the reload would show it open again.
-      if (_selectedDateSchedule != null && (_isDemoMode || !willComplete)) {
+      if (_selectedDateSchedule != null && (_isDemoMode || (!willComplete && _pendingReopens.isEmpty))) {
         loadCalendarDay(_selectedCalendarDate, silent: true);
       }
       notifyListeners();
     }
+  }
+
+  /// The server copy of an undone completion: the task goes back to todo. Rejected: the completion is restored (the
+  /// server still has it) and the user is told; either way the day and lists are re-read.
+  Future<void> _sendReopenToBackend(TaskItem before) async {
+    try {
+      await taskService.patchTask(before.id, {'status': 'todo'});
+    } catch (e) {
+      debugPrint('Error reopening task on backend: $e');
+      _pendingReopens.remove(before.id);
+      final i = _tasks.indexWhere((t) => t.id == before.id);
+      if (i != -1) _tasks[i] = before;
+      if (before.isCompleted) {
+        // it was a recovery before the undo: put the route state back too
+        _lastSyncError = "Couldn't take back \u201c${before.title}\u201d. It is still done.";
+      }
+      _recalculateReadiness();
+      _recalculateSchedule();
+      _dayScheduleCache.clear();
+      notifyListeners();
+      await _afterTaskMutation();
+      return;
+    }
+    _pendingReopens.remove(before.id);
+    await _afterTaskMutation();
   }
 
   /// Stores a completion the user just made. Until the server answers the completion is a pending edit: any read
@@ -2730,11 +2772,24 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     _unsyncedTaskIds.clear();
     _selectedDateSchedule = null;
     _isLoadingCalendarDay = false;
+    // Route history (skipped / deferred / done late), reflections and the Calendar anchor ledger are the signed-out
+    // account's: the next account starts clean and reads its own from the server.
+    _skippedTaskIds.clear();
+    _deferredTaskIds.clear();
+    _completedAfterDeviationTaskIds.clear();
+    _skipDates.clear();
+    _reflections.clear();
     notifyListeners();
+    onAccountCleared?.call();
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('flowstate_onboarding_complete');
+      await prefs.remove('flowstate_skipped_task_ids');
+      await prefs.remove('flowstate_skipped_task_dates');
+      await prefs.remove('flowstate_deferred_task_ids');
+      await prefs.remove('flowstate_completed_after_deviation_task_ids');
     } catch (_) {}
+    await _anchorStore.clear();
   }
 }
 

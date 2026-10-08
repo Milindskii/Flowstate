@@ -37,7 +37,7 @@ class TaskDateTimePickers extends StatelessWidget {
   });
 
   static String formatDateDisplay(DateTime? date) {
-    if (date == null) return 'No date set';
+    if (date == null) return 'Pick date';
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final comp = DateTime(date.year, date.month, date.day);
@@ -47,13 +47,13 @@ class TaskDateTimePickers extends StatelessWidget {
   }
 
   static String formatTimeDisplay(TimeOfDay? time) {
-    if (time == null) return 'No fixed time';
+    if (time == null) return 'Pick time';
     final dt = DateTime(2026, 1, 1, time.hour, time.minute);
     return DateFormat('h:mm a').format(dt);
   }
 
   static TimeOfDay? parseTimeString(String? str) {
-    if (str == null || str.isEmpty || str == 'No fixed time') return null;
+    if (str == null || str.isEmpty || str == 'No fixed time' || str == 'Pick time') return null;
     try {
       final dt = DateFormat('h:mm a').parseLoose(str.trim());
       return TimeOfDay(hour: dt.hour, minute: dt.minute);

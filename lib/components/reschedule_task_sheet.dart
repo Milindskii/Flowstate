@@ -95,29 +95,6 @@ class _RescheduleTaskSheetState extends State<RescheduleTaskSheet> {
         _selectedDate.day == now.day;
   }
 
-  void _selectToday() {
-    FlowHaptics.lightTap();
-    final now = DateTime.now();
-    setState(() {
-      _selectedDate = DateTime(now.year, now.month, now.day);
-    });
-  }
-
-  void _selectTomorrow() {
-    FlowHaptics.lightTap();
-    final tomorrow = DateTime.now().add(const Duration(days: 1));
-    setState(() {
-      _selectedDate = DateTime(tomorrow.year, tomorrow.month, tomorrow.day);
-    });
-  }
-
-  void _selectNoFixedTime() {
-    FlowHaptics.lightTap();
-    setState(() {
-      _selectedTime = null;
-    });
-  }
-
   Future<void> _handleConfirm() async {
     if (_isSubmitting) return;
     setState(() => _isSubmitting = true);
@@ -261,105 +238,11 @@ class _RescheduleTaskSheetState extends State<RescheduleTaskSheet> {
             ),
             const SizedBox(height: 18),
 
-            // Date Quick Selection Chips
-            Text(
-              'DATE',
-              style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
-                letterSpacing: 0.5,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                _buildQuickChip(
-                  key: const Key('reschedule_chip_today'),
-                  label: 'Today',
-                  isSelected: _isToday,
-                  accent: accent,
-                  onTap: _selectToday,
-                ),
-                const SizedBox(width: 8),
-                _buildQuickChip(
-                  key: const Key('reschedule_chip_tomorrow'),
-                  label: 'Tomorrow',
-                  isSelected: _isTomorrow,
-                  accent: accent,
-                  onTap: _selectTomorrow,
-                ),
-                const SizedBox(width: 8),
-                _buildQuickChip(
-                  key: const Key('reschedule_chip_custom_date'),
-                  label: !_isToday && !_isTomorrow
-                      ? DateFormat('MMM d').format(_selectedDate)
-                      : 'Pick Date',
-                  isSelected: !_isToday && !_isTomorrow,
-                  accent: accent,
-                  onTap: () async {
-                    final picked = await TaskDateTimePickers.pickDate(
-                      context,
-                      initialDate: _selectedDate,
-                      accentColor: accent,
-                    );
-                    if (picked != null) {
-                      setState(() => _selectedDate = picked);
-                    }
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            // Time Quick Selection Chips
-            Text(
-              'TIME',
-              style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
-                letterSpacing: 0.5,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                _buildQuickChip(
-                  key: const Key('reschedule_chip_no_fixed_time'),
-                  label: 'No fixed time',
-                  isSelected: _selectedTime == null,
-                  accent: accent,
-                  onTap: _selectNoFixedTime,
-                ),
-                const SizedBox(width: 8),
-                _buildQuickChip(
-                  key: const Key('reschedule_chip_morning'),
-                  label: '9:30 AM',
-                  isSelected: _selectedTime?.hour == 9 && _selectedTime?.minute == 30,
-                  accent: accent,
-                  onTap: () {
-                    FlowHaptics.lightTap();
-                    setState(() => _selectedTime = const TimeOfDay(hour: 9, minute: 30));
-                  },
-                ),
-                const SizedBox(width: 8),
-                _buildQuickChip(
-                  key: const Key('reschedule_chip_afternoon'),
-                  label: '2:00 PM',
-                  isSelected: _selectedTime?.hour == 14 && _selectedTime?.minute == 0,
-                  accent: accent,
-                  onTap: () {
-                    FlowHaptics.lightTap();
-                    setState(() => _selectedTime = const TimeOfDay(hour: 14, minute: 0));
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 18),
-
-            // Shared TaskDateTimePickers Row (Reused from Build My Day / Edit Task)
+            // ONE date control and ONE time control (the shared picker row): Today / Tomorrow read back in the field,
+            // any other day and "no fixed time" (the clear button on the time field) are one tap away.
             TaskDateTimePickers(
               selectedDate: _selectedDate,
               selectedTime: _selectedTime,
-              dateLabel: 'CALENDAR DATE',
-              timeLabel: 'CLOCK TIME',
               accentColor: accent,
               dateButtonKey: const Key('reschedule_date_picker_button'),
               timeButtonKey: const Key('reschedule_time_picker_button'),
@@ -432,41 +315,6 @@ class _RescheduleTaskSheetState extends State<RescheduleTaskSheet> {
               ],
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildQuickChip({
-    required Key key,
-    required String label,
-    required bool isSelected,
-    required Color accent,
-    required VoidCallback onTap,
-  }) {
-    final context = this.context;
-    return InkWell(
-      key: key,
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(FlowRadii.chip),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-        decoration: BoxDecoration(
-          color: isSelected ? accent.withValues(alpha: 0.15) : FlowColors.surfaceElevated(context),
-          borderRadius: BorderRadius.circular(FlowRadii.chip),
-          border: Border.all(
-            color: isSelected ? accent : FlowColors.border(context),
-            width: isSelected ? 1.5 : 1.0,
-          ),
-        ),
-        child: Text(
-          label,
-          style: FlowTypography.labelMedium(
-            color: isSelected ? accent : FlowColors.textSecondaryOf(context),
-          ).copyWith(
-            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-          ),
         ),
       ),
     );

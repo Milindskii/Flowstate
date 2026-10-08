@@ -47,8 +47,8 @@ void main() {
       // Check Date and Time buttons
       expect(find.text('DATE'), findsOneWidget);
       expect(find.text('TIME'), findsOneWidget);
-      expect(find.text('No date set'), findsOneWidget);
-      expect(find.text('No fixed time'), findsOneWidget);
+      expect(find.text('Pick date'), findsOneWidget);
+      expect(find.text('Pick time'), findsOneWidget);
 
       // Check Duration and Priority
       expect(find.text('45m'), findsOneWidget);

@@ -39,9 +39,9 @@ class FlowProvider extends ChangeNotifier {
   List<Map<String, dynamic>> _shopCatalog = [];
   String? _latestNotification;
 
-  FlowProvider({FlowService? service, ApiService? api})
+  FlowProvider({FlowService? service, ApiService? api, String? Function()? currentUserId})
       : apiService = api,
-        flowService = service ?? FlowService(api: api ?? ApiService()) {
+        flowService = service ?? FlowService(api: api ?? ApiService(), currentUserId: currentUserId) {
     // Eager constructor network calls removed to ensure authenticated
     // dependency wiring is ready before firing network requests.
     // UI lifecycle (FlowScreen.initState) initiates loading when auth is ready.
@@ -451,6 +451,7 @@ class FlowProvider extends ChangeNotifier {
     _shopCatalog = [];
     _latestNotification = null;
     animController.setIdle();
+    unawaited(flowService.clearCache());
     notifyListeners();
   }
 

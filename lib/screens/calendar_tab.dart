@@ -327,6 +327,7 @@ class _CalendarTabState extends State<CalendarTab> {
     final bedtimeHour = state.personalData.bedtimeHour;
     final skippedHere = state.skippedTaskIdsOn(selectedDate);
     final doneHere = state.locallyCompletedTaskIds;
+    final reopenedHere = state.locallyReopenedTaskIds;
 
     // Enrich items with semantic deviation, recovery, and failure states
     final enrichedItems = <ScheduleItem>[...allItems.map((item) {
@@ -335,6 +336,10 @@ class _CalendarTabState extends State<CalendarTab> {
       // completed here a moment ago: drawn done at once, before the server's day is re-read
       if (!item.isCompleted && item.taskId != null && doneHere.contains(cleanKey) && !item.isCommitment) {
         item = item.copyWith(isCompleted: true, isActive: false, isMissed: false);
+      }
+      // taken back a moment ago: drawn open at once, before the server's day is re-read (its state follows the clock)
+      if (item.isCompleted && item.taskId != null && reopenedHere.contains(cleanKey) && !item.isCommitment) {
+        item = item.copyWith(isCompleted: false, isCompletedAfterDeviation: false);
       }
       final isSkippedExplicitly = !item.isCompleted &&
           (skippedHere.contains(key) ||

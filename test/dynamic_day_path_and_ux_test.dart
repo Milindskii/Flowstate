@@ -238,20 +238,15 @@ void main() {
 
       expect(find.byKey(const Key('path_check_item-b')), findsOneWidget);
       expect(find.textContaining('Recovered'), findsOneWidget);
-      // History is kept: B is marked recovered and the road into it is orange, on the very same line as the rest.
+      // History is kept: B is marked recovered at its own slot. A and C were finished around it, so the traveller was
+      // at C when B was done: the orange path runs C -> B, not A -> B, and the main road bends around B.
       final g = paintedGeometry(tester);
       final b = g.stopById('item-b');
       expect(b.role, StopRouteRole.recovered);
-      expect(g.distanceToRoute(b.center), lessThan(0.5));
-      final orange = [
-        for (var i = 0; i < g.sampleYs.length; i++)
-          if (g.sampleStates[i] == RouteSegmentState.recovered) Offset(g.sampleXs[i], g.sampleYs[i])
-      ];
-      expect(orange, isNotEmpty);
-      for (final p in orange) {
-        expect(g.distanceToRoute(p), lessThan(1e-6), reason: 'orange follows the canonical route');
-        expect(p.dy, inInclusiveRange(g.stopById('item-a').center.dy, b.center.dy));
-      }
+      expect(b.detached, isTrue);
+      expect(g.branches.single.fromId, 'item-c');
+      expect(g.branches.single.toId, 'item-b');
+      expect(g.sampleStates, isNot(contains(RouteSegmentState.recovered)));
     });
 
     testWidgets('7. Unresolved task past sleep boundary -> red cross', (WidgetTester tester) async {
@@ -281,7 +276,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('path_failed_sched-task-unresolved')), findsOneWidget);
-      expect(find.byIcon(Icons.close_rounded), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const Key('path_failed_sched-task-unresolved')), matching: find.byIcon(Icons.close_rounded)),
+          findsOneWidget);
+      expect(find.byKey(const Key('path_glyph_sched-task-unresolved')), findsOneWidget, reason: 'the title leads with the outcome glyph');
       expect(find.textContaining('Unfinished'), findsOneWidget);
     });
 

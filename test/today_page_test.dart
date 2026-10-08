@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'support/date_picker_helpers.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -567,11 +568,10 @@ void main() {
 
     // RescheduleTaskSheet opens
     expect(find.text('Reschedule Task'), findsOneWidget);
-    expect(find.byKey(const Key('reschedule_chip_tomorrow')), findsOneWidget);
+    expect(find.byKey(const Key('reschedule_date_picker_button')), findsOneWidget);
 
-    // Tap Tomorrow and Confirm
-    await tester.tap(find.byKey(const Key('reschedule_chip_tomorrow')));
-    await tester.pumpAndSettle();
+    // Pick Tomorrow with the one date control and Confirm
+    await pickDateVia(tester, find.byKey(const Key('reschedule_date_picker_button')), DateTime.now().add(const Duration(days: 1)));
     await tester.tap(find.byKey(const Key('reschedule_confirm_button')));
     await tester.pumpAndSettle();
 

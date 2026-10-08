@@ -111,6 +111,28 @@ class DayRoutePainter extends CustomPainter {
     if (!geometry.hasRoute) return;
     _paintBed(canvas);
     _paintCenterLine(canvas);
+    _paintBranches(canvas);
+  }
+
+  /// The way back to a recovered stop: a thinner orange line from where the traveller really was to the stop, over
+  /// the road bed. It is a second path only because a second journey happened; nothing else adds a line.
+  void _paintBranches(Canvas canvas) {
+    for (final b in geometry.branches) {
+      if (b.points.length < 2) continue;
+      final path = Path()..moveTo(b.points.first.dx, b.points.first.dy);
+      for (final p in b.points.skip(1)) {
+        path.lineTo(p.dx, p.dy);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..strokeWidth = DayRouteGeometry.nearHalfWidth * 0.5
+          ..color = palette.recovery,
+      );
+    }
   }
 
   void _paintBed(Canvas canvas) {

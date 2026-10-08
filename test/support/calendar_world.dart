@@ -250,6 +250,7 @@ class CalendarWorld {
       final body = jsonDecode(r.body) as Map<String, dynamic>;
       final t = tasks[single.group(1)!];
       if (t != null && body['planned_date'] is String) t.day = dayOffsetOf(body['planned_date'] as String);
+      if (t != null && body['status'] == 'todo') t.done = false; // reopened: an undone completion
       return ok(tasksBody());
     }
     if (path.endsWith('/api/v1/calendar/apply-replan') && r.method == 'POST') {

@@ -7,6 +7,7 @@ import '../components/companion/noya_reaction_controller.dart';
 import '../components/noya_companion_view.dart';
 import '../components/noya_failure_state.dart';
 import '../components/noya_motion_view.dart';
+import '../components/noya_shield_gate.dart';
 import '../components/noya_notice.dart';
 import '../components/routine_confirm_sheet.dart';
 import '../components/task_date_time_pickers.dart';
@@ -32,6 +33,7 @@ import '../utils/word_count.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide AuthUser;
 import '../services/auth_service.dart';
 import 'auth_screen.dart';
+import 'flow_screen.dart';
 import '../utils/friendly_error.dart';
 
 enum _BrainDumpViewMode { input, preview, edit }
@@ -176,7 +178,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       if (!provider.isAuthenticated) return;
       final aiService = AIPlanService(api: provider.apiService);
       final status = await aiService.getUsageStatus();
-      if (mounted) {
+      if (mounted && status != null) {
         setState(() => _usageStatus = status);
       }
     } catch (_) {}
@@ -244,7 +246,6 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     // If their text needs AI they get a sign-in prompt; otherwise the local planner handles simple lists.
     final signedIn =
         Provider.of<AppStateProvider>(context, listen: false).isAuthenticated;
-    final isPro = signedIn && (_usageStatus?.isPro ?? false);
     final requiresAi = TaskParseService.requiresAiEnrichment(rawText);
 
     if (requiresAi && !signedIn) {
@@ -261,10 +262,15 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     // If complimentary AI is available, Pro is active, shields are available, OR the input is a
     // conversational brain dump requiring AI, route to the backend AI planning pipeline.
     // The deterministic parser is NEVER used as a silent substitute for conversational dumps.
+    // The account's allowance is the SERVER's to say: ask again if the first read did not land. An unknown status is
+    // never treated as "free plan available": plain input then takes the deterministic planner (no AI, no Shields).
+    if (!requiresAi && _usageStatus == null) {
+      await _fetchUsageStatus();
+      if (!mounted) return;
+    }
     final canUseLocalDirectly = !requiresAi &&
-        _usageStatus != null &&
-        !_usageStatus!.freeUseAvailable &&
-        !isPro;
+        (_usageStatus == null || !_usageStatus!.freeUseAvailable) &&
+        !(_usageStatus?.isPro ?? false);
 
     if (canUseLocalDirectly) {
       _proceedLocalParsing(rawText, 'Planned by Flowstate');
@@ -294,6 +300,13 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       // The Shield decision is made here, BEFORE any AI request: no free allowance left means either a confirmed
       // Shield payment or no AI call at all. The server re-checks everything; this only avoids a pointless call.
       final usageStatus = await aiService.getUsageStatus();
+      if (usageStatus == null) {
+        // The server could not be asked: nothing is assumed about the allowance and nothing is charged.
+        await aiService.reportFailure(requestId, 'client_error', 'usage status unavailable');
+        _showAiFailure('offline');
+        return;
+      }
+      if (mounted) setState(() => _usageStatus = usageStatus);
       bool consumeShield = false;
 
       if (!usageStatus.isPro && !usageStatus.freeUseAvailable) {
@@ -369,6 +382,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         });
         return;
       }
+      if (e.code == 'insufficient_shields') await _fetchUsageStatus(); // the gate shows the server's current balance
       _showAiFailure(e.code);
     } on AIEconomyException catch (e) {
       _showAiFailure(
@@ -443,6 +457,14 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         },
       ),
     ));
+  }
+
+  /// "Earn a Shield": the Flow Hub is where streaks, quests and the free refill live. The sheet closes; the text
+  /// stays in the editor for when the user returns.
+  void _earnShield() {
+    final navigator = Navigator.of(context);
+    navigator.pop();
+    navigator.push(MaterialPageRoute(builder: (_) => const FlowScreen()));
   }
 
   void _useBasicPlanner() {
@@ -1317,8 +1339,20 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     } else if (_aiFailureCode == 'shield_declined') {
       body = 'No Shields were used. Your existing tasks are safe.';
     } else if (_aiFailureCode == 'insufficient_shields') {
-      body = "You don't have enough Shields for another AI plan. Keep your streak going to earn more.";
-      hideRetry = true;
+      final status = _usageStatus;
+      if (status != null) {
+        // Noya explains what needs Shields, the balance, the next free Shield and how to earn one. Manual planning
+        // stays one tap away: Shields only ever pay for AI.
+        return NoyaShieldGate(
+          status: status,
+          action: 'An AI plan',
+          onEarn: _earnShield,
+          onLater: () => setState(() => _aiFailureCode = null),
+          onManual: _useBasicPlanner,
+        );
+      }
+      body = "Noya couldn't check your Shields just now. You can still plan it yourself.";
+      hideRetry = false;
     }
 
     return NoyaFailureState(

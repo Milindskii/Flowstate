@@ -10,6 +10,7 @@ import 'package:flowstate/screens/today_dashboard_tab.dart';
 import 'package:flowstate/components/reschedule_task_sheet.dart';
 import 'package:flowstate/components/task_date_time_pickers.dart';
 import 'package:flowstate/services/flow_clock.dart';
+import 'support/date_picker_helpers.dart';
 
 void main() {
   setUp(() {
@@ -72,10 +73,19 @@ void main() {
     expect(find.byType(RescheduleTaskSheet), findsOneWidget);
     expect(find.text('Reschedule Task'), findsOneWidget);
     expect(find.text('Analyze Financial Report'), findsWidgets);
-    expect(find.byKey(const Key('reschedule_chip_today')), findsOneWidget);
-    expect(find.byKey(const Key('reschedule_chip_tomorrow')), findsOneWidget);
-    expect(find.byKey(const Key('reschedule_chip_no_fixed_time')), findsOneWidget);
+    // ONE date control and ONE time control: no second set of chips, no "Calendar date" / "Clock time" twins
     expect(find.byType(TaskDateTimePickers), findsOneWidget);
+    expect(find.byKey(const Key('reschedule_date_picker_button')), findsOneWidget);
+    expect(find.byKey(const Key('reschedule_time_picker_button')), findsOneWidget);
+    expect(find.text('DATE'), findsOneWidget);
+    expect(find.text('TIME'), findsOneWidget);
+    expect(find.text('Pick Date'), findsNothing);
+    expect(find.text('CALENDAR DATE'), findsNothing);
+    expect(find.text('CLOCK TIME'), findsNothing);
+    expect(find.byKey(const Key('reschedule_chip_today')), findsNothing);
+    expect(find.byKey(const Key('reschedule_chip_tomorrow')), findsNothing);
+    expect(find.byIcon(Icons.calendar_today_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.access_time_rounded), findsOneWidget);
     expect(find.byKey(const Key('reschedule_cancel_button')), findsOneWidget);
     expect(find.byKey(const Key('reschedule_confirm_button')), findsOneWidget);
   });
@@ -112,8 +122,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Tap "Tomorrow"
-    await tester.tap(find.byKey(const Key('reschedule_chip_tomorrow')));
-    await tester.pumpAndSettle();
+    await pickDateVia(tester, find.byKey(const Key('reschedule_date_picker_button')), DateTime.now().add(const Duration(days: 1)));
 
     // Confirm reschedule
     await tester.tap(find.byKey(const Key('reschedule_confirm_button')));

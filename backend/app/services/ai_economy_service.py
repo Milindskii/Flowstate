@@ -102,7 +102,9 @@ class AIEconomyService:
     def get_usage_status(cls, db: Session, user_id: str) -> AIUsageStatus:
         usage = cls.get_or_create_usage(db, user_id)
         profile = cls.get_or_create_profile(db, user_id)
-        shields = profile.shields_available if profile else 2
+        from . import shield_ledger
+        refill = shield_ledger.sync_refill(db, user_id, profile=profile)   # grants the free refill (once) by the server clock
+        shields = refill.balance
 
         is_pro = effective_is_pro(usage)
         free_remaining = max(0, usage.free_uses_total - usage.free_uses_consumed)
@@ -123,6 +125,9 @@ class AIEconomyService:
             shield_cost_replan=SHIELD_COST_REPLAN,
             max_input_words=input_limit_for(is_pro=is_pro),
             can_afford_shield_plan=shields >= SHIELD_COST_BUILD_MY_DAY,
+            shield_max=refill.maximum,
+            next_shield_refill_at=refill.next_refill_at,
+            server_now=refill.server_now,
             subscription_tier=usage.subscription_tier,
             subscription_status=usage.subscription_status,
             subscription_expires_at=usage.subscription_expires_at,

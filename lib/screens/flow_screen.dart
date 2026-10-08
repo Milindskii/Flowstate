@@ -7,6 +7,7 @@ import '../components/companion/flow_companion_view.dart';
 import '../components/flow_ambient_background.dart';
 import '../components/noya_companion_view.dart';
 import '../components/shield_recovery_dialog.dart';
+import '../components/noya_shield_gate.dart' show formatShieldWait;
 import '../models/flow_challenge.dart';
 import '../models/flow_achievement.dart';
 import '../models/flow_companion.dart';
@@ -338,11 +339,23 @@ class _FlowScreenState extends State<FlowScreen> {
                             const Icon(Icons.shield_rounded, color: Color(0xFF0284C7), size: 16),
                             const SizedBox(width: 6),
                             Text(
-                              '${profile.shieldsAvailable} / 3 Shields',
+                              '${profile.shieldsAvailable} / ${profile.shieldMax} Shields',
+                              key: const Key('flow_shields_chip_text'),
                               style: FlowTypography.labelMedium(color: FlowColors.textSecondaryOf(context)).copyWith(
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
+                            // The free refill is the server's clock; this only counts down to it.
+                            if (profile.untilNextShieldAt(DateTime.now()) != null) ...[
+                              const SizedBox(width: 6),
+                              Text(
+                                profile.untilNextShieldAt(DateTime.now())! == Duration.zero
+                                    ? '+1 ready'
+                                    : '+1 in ${formatShieldWait(profile.untilNextShieldAt(DateTime.now())!)}',
+                                key: const Key('flow_shield_refill_text'),
+                                style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)),
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -733,7 +746,12 @@ class _FlowScreenState extends State<FlowScreen> {
     final success = await flow.claimChallenge(quest.id);
     if (!context.mounted) return;
     if (success) {
-      NoyaNoticeCenter.instance.show(NoyaNotice(NoticeKind.success, '+${quest.rewardFlow} Flow added.', title: 'Quest claimed'));
+      NoyaNoticeCenter.instance.show(NoyaNotice(
+          NoticeKind.success,
+          quest.rewardShields > 0
+              ? '+${quest.rewardFlow} Flow and +${quest.rewardShields} Shield added.'
+              : '+${quest.rewardFlow} Flow added.',
+          title: 'Quest claimed'));
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Quest reward already claimed or unavailable.'), duration: Duration(seconds: 2)),
@@ -776,7 +794,7 @@ class _FlowScreenState extends State<FlowScreen> {
                   borderRadius: BorderRadius.circular(FlowRadii.pill),
                 ),
                 child: Text(
-                  '+${quest.rewardFlow} Flow',
+                  quest.rewardShields > 0 ? '+${quest.rewardFlow} Flow · +${quest.rewardShields} Shield' : '+${quest.rewardFlow} Flow',
                   style: FlowTypography.labelSmall(color: const Color(0xFFEAB308)).copyWith(fontWeight: FontWeight.w800),
                 ),
               ),

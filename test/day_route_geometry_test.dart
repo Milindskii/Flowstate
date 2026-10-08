@@ -136,15 +136,17 @@ void main() {
     expectBendsOnlyAt(g, geo([item('a'), item('h'), item('c')]), {'h'});
   });
 
-  test('a recovered stop: the orange state follows the SAME winding route, no separate line', () {
-    final g = geo([item('a', completed: true), item('b', completed: true, recovered: true), item('c', completed: true), item('d')], now: 'd');
-    final a = g.stopById('a'), b = g.stopById('b'), c = g.stopById('c'), d = g.stopById('d');
+  test('recovered right after its predecessor: the orange state follows the SAME winding route, no separate line', () {
+    // A done, B done late (nothing finished after A): the traveller really went A -> B, so the road into B is orange.
+    final g = geo([item('a', completed: true), item('b', completed: true, recovered: true), item('c'), item('d')], now: 'c');
+    final a = g.stopById('a'), b = g.stopById('b'), c = g.stopById('c');
     expect(b.role, StopRouteRole.recovered);
+    expect(b.detached, isFalse);
     expect(b.walked, isFalse, reason: 'recovered is not part of the normal walked route');
+    expect(g.branches, isEmpty, reason: 'no second path: the orange state is on the one road');
     expectSameRoad(g, geo([item('a'), item('b'), item('c'), item('d')]));
     expect(allAre(between(g, a, b), RouteSegmentState.recovered), isTrue, reason: 'the way into B is orange');
     expect(allAre(between(g, b, c), RouteSegmentState.traveled), isTrue);
-    expect(allAre(between(g, c, d), RouteSegmentState.traveled), isTrue);
     // orange samples lie on the very polyline that green and blue ones do
     for (var i = 0; i < g.sampleYs.length; i++) {
       if (g.sampleStates[i] == RouteSegmentState.recovered) {
@@ -153,10 +155,96 @@ void main() {
     }
   });
 
-  test('A recovered, B normal, C normal: only the stretch into A changes colour', () {
-    final g = geo([item('a', completed: true), item('b', completed: true, recovered: true), item('c'), item('d')], now: 'c');
-    final states = g.sampleStates.toSet();
-    expect(states, containsAll([RouteSegmentState.traveled, RouteSegmentState.recovered, RouteSegmentState.ahead]));
+  group('recovery starts from where the traveller actually was', () {
+    // A -> B -> C -> D. B is missed; A, C and D are done; B is done last.
+    final done = [
+      item('a', completed: true),
+      item('b', completed: true, recovered: true),
+      item('c', completed: true),
+      item('d', completed: true),
+    ];
+    final planned = geo([item('a'), item('b'), item('c'), item('d')]);
+
+    test('B keeps its timeline slot, the road bends around it, and an orange branch runs D -> B (never A -> B)', () {
+      final g = geo(done);
+      final b = g.stopById('b');
+      expect(b.role, StopRouteRole.recovered);
+      expect(b.detached, isTrue);
+      for (var i = 0; i < 4; i++) {
+        expect(g.stops[i].center, planned.stops[i].center, reason: '${g.stops[i].id} keeps its slot');
+      }
+      expectBypassed(g, 'b');
+      expect(g.branches, hasLength(1));
+      final branch = g.branches.single;
+      expect((branch.fromId, branch.toId), ('d', 'b'), reason: 'from the latest real position, not the chronological predecessor');
+      expect(branch.points.first, g.stopById('d').center);
+      expect(branch.points.last, b.center);
+      // it runs back up the screen, through the time between D and B
+      expect(branch.points.first.dy, greaterThan(branch.points.last.dy));
+      // no orange stretch of the main road: the road did not go A -> B
+      expect(g.sampleStates, isNot(contains(RouteSegmentState.recovered)));
+      // the road still continues through C and D, and the stretch past B was already walked
+      expect(g.distanceToRoute(g.stopById('c').center), lessThan(0.5));
+      expect(g.distanceToRoute(g.stopById('d').center), lessThan(0.5));
+      expect(g.sampleStates.where((s) => s == RouteSegmentState.traveled), isNotEmpty);
+    });
+
+    test('with completion times the origin is the stop completed right before B, whatever the plan order', () {
+      final t0 = DateTime(2026, 10, 8, 9);
+      final g = DayRouteGeometry.compute(done, null, w, completedAt: {
+        'a': t0, 'c': t0.add(const Duration(hours: 1)), 'd': t0.add(const Duration(hours: 2)), 'b': t0.add(const Duration(hours: 3)),
+      });
+      expect(g.branches.single.fromId, 'd');
+      // C finished AFTER B: the traveller was at A when B was done
+      final g2 = DayRouteGeometry.compute(done, null, w, completedAt: {
+        'a': t0, 'b': t0.add(const Duration(hours: 1)), 'c': t0.add(const Duration(hours: 2)), 'd': t0.add(const Duration(hours: 3)),
+      });
+      expect(g2.branches, isEmpty, reason: 'A -> B really happened: orange into B on the road');
+      expect(g2.stopById('b').detached, isFalse);
+      expect(allAre(between(g2, g2.stopById('a'), g2.stopById('b')), RouteSegmentState.recovered), isTrue);
+    });
+
+    test('a later recovery starts from the previous real position, even a recovered one', () {
+      final items = [
+        item('a', completed: true),
+        item('b', completed: true, recovered: true),
+        item('c', completed: true),
+        item('d', completed: true, recovered: true),
+        item('e', completed: true),
+      ];
+      final t0 = DateTime(2026, 10, 8, 9);
+      final g = DayRouteGeometry.compute(items, null, w, completedAt: {
+        'a': t0, 'c': t0.add(const Duration(hours: 1)), 'e': t0.add(const Duration(hours: 2)),
+        'b': t0.add(const Duration(hours: 3)), 'd': t0.add(const Duration(hours: 4)),
+      });
+      expect([for (final b in g.branches) (b.fromId, b.toId)], [('e', 'b'), ('b', 'd')]);
+    });
+
+    test('undoing the recovery recomputes: B is missed again, bypassed, and the branch is gone', () {
+      final recovered = geo(done);
+      final undone = geo([item('a', completed: true), item('b', missed: true), item('c', completed: true), item('d', completed: true)]);
+      expect(recovered.branches, hasLength(1));
+      expect(undone.branches, isEmpty);
+      expect(undone.stopById('b').role, StopRouteRole.bypassed);
+      expect(undone.stopById('b').center, recovered.stopById('b').center);
+      expect(undone.sameRoute(recovered), isFalse);
+    });
+
+    test('recovery with the traveller\'s latest position deleted or rescheduled away: recomputed from what is left', () {
+      // D deleted: the latest real position is now C
+      final g = geo([item('a', completed: true), item('b', completed: true, recovered: true), item('c', completed: true)]);
+      expect(g.branches.single.fromId, 'c');
+    });
+
+    test('rejoins the route: the road past a recovered stop still reaches the future tasks', () {
+      final g = geo([
+        item('a', completed: true), item('b', completed: true, recovered: true), item('c', completed: true), item('d'), item('e'),
+      ], now: 'd');
+      expect(g.branches.single.fromId, 'c');
+      expect(g.distanceToRoute(g.stopById('d').center), lessThan(0.5));
+      expect(g.distanceToRoute(g.stopById('e').center), lessThan(0.5));
+      expect(g.sampleYs.last, g.stopById('e').center.dy);
+    });
   });
 
   test('a missed stop stays at its planned position; the road bends around it to the next stop', () {
@@ -197,7 +285,10 @@ void main() {
       item('f'),
     ];
     final g = geo(items, now: 'f');
-    expectBendsOnlyAt(g, geo([for (final i in items) item(i.id)]), {'b', 'd', 'e'});
+    // C was reached from A (B was skipped, nothing finished after it), so C is not on the road from B: it is bypassed
+    // and a branch carries the traveller from A to it.
+    expectBendsOnlyAt(g, geo([for (final i in items) item(i.id)]), {'b', 'c', 'd', 'e'});
+    expect([for (final b in g.branches) (b.fromId, b.toId)], [('a', 'c')]);
     for (var i = 0; i + 1 < g.sampleYs.length; i++) {
       expect(g.sampleYs[i + 1] - g.sampleYs[i], lessThanOrEqualTo(DayRouteGeometry.sampleStep + 0.01), reason: 'no gap');
     }
@@ -295,10 +386,12 @@ void main() {
       final items = [item('a', completed: true), item('b', skipped: true), item('c', completed: true, recovered: true)];
       final g = geo(items, finish: true);
       expect(g.distanceToRoute(g.finish!.center), lessThan(0.5));
-      for (final s in g.stops.where((s) => s.id != 'b')) {
+      for (final s in g.stops.where((s) => s.id != 'b' && s.id != 'c')) {
         expect(g.distanceToRoute(s.center), lessThan(0.5));
       }
       expectBypassed(g, 'b');
+      expectBypassed(g, 'c'); // reached from A, not from the skipped B
+      expect(g.branches.single.fromId, 'a');
     });
   });
 }

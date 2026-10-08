@@ -96,6 +96,11 @@ class TaskService:
                     status_code=status.HTTP_409_CONFLICT,
                     detail={"code": "commitment_locked",
                             "message": f"“{task.title}” is a fixed commitment, so its time stays locked."})
+        # Undo of a completion: a task taken back to todo / in_progress is no longer completed, so its completion
+        # stamp goes too (the day render and History read the status, the stamp must agree with it).
+        if (task.status == TaskStatus.completed and update_data.get("status") is not None
+                and update_data["status"] != TaskStatus.completed):
+            update_data["completed_at"] = None
         # An explicit reschedule: a new slot moves ownership to the slot's local day (clients send
         # planned_date=null alongside a timed reschedule). Clearing the slot keeps the planned day.
         if update_data.get("scheduled_start") is not None:

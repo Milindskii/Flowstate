@@ -35,6 +35,9 @@ class AIUsageStatus(BaseModel):
     shield_cost_replan: int = 1   # Shields one AI replan costs (server-owned)
     max_input_words: int = 200    # Build My Day dump limit (server-owned; the app counter shows it)
     can_afford_shield_plan: bool = False
+    shield_max: int = 3
+    next_shield_refill_at: Optional[datetime] = None   # server instant of the next free Shield; None at the maximum
+    server_now: Optional[datetime] = None              # the server clock when this was read (countdown base)
     subscription_tier: str = "free"
     subscription_status: str = "inactive"
     subscription_expires_at: Optional[datetime] = None

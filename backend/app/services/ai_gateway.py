@@ -30,6 +30,7 @@ from ..core.economy_config import SHIELD_COST_BUILD_MY_DAY, SHIELD_COST_REPLAN
 from ..core.logging import logger
 from ..models.ai_usage import AIRequest, AIUsagePeriod, AIUsageRecord, RateLimitWindow
 from ..models.flow_progression import FlowProfile
+from . import shield_ledger
 from .ai_economy_service import AIEconomyService, effective_is_pro
 from .ai_service import GeminiFailure
 
@@ -172,7 +173,7 @@ def _charge(db: Session, user_id: str, is_pro: bool, consume_shield: bool, today
     shield = db.execute(
         update(FlowProfile)
         .where(FlowProfile.user_id == user_id, FlowProfile.shields_available >= cost)
-        .values(shields_available=FlowProfile.shields_available - cost)
+        .values(**shield_ledger.debit_values(cost))
     )
     if shield.rowcount != 1:
         raise QuotaExceeded(
@@ -424,7 +425,7 @@ def reserve_replan(db: Session, *, user_id: str, fingerprint: str, idempotency_k
         res = db.execute(
             update(FlowProfile)
             .where(FlowProfile.user_id == user_id, FlowProfile.shields_available >= cost)
-            .values(shields_available=FlowProfile.shields_available - cost)
+            .values(**shield_ledger.debit_values(cost))
         )
         if res.rowcount != 1:
             _refund_period(db, user_id, "replan_day", now.date())

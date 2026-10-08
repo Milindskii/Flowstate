@@ -85,7 +85,7 @@ class _ShieldRecoveryDialogState extends State<ShieldRecoveryDialog> {
           const SizedBox(height: 8),
 
           Text(
-            'Current Streak: $streak days\nAvailable Shields: $shieldsCount / 3',
+            'Current Streak: $streak days\nAvailable Shields: $shieldsCount / ${profile.shieldMax}',
             style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
             textAlign: TextAlign.center,
           ),
@@ -118,7 +118,7 @@ class _ShieldRecoveryDialogState extends State<ShieldRecoveryDialog> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Shields are earned exclusively by completing 7 consecutive qualifying focus days. Shields are never auto-consumed—you decide when to activate one.',
+                  'Earn Shields with a 7-day focus streak or your weekly quest, and Flowstate adds one free every 3 days while you are below the limit. Shields protect your streak and pay for AI planning; they are never used without your say-so.',
                   style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
                 ),
               ],
@@ -160,7 +160,7 @@ class _ShieldRecoveryDialogState extends State<ShieldRecoveryDialog> {
             ),
           ] else ...[
             Text(
-              'No shields available yet. Build a 7-day focus streak to forge your next shield!',
+              'No Shields right now. Your next one arrives free in a few days, or build a 7-day focus streak to earn one sooner.',
               style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)),
               textAlign: TextAlign.center,
             ),

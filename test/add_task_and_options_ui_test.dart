@@ -134,8 +134,8 @@ void main() {
       await tester.tap(find.byKey(const Key('add_task_clear_date')));
       await tester.pumpAndSettle();
 
-      // Date should show 'No date set'
-      expect(find.text('No date set'), findsOneWidget);
+      // Unset date reads as the one call to action
+      expect(find.text('Pick date'), findsOneWidget);
     });
 
     testWidgets('4. Close button dismisses AddTaskSheet without saving', (WidgetTester tester) async {

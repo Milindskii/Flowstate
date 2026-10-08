@@ -438,6 +438,28 @@ class AIUsageStatus {
   final int shieldCost;
   final int shieldCostReplan;
 
+  /// The most Shields an account holds, and the SERVER instant its next free one lands (null at the maximum).
+  /// The app only counts down to it: eligibility and the grant are the server's.
+  final int shieldMax;
+  final DateTime? nextShieldRefillAt;
+
+  /// How long until the next free Shield, measured from the server's own clock at the moment this was read, so a
+  /// wrong device clock cannot shorten (or lengthen) it. Null when no cooldown is running.
+  final Duration? untilNextShield;
+
+  /// Device time at which [untilNextShield] was read (only the elapsed time since then is taken from the device).
+  final DateTime? readAt;
+
+  /// Time left at [now]: the server-measured wait minus what has elapsed since it was read. Never negative.
+  Duration? untilNextShieldAt(DateTime now) {
+    final base = untilNextShield;
+    final at = readAt;
+    if (base == null || at == null) return base;
+    final elapsed = now.difference(at);
+    final left = base - (elapsed.isNegative ? Duration.zero : elapsed);
+    return left.isNegative ? Duration.zero : left;
+  }
+
   /// True when the Shield price can be paid right now (Pro never pays Shields).
   bool get canAffordShieldPlan => shieldsAvailable >= shieldCost;
   bool get canAffordShieldReplan => shieldsAvailable >= shieldCostReplan;
@@ -458,6 +480,10 @@ class AIUsageStatus {
     this.shieldCost = defaultShieldCost,
     this.shieldCostReplan = defaultReplanShieldCost,
     this.maxInputWords = kDefaultBrainDumpMaxWords,
+    this.shieldMax = 3,
+    this.nextShieldRefillAt,
+    this.untilNextShield,
+    this.readAt,
   });
 
   static const int defaultShieldCost = 2;
@@ -474,12 +500,15 @@ class AIUsageStatus {
     final freeConsumed = json['free_uses_consumed'] as int? ??
         (freeRemaining != null ? (freeTotal - freeRemaining) : 0);
 
+    final nextRefill = DateTime.tryParse(json['next_shield_refill_at'] as String? ?? '');
+    final serverNow = DateTime.tryParse(json['server_now'] as String? ?? '');
     return AIUsageStatus(
       isPro: json['is_pro'] as bool? ?? false,
       subscriptionTier: json['subscription_tier'] as String? ?? 'free',
       freeUseAvailable: freeAvailable,
       freeUsesConsumed: freeConsumed,
-      shieldsAvailable: json['shields_available'] as int? ?? 2,
+      // never invent a balance: a response without one is a balance of zero, not two
+      shieldsAvailable: json['shields_available'] as int? ?? 0,
       shieldFundedUses: json['shield_funded_uses'] as int? ?? 0,
       canUseAi: json['can_use_ai'] as bool? ?? (canPlanFree ?? true),
       requiresShield: json['requires_shield'] as bool? ?? (!freeAvailable),
@@ -487,20 +516,10 @@ class AIUsageStatus {
       shieldCost: json['shield_cost'] as int? ?? defaultShieldCost,
       shieldCostReplan: json['shield_cost_replan'] as int? ?? defaultReplanShieldCost,
       maxInputWords: json['max_input_words'] as int? ?? kDefaultBrainDumpMaxWords,
-    );
-  }
-
-  factory AIUsageStatus.defaultFreeInitial() {
-    return const AIUsageStatus(
-      isPro: false,
-      subscriptionTier: 'free',
-      freeUseAvailable: true,
-      freeUsesConsumed: 0,
-      shieldsAvailable: 2,
-      shieldFundedUses: 0,
-      canUseAi: true,
-      requiresShield: false,
-      hourlyRequestsRemaining: 5,
+      shieldMax: json['shield_max'] as int? ?? 3,
+      nextShieldRefillAt: nextRefill,
+      untilNextShield: (nextRefill != null && serverNow != null) ? nextRefill.difference(serverNow) : null,
+      readAt: DateTime.now(),
     );
   }
 }

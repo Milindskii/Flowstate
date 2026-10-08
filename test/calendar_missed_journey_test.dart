@@ -302,6 +302,69 @@ void main() {
     });
   });
 
+  group('recovery starts from where the traveller really was', () {
+    // ML 9, DSA 11, Gym 15, Flowstate 17. The user does ML, never touches DSA (no "Do this later"), then Gym and
+    // Flowstate, and only afterwards finishes DSA.
+    Future<AppStateProvider> doEverythingButDsa(WidgetTester tester) async {
+      final provider = await pump(tester);
+      await doMl(tester, provider);
+      await advanceTo(tester, 15, minute: 10);
+      provider.toggleTaskCompletion('Gym');
+      await tester.pumpAndSettle();
+      await advanceTo(tester, 17, minute: 10);
+      provider.toggleTaskCompletion('Flow');
+      await tester.pumpAndSettle();
+      return provider;
+    }
+
+    testWidgets('B is bypassed without "Do this later" while the others are completed, and the route continues', (tester) async {
+      await doEverythingButDsa(tester);
+      expect(role(tester, 'DSA'), StopRouteRole.bypassed);
+      expect(world.calls.where((c) => c.contains('/skip/')), isEmpty, reason: 'nothing was skipped by hand');
+      expect(roadOffset(tester, 'DSA'), closeTo(DayRouteGeometry.detourDistance, 0.5), reason: 'the road bends around B');
+      expect(roadOffset(tester, 'Gym'), lessThan(0.5), reason: 'and carries on through the later tasks');
+      expect(roadOffset(tester, 'Flow'), lessThan(0.5));
+      expect(order(tester), ['sched-ML', 'sched-DSA', 'sched-Gym', 'sched-Flow'], reason: 'B keeps its place');
+      expect(route(tester).branches, isEmpty);
+    });
+
+    testWidgets('finishing B last draws the orange way back from Flowstate (the latest position), never from ML', (tester) async {
+      final provider = await doEverythingButDsa(tester);
+      await advanceTo(tester, 18);
+      final slotBefore = stop(tester, 'DSA').center;
+
+      provider.toggleTaskCompletion('DSA');
+      await tester.pumpAndSettle();
+
+      final g = route(tester);
+      expect(role(tester, 'DSA'), StopRouteRole.recovered);
+      expect(g.stopById('sched-DSA').detached, isTrue);
+      expect(g.stopById('sched-DSA').center, slotBefore, reason: 'B stays at its original timeline position');
+      expect(g.branches, hasLength(1));
+      expect((g.branches.single.fromId, g.branches.single.toId), ('sched-Flow', 'sched-DSA'));
+      expect(g.sampleStates, isNot(contains(RouteSegmentState.recovered)), reason: 'ML -> DSA never happened');
+      expect(roadOffset(tester, 'DSA'), closeTo(DayRouteGeometry.detourDistance, 0.5), reason: 'the main road still bends around B');
+      expect(find.byKey(const Key('path_check_sched-DSA')), findsOneWidget);
+      expect(tester.widget<Text>(find.byKey(const Key('path_tags_sched-DSA'))).textSpan!.toPlainText(), contains('Recovered'));
+    });
+
+    testWidgets('undoing the recovery recomputes the route: B is missed again and the orange branch is gone', (tester) async {
+      final provider = await doEverythingButDsa(tester);
+      await advanceTo(tester, 18);
+      provider.toggleTaskCompletion('DSA');
+      await tester.pumpAndSettle();
+      expect(route(tester).branches, hasLength(1));
+
+      provider.toggleTaskCompletion('DSA'); // undo
+      await tester.pumpAndSettle();
+
+      expect(route(tester).branches, isEmpty);
+      expect(role(tester, 'DSA'), StopRouteRole.bypassed);
+      expect(find.byKey(const Key('path_tags_sched-DSA')), findsOneWidget);
+      expect(tester.widget<Text>(find.byKey(const Key('path_tags_sched-DSA'))).textSpan!.toPlainText(), contains('Missed'));
+    });
+  });
+
   group('History tells done, skipped and missed apart', () {
     TaskItem task(String id, double hour, {bool done = false, int day = 0}) => TaskItem(
           id: id,

@@ -31,6 +31,7 @@ from ..core.economy_config import (
     ACHIEVEMENTS_CATALOG,
 )
 from ..core.timezone import resolve_timezone
+from . import shield_ledger
 from ..models.user import User
 from ..models.task import Task
 from ..models.user_preferences import UserPreferences
@@ -403,6 +404,7 @@ class FlowService:
 
     def get_overview(self, db: Session, user: User) -> FlowOverviewResponse:
         profile, companion, challenge = self.get_or_create_flow_profile(db, user)
+        shield_ledger.sync_refill(db, user.id, profile=profile)  # the free refill is granted (once) by the SERVER clock on a read
         user_tz = self._get_user_timezone(db, user.id)
         today_str = self._get_user_today_str(user_tz)
 
@@ -985,7 +987,7 @@ class FlowService:
 
         econ_event = FlowEconomicEvent(
             user_id=user.id,
-            idempotency_key=f"challenge-{challenge.id}-{utcnow().timestamp()}",
+            idempotency_key=f"challenge-{challenge.id}",
             event_type="challenge_claim",
             reference_id=challenge.id,
             flow_awarded=challenge.reward_flow,
@@ -997,7 +999,12 @@ class FlowService:
         profile.flow_balance += challenge.reward_flow
         profile.lifetime_flow += challenge.reward_flow
 
+        # A quest that pays Shields pays them in the SAME transaction as its ledger row. The ledger row is unique per
+        # (user, challenge_claim, challenge): a double tap, a retry or a parallel request loses at commit and the
+        # whole transaction (flow, Shields, claimed flag) rolls back, so one occurrence can never pay twice.
         try:
+            db.flush()  # the unique ledger row is checked here, before any Shield is granted
+            shields_awarded = shield_ledger.grant_capped(db, user.id, challenge.reward_shields)
             db.commit()
             db.refresh(profile)
         except IntegrityError:
@@ -1008,6 +1015,8 @@ class FlowService:
             challenge_id=challenge.id,
             flow_awarded=challenge.reward_flow,
             new_balance=profile.flow_balance,
+            shields_awarded=shields_awarded,
+            shields_available=profile.shields_available,
         )
 
     def claim_day_complete_xp(self, db: Session, user: User, day_str: str, xp: int):
@@ -1051,7 +1060,7 @@ class FlowService:
 
         econ_event = FlowEconomicEvent(
             user_id=user.id,
-            idempotency_key=f"dailyquest-{quest.id}-{utcnow().timestamp()}",
+            idempotency_key=f"dailyquest-{quest.id}",
             event_type="daily_quest_claim",
             reference_id=quest.id,
             flow_awarded=quest.reward_flow,
@@ -1256,7 +1265,7 @@ class FlowService:
             update(FlowProfile)
             .where(FlowProfile.user_id == user.id, FlowProfile.shields_available > 0,
                    or_(FlowProfile.last_shield_used_date.is_(None), FlowProfile.last_shield_used_date != today_str))
-            .values(shields_available=FlowProfile.shields_available - 1,
+            .values(**shield_ledger.debit_values(1),
                     shields_used_count=FlowProfile.shields_used_count + 1,
                     last_shield_used_date=today_str)
         )

@@ -66,6 +66,15 @@ class DayPathAnchorStore {
     return changed;
   }
 
+  /// Forgets every anchor (sign-out): the ledger belongs to the account that built it.
+  Future<void> clear() async {
+    _days.clear();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(prefsKey);
+    } catch (_) {}
+  }
+
   Future<void> save({DateTime? now}) async {
     final today = now ?? DateTime.now();
     final cutoff = DateTime(today.year, today.month, today.day).subtract(const Duration(days: keepDays));

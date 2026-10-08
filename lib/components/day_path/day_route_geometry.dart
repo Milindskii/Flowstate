@@ -52,6 +52,10 @@ class StopGeometry {
   /// True when the traveller has been here: completed on the normal route, or NOW.
   final bool walked;
 
+  /// A recovered stop the traveller did NOT reach from the stop before it: the road bends around it (like any
+  /// bypassed stop) and a [RecoveryBranch] runs to it from where the traveller really was.
+  final bool detached;
+
   const StopGeometry({
     required this.id,
     required this.index,
@@ -61,7 +65,33 @@ class StopGeometry {
     required this.labelOnLeft,
     required this.role,
     required this.walked,
+    this.detached = false,
   });
+
+  StopGeometry copyWith({bool? walked, bool? detached}) => StopGeometry(
+        id: id,
+        index: index,
+        center: center,
+        depth: depth,
+        scale: scale,
+        labelOnLeft: labelOnLeft,
+        role: role,
+        walked: walked ?? this.walked,
+        detached: detached ?? this.detached,
+      );
+}
+
+/// The way back to a recovered stop: from the stop where the traveller actually WAS (their latest real position) to
+/// the recovered stop, which keeps its place on the timeline. It exists only for a stop completed after it was
+/// skipped or missed and not reached from the stop before it; it is never drawn from the chronological predecessor.
+class RecoveryBranch {
+  final String fromId;
+  final String toId;
+
+  /// The branch as a polyline, from [fromId]'s node to [toId]'s node.
+  final List<Offset> points;
+
+  const RecoveryBranch({required this.fromId, required this.toId, required this.points});
 }
 
 /// The single source of truth for the Day Path route.
@@ -103,6 +133,9 @@ class DayRouteGeometry {
   /// The end of the road after the last stop (the day's Trophy), or null. It is not one of [stops].
   final StopGeometry? finish;
 
+  /// Orange recovery branches, one per detached recovered stop (see [RecoveryBranch]).
+  final List<RecoveryBranch> branches;
+
   /// Route samples, top to bottom (y increasing).
   final List<double> sampleYs;
   final List<double> sampleXs;
@@ -122,6 +155,7 @@ class DayRouteGeometry {
     required this.sampleXs,
     required this.sampleStates,
     required this.tailStart,
+    this.branches = const [],
   });
 
   bool get hasRoute => sampleYs.isNotEmpty;
@@ -141,7 +175,13 @@ class DayRouteGeometry {
       if ((sampleXs[i] - other.sampleXs[i]).abs() > 0.01 || sampleStates[i] != other.sampleStates[i]) return false;
     }
     for (var i = 0; i < stops.length; i++) {
-      if (stops[i].role != other.stops[i].role) return false;
+      if (stops[i].role != other.stops[i].role || stops[i].detached != other.stops[i].detached) return false;
+    }
+    if (branches.length != other.branches.length) return false;
+    for (var i = 0; i < branches.length; i++) {
+      final a = branches[i];
+      final b = other.branches[i];
+      if (a.fromId != b.fromId || a.toId != b.toId || a.points.length != b.points.length) return false;
     }
     return true;
   }
@@ -195,6 +235,49 @@ class DayRouteGeometry {
   static bool isDeviation(StopRouteRole role) =>
       role == StopRouteRole.skipped || role == StopRouteRole.bypassed || role == StopRouteRole.failed;
 
+  /// True when the road does not run through this stop's node: a deviation role, or a recovered stop that was
+  /// reached from somewhere other than the stop before it.
+  static bool isBypassed(StopGeometry s) => isDeviation(s.role) || s.detached;
+
+  /// Where the traveller was just before each recovered stop was completed, as {recovered index: origin index}.
+  ///
+  /// With a completion time for every finished stop the traveller's real order is the completion order, and a
+  /// recovered stop's origin is the stop completed right before it. Without the times the latest stop the traveller
+  /// finished on plan AFTER the recovered one is where they were; with none, the stop completed before it.
+  /// A recovered stop that is the traveller's first completion has no origin: it stays on the road, with no branch.
+  static Map<int, int?> recoveryOrigins(List<ScheduleItem> items, Map<String, DateTime>? completedAt) {
+    final done = <int>[for (var i = 0; i < items.length; i++) if (items[i].isCompleted) i];
+    final recovered = <int>[for (final i in done) if (items[i].isCompletedAfterDeviation) i];
+    if (recovered.isEmpty) return const {};
+    final timed = completedAt != null && done.every((i) => completedAt[items[i].id] != null);
+    final out = <int, int?>{};
+    if (timed) {
+      final order = [...done]..sort((a, b) {
+          final byTime = completedAt[items[a].id]!.compareTo(completedAt[items[b].id]!);
+          return byTime != 0 ? byTime : a.compareTo(b);
+        });
+      for (final r in recovered) {
+        final pos = order.indexOf(r);
+        out[r] = pos > 0 ? order[pos - 1] : null;
+      }
+      return out;
+    }
+    for (final r in recovered) {
+      int? later;
+      int? earlier;
+      for (final i in done) {
+        if (i == r) continue;
+        if (i > r && !items[i].isCompletedAfterDeviation) later = i;
+        if (i < r) earlier = i;
+      }
+      out[r] = later ?? earlier;
+    }
+    return out;
+  }
+
+  /// How far a recovery branch swings out from the road between its two ends.
+  static const double branchBulge = 26;
+
   /// How far (centre to centre) the road passes from a bypassed node: node radius + road half-width + air.
   static const double detourDistance = nodeRadius + nearHalfWidth + 5;
 
@@ -210,12 +293,13 @@ class DayRouteGeometry {
   /// The colour of the road arriving at [s].
   static RouteSegmentState _stateInto(StopGeometry s, {required bool isFinish}) {
     if (isFinish) return RouteSegmentState.traveled; // the finish only exists once the day is done
-    if (s.role == StopRouteRole.recovered) return RouteSegmentState.recovered;
+    if (s.role == StopRouteRole.recovered && !s.detached) return RouteSegmentState.recovered;
     return s.walked ? RouteSegmentState.traveled : RouteSegmentState.ahead;
   }
 
   /// [finish] adds the end of the road after the last stop: the day's Trophy sits there, on the same route.
-  static DayRouteGeometry compute(List<ScheduleItem> items, String? nowItemId, double width, {bool finish = false}) {
+  static DayRouteGeometry compute(List<ScheduleItem> items, String? nowItemId, double width,
+      {bool finish = false, Map<String, DateTime>? completedAt}) {
     final n = items.length;
     if (n == 0) {
       return DayRouteGeometry(
@@ -260,6 +344,13 @@ class DayRouteGeometry {
       final role = roleOf(item);
       stops.add(place(i, item.id, role, role == StopRouteRole.onRoute && (item.isCompleted || item.id == nowItemId)));
     }
+    // A recovered stop the traveller reached from the stop right before it (or as their first finished stop) is on
+    // the road (orange into it). One reached from anywhere else (latest real position, e.g. D -> B) is detached: the road bends around it like any
+    // bypassed stop and a recovery branch carries the traveller there, so no A -> B travel is invented.
+    final origins = recoveryOrigins(items, completedAt);
+    origins.forEach((r, origin) {
+      if (origin != null && origin != r - 1) stops[r] = stops[r].copyWith(detached: true);
+    });
     // The journey went past a skipped / missed / failed stop when something after it was walked: the road that
     // arrives at it is then already travelled (the node keeps its own look, so nothing is faked as done).
     var lastWalked = -1;
@@ -267,19 +358,7 @@ class DayRouteGeometry {
       if (stops[i].walked) lastWalked = i;
     }
     for (var i = 0; i < n; i++) {
-      final s = stops[i];
-      if (isDeviation(s.role) && i < lastWalked) {
-        stops[i] = StopGeometry(
-          id: s.id,
-          index: s.index,
-          center: s.center,
-          depth: s.depth,
-          scale: s.scale,
-          labelOnLeft: s.labelOnLeft,
-          role: s.role,
-          walked: true,
-        );
-      }
+      if (isBypassed(stops[i]) && i < lastWalked) stops[i] = stops[i].copyWith(walked: true);
     }
     final end = finish ? place(n, finishId, StopRouteRole.onRoute, true) : null;
 
@@ -289,7 +368,7 @@ class DayRouteGeometry {
     // carries on to the next stop. Between consecutive points: smooth S-curves.
     final route = [...stops, if (end != null) end];
     final waypoints = <Offset>[
-      for (final s in route) isDeviation(s.role) ? Offset(_detourX(s, width), s.center.dy) : s.center,
+      for (final s in route) isBypassed(s) ? Offset(_detourX(s, width), s.center.dy) : s.center,
     ];
     double routeX(double y) {
       if (y <= waypoints.first.dy) return waypoints.first.dx;
@@ -327,6 +406,33 @@ class DayRouteGeometry {
     }
     if (yEnd - sampleYs.last > 0.01) addSample(yEnd);
 
+    // Recovery branches: from the traveller's real previous position to each detached recovered stop. The branch
+    // leaves the road at the origin stop and arrives at the recovered node (which stays at its timeline slot),
+    // swinging out to the side the node is on so it never runs along the road it left.
+    final branches = <RecoveryBranch>[];
+    origins.forEach((r, originIndex) {
+      if (originIndex == null || !stops[r].detached) return;
+      final from = stops[originIndex];
+      final to = stops[r];
+      final yFrom = from.center.dy;
+      final yTo = to.center.dy;
+      final steps = math.max(2, ((yTo - yFrom).abs() / sampleStep).ceil());
+      final startOff = from.center.dx - routeX(yFrom);
+      final endOff = to.center.dx - routeX(yTo);
+      final side = endOff == 0 ? 1.0 : endOff.sign;
+      const margin = nearHalfWidth + 4;
+      final pts = <Offset>[];
+      for (var k = 0; k <= steps; k++) {
+        final u = k / steps;
+        final y = yFrom + (yTo - yFrom) * u;
+        final off = startOff + (endOff - startOff) * _smooth(u) + side * branchBulge * math.sin(math.pi * u);
+        pts.add(Offset((routeX(y) + off).clamp(margin, width - margin), y));
+      }
+      pts[0] = from.center;
+      pts[pts.length - 1] = to.center;
+      branches.add(RecoveryBranch(fromId: from.id, toId: to.id, points: pts));
+    });
+
     return DayRouteGeometry(
       width: width,
       height: height,
@@ -336,6 +442,7 @@ class DayRouteGeometry {
       sampleXs: sampleXs,
       sampleStates: states,
       tailStart: sampleYs.length, // no faded tail: the road simply ends at the last point
+      branches: branches,
     );
   }
 }

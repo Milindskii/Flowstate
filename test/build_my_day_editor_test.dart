@@ -126,9 +126,9 @@ void main() {
       final futureDate = DateTime(2026, 12, 25);
       expect(TaskDateTimePickers.formatDateDisplay(futureDate), 'Fri, Dec 25');
 
-      expect(TaskDateTimePickers.formatDateDisplay(null), 'No date set');
+      expect(TaskDateTimePickers.formatDateDisplay(null), 'Pick date');
 
-      expect(TaskDateTimePickers.formatTimeDisplay(null), 'No fixed time');
+      expect(TaskDateTimePickers.formatTimeDisplay(null), 'Pick time');
       expect(TaskDateTimePickers.formatTimeDisplay(const TimeOfDay(hour: 14, minute: 30)), '2:30 PM');
       expect(TaskDateTimePickers.formatTimeDisplay(const TimeOfDay(hour: 9, minute: 0)), '9:00 AM');
 
@@ -313,7 +313,7 @@ void main() {
         await tester.ensureVisible(find.byKey(const Key('edit_plan_task_clear_time')));
         await tester.tap(find.byKey(const Key('edit_plan_task_clear_time')));
         await tester.pump();
-        expect(find.text('No fixed time'), findsOneWidget);
+        expect(find.text('Pick time'), findsOneWidget);
       }
 
       // Save changes

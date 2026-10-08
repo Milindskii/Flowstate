@@ -125,6 +125,18 @@ class _FlowDayPathState extends State<FlowDayPath> {
     });
   }
 
+  /// When each finished stop was completed, by item id: the traveller's real order, so a recovery starts from where
+  /// they actually were. Empty for a stop with no recorded time (the geometry then falls back to plan order).
+  Map<String, DateTime> _completionTimes() {
+    final out = <String, DateTime>{};
+    for (final i in widget.items) {
+      if (!i.isCompleted) continue;
+      final at = widget.reflectionFor(i)?.completedAt ?? widget.completedAtFor(i);
+      if (at != null) out[i.id] = at;
+    }
+    return out;
+  }
+
   DayRoutePalette _palette(BuildContext context) {
     final dark = FlowColors.isDark(context);
     return DayRoutePalette(
@@ -155,7 +167,7 @@ class _FlowDayPathState extends State<FlowDayPath> {
       children: [
         LayoutBuilder(builder: (context, constraints) {
           final width = constraints.maxWidth.isFinite ? constraints.maxWidth : MediaQuery.of(context).size.width;
-          final geo = DayRouteGeometry.compute(items, widget.nowItemId, width, finish: trophy);
+          final geo = DayRouteGeometry.compute(items, widget.nowItemId, width, finish: trophy, completedAt: _completionTimes());
           final targetId = _targetId;
           return SizedBox(
             width: width,
@@ -841,6 +853,17 @@ class _PathStop extends StatelessWidget {
       when = '${DateFormat('h:mm').format(item.startTime!)}–${DateFormat('h:mm a').format(item.endTime!)}';
     }
 
+    // One small glyph says the stop's outcome before the words do: done, skipped (it moved on), missed (needs you).
+    final (IconData, Color)? stateGlyph = done
+        ? (Icons.check_rounded, isRecovered ? palette.recovery : FlowColors.successOf(context))
+        : item.isFailed
+            ? (Icons.close_rounded, palette.failed)
+            : _isSkippedFamily
+                ? (Icons.redo_rounded, palette.skipped)
+                : item.isMissed
+                    ? (Icons.priority_high_rounded, FlowColors.warningOf(context))
+                    : null;
+
     // Category and state on one quiet line; only the state that needs attention is coloured.
     final stateLabel = _stateLabel;
     final tags = <(String, Color?)>[
@@ -865,14 +888,30 @@ class _PathStop extends StatelessWidget {
       crossAxisAlignment: alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          item.title,
-          maxLines: 2,
-          textAlign: align,
-          overflow: TextOverflow.ellipsis,
-          style: FlowTypography.bodyLarge(
-            color: done ? FlowColors.textSecondaryOf(context) : FlowColors.textPrimaryOf(context),
-          ).copyWith(fontWeight: isNow ? FontWeight.w700 : FontWeight.w600, height: 1.25, fontSize: 15),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: alignEnd ? MainAxisAlignment.end : MainAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (stateGlyph != null) ...[
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Icon(stateGlyph.$1, key: Key('path_glyph_${item.id}'), size: 15, color: stateGlyph.$2),
+              ),
+              const SizedBox(width: 4),
+            ],
+            Flexible(
+              child: Text(
+                item.title,
+                maxLines: 2,
+                textAlign: align,
+                overflow: TextOverflow.ellipsis,
+                style: FlowTypography.bodyLarge(
+                  color: done ? FlowColors.textSecondaryOf(context) : FlowColors.textPrimaryOf(context),
+                ).copyWith(fontWeight: isNow ? FontWeight.w700 : FontWeight.w600, height: 1.25, fontSize: 15),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 2),
         Text.rich(
