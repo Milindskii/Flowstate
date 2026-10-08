@@ -172,6 +172,19 @@ class MockAISubscriptionApiService extends ApiService {
           'status': 'pricing_set',
           'features': <String>[],
         },
+        {
+          'plan_id': 'flowstate_pro_yearly',
+          'title': 'Yearly',
+          'billing_period': 'yearly',
+          'price_display': '₹999 / year',
+          'yearly_price_inr': 999,
+          'daily_price_display': '₹2.74/day',
+          'billing_disclosure': '₹999 billed yearly',
+          'purchasable': false,
+          'is_best_value': true,
+          'status': 'pricing_set',
+          'features': <String>[],
+        },
       ];
     }
     if (endpoint == '/api/v1/tasks') {
@@ -551,21 +564,22 @@ void main() {
       expect(find.text('Flowstate, without limits.'), findsOneWidget);
     });
 
-    testWidgets('10. Pro screen leads with the daily price and states the monthly billing next to it', (tester) async {
+    testWidgets('10. Pro screen shows monthly and yearly per day with the billing amount stated under each', (tester) async {
       await tester.pumpWidget(createTestApp(
         child: const ProSubscriptionScreen(),
       ));
 
       await tester.pumpAndSettle();
 
-      expect(find.text('Monthly'), findsOneWidget);
-      expect(find.byKey(const Key('pro_daily_price')), findsOneWidget);
+      expect(find.text('MONTHLY'), findsOneWidget);
+      expect(find.text('YEARLY'), findsOneWidget);
+      expect(find.byKey(const Key('pro_daily_price_monthly')), findsOneWidget);
       expect(find.text('₹2.97/day'), findsOneWidget);
       expect(find.text('₹89 billed monthly'), findsOneWidget);
-      // one plan only: no yearly card, no placeholder prices, no invented discounts
-      expect(find.text('Yearly'), findsNothing);
+      expect(find.text('₹2.74/day'), findsOneWidget);
+      expect(find.text('₹999 billed yearly'), findsOneWidget);
+      expect(find.byKey(const Key('pro_best_value_badge')), findsOneWidget);
       expect(find.textContaining('₹—'), findsNothing);
-      expect(find.textContaining('Pricing coming soon'), findsNothing);
       expect(find.textContaining('% off'), findsNothing);
     });
 

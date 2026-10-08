@@ -62,6 +62,7 @@ class ProPlanInfo(BaseModel):
     billing_period: str # "monthly" or "yearly"
     price_display: str # e.g. "₹89 / month"
     monthly_price_inr: Optional[int] = None
+    yearly_price_inr: Optional[int] = None
     daily_price_display: Optional[str] = None      # "₹2.97/day": the headline figure
     billing_disclosure: Optional[str] = None       # "₹89 billed monthly": always shown with the daily figure
     purchasable: bool = False                      # true only once store billing is live (never inferred by the app)

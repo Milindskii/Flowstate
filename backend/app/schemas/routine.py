@@ -53,6 +53,10 @@ class RoutineResponse(RoutineBase):
     effective_from: date
     materialized_through: Optional[date] = None
     skipped_dates: List[str] = Field(default_factory=list)
+    # Weekly cycle: planned through this date; `continuation_due` asks "Continue your routine next week?" once.
+    confirmed_through: Optional[date] = None
+    continuation_due: bool = False
+    paused: bool = False   # the user said "Not now" and the confirmed cycle is over: defined, nothing planned
 
 
 class RoutineApplyResult(BaseModel):
@@ -60,3 +64,10 @@ class RoutineApplyResult(BaseModel):
     planned_dates: List[date] = Field(default_factory=list)
     created_count: int = 0
     replayed: bool = False
+
+
+class RoutineContinuation(BaseModel):
+    decision: Literal["continue", "not_now"]
+    cycle_end: date                                  # the cycle end the app showed (replay protection)
+    timezone: Optional[str] = Field(default=None, max_length=64)
+    current_local_time: Optional[datetime] = None

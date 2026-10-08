@@ -86,6 +86,12 @@ class Routine {
   final int estimatedMinutes;
   final String summary;
 
+  /// Weekly cycle (server-owned): occurrences are planned through [confirmedThrough]; when [continuationDue] Noya asks
+  /// "Continue your routine next week?"; [paused] after a "Not now" once that week is over.
+  final DateTime? confirmedThrough;
+  final bool continuationDue;
+  final bool paused;
+
   const Routine({
     required this.id,
     required this.title,
@@ -96,7 +102,36 @@ class Routine {
     this.endHhmm,
     this.estimatedMinutes = 45,
     required this.summary,
+    this.confirmedThrough,
+    this.continuationDue = false,
+    this.paused = false,
   });
+
+  bool get createsTasks => kind == 'fixed' || kind == 'preferred';
+
+  static const List<String> dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  /// "Mon · Wed · Fri", "Every day", "Weekdays".
+  String get daysLabel {
+    if (recurrence != 'weekly' || weekdays.isEmpty || weekdays.length == 7) return 'Every day';
+    final sorted = [...weekdays]..sort();
+    if (sorted.join(',') == '0,1,2,3,4') return 'Weekdays';
+    return sorted.map((d) => dayNames[d.clamp(0, 6)]).join(' · ');
+  }
+
+  /// "7:00 PM" from "19:00" (empty without a time).
+  String get timeLabel {
+    final hhmm = startHhmm;
+    if (hhmm == null || hhmm.length < 5) return '';
+    final h = int.tryParse(hhmm.substring(0, 2)) ?? 0;
+    final m = hhmm.substring(3, 5);
+    return '${h % 12 == 0 ? 12 : h % 12}:$m ${h < 12 ? 'AM' : 'PM'}';
+  }
+
+  /// The cycle end as the server's local date string (sent back as replay protection).
+  String? get cycleEndParam => confirmedThrough == null
+      ? null
+      : '${confirmedThrough!.year.toString().padLeft(4, '0')}-${confirmedThrough!.month.toString().padLeft(2, '0')}-${confirmedThrough!.day.toString().padLeft(2, '0')}';
 
   factory Routine.fromJson(Map<String, dynamic> json) {
     return Routine(
@@ -109,6 +144,9 @@ class Routine {
       endHhmm: json['end_hhmm'] as String?,
       estimatedMinutes: (json['estimated_minutes'] as num?)?.toInt() ?? 45,
       summary: json['summary'] as String? ?? '',
+      confirmedThrough: DateTime.tryParse(json['confirmed_through'] as String? ?? ''),
+      continuationDue: json['continuation_due'] as bool? ?? false,
+      paused: json['paused'] as bool? ?? false,
     );
   }
 }

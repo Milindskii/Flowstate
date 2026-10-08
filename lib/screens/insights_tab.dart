@@ -6,12 +6,14 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../components/noya_companion_view.dart';
+import '../components/routines_section.dart';
 import '../components/noya_motion_view.dart';
 import '../models/insights_snapshot.dart';
 import '../models/task_reflection.dart';
 import '../providers/app_state_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/flow_clock.dart';
+import '../services/routine_service.dart';
 import 'insights_history_screen.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_motion.dart';
@@ -165,6 +167,11 @@ class _InsightsTabState extends State<InsightsTab> {
                   style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
                 ),
                 const SizedBox(height: 20),
+                // The user's own weekly routines live here (moved from Profile): create, edit, continue each week.
+                if (state.currentUser != null && !state.isDemoMode) ...[
+                  RoutinesSection(service: RoutineService(api: state.apiService)),
+                  const _Rule(),
+                ],
                 if (!snapshot.hasAnyHistory && routines == null && postponement == null)
                   _StillLearning(accent: accent)
                 else ...[

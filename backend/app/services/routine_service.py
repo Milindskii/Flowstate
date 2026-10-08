@@ -18,7 +18,7 @@ from ..models.routine import Routine
 from ..models.task import Task, TaskDifficulty, TaskPriority, TaskSource, TaskStatus, TaskType
 from ..schemas.routine import RoutineCreate, RoutineProposal, RoutineUpdate
 
-ROUTINE_HORIZON_DAYS = 7
+ROUTINE_HORIZON_DAYS = 7  # one weekly cycle
 ROW_KINDS = ("fixed", "preferred")          # kinds that become task rows
 CONSTRAINT_KINDS = ("earliest", "avoid")    # kinds that only constrain Build My Day placement
 _DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -154,13 +154,34 @@ def _new_occurrence(r: Routine, day: date, tz: ZoneInfo) -> Task:
     )
 
 
+def cycle_end(r: Routine, today: date) -> date:
+    """The last local date this routine is confirmed to plan (legacy rows: what they already planned, else a week)."""
+    if r.confirmed_through is not None:
+        return r.confirmed_through
+    if r.materialized_through is not None:
+        return r.materialized_through
+    return today + timedelta(days=ROUTINE_HORIZON_DAYS - 1)
+
+
+def continuation_due(r: Routine, today: date) -> bool:
+    """Ask "Continue your routine next week?" once per cycle: from the cycle's last day on, unless already answered."""
+    if r.deleted_at is not None or r.kind not in ROW_KINDS:
+        return False
+    end = cycle_end(r, today)
+    return today >= end and r.continuation_declined_for != end
+
+
 def materialize(db: Session, r: Routine, tz: ZoneInfo, now_local: datetime) -> List[date]:
-    """Generate occurrences for the rolling horizon beyond ``materialized_through``. Idempotent."""
+    """Generate occurrences beyond ``materialized_through`` up to the confirmed cycle end. Idempotent.
+
+    Never past ``confirmed_through``: a routine does not extend itself; the user continues it week by week."""
     if r.deleted_at is not None or r.kind not in ROW_KINDS or not r.start_hhmm:
         return []
     now = now_local.astimezone(tz)
     today = now.date()
-    last = today + timedelta(days=ROUTINE_HORIZON_DAYS - 1)
+    if r.confirmed_through is None:
+        r.confirmed_through = cycle_end(r, today)
+    last = r.confirmed_through
     first = max(today, r.effective_from)
     if r.materialized_through is not None:
         first = max(first, r.materialized_through + timedelta(days=1))
@@ -172,7 +193,7 @@ def materialize(db: Session, r: Routine, tz: ZoneInfo, now_local: datetime) -> L
             db.add(_new_occurrence(r, d, tz))
             made.append(d)
         d += timedelta(days=1)
-    r.materialized_through = last
+    r.materialized_through = max(last, r.materialized_through) if r.materialized_through else last
     db.flush()
     return made
 
@@ -210,6 +231,7 @@ def create_routine(db: Session, user_id: str, body: RoutineCreate, tz: ZoneInfo,
         estimated_minutes=body.estimated_minutes, kind=body.kind, recurrence=body.recurrence, weekdays=weekdays,
         start_hhmm=body.start_hhmm, end_hhmm=body.end_hhmm, effective_from=today, skipped_dates=[],
         idempotency_key=body.idempotency_key,
+        confirmed_through=today + timedelta(days=ROUTINE_HORIZON_DAYS - 1),  # the first weekly cycle
     )
     db.add(r)
     db.flush()
@@ -248,7 +270,39 @@ def update_routine(db: Session, r: Routine, body: RoutineUpdate, tz: ZoneInfo, n
         db.delete(t)
     db.flush()
     r.materialized_through = None
+    # Editing is an explicit choice about the routine: it plans a fresh weekly cycle from today.
+    today = now_local.astimezone(tz).date()
+    r.confirmed_through = today + timedelta(days=ROUTINE_HORIZON_DAYS - 1)
+    r.continuation_declined_for = None
     return materialize(db, r, tz, now_local)
+
+
+def continue_routine(db: Session, r: Routine, seen_cycle_end: date, tz: ZoneInfo, now_local: datetime
+                     ) -> Tuple[List[date], bool]:
+    """"Continue": plan the next weekly cycle once. Returns (planned dates, replayed).
+
+    ``seen_cycle_end`` is the cycle end the app showed: a retry, a double tap or a second device sends the same value
+    after the first one already moved the cycle on, so it is a replay and plans nothing. Deleted occurrences are never
+    re-created (``materialized_through`` only moves forward) and history is never touched. Costs no Shield."""
+    today = now_local.astimezone(tz).date()
+    end = cycle_end(r, today)
+    if seen_cycle_end != end:
+        return [], True
+    start = max(end + timedelta(days=1), today)
+    r.confirmed_through = start + timedelta(days=ROUTINE_HORIZON_DAYS - 1)
+    r.continuation_declined_for = None
+    if r.materialized_through is not None and r.materialized_through < start - timedelta(days=1):
+        r.materialized_through = start - timedelta(days=1)  # a gap (paused weeks) is not back-filled into the past
+    return materialize(db, r, tz, now_local), False
+
+
+def decline_continuation(r: Routine, seen_cycle_end: date, today: date) -> bool:
+    """"Not now": no next-week occurrences, the routine definition stays. Remembered for this cycle only."""
+    end = cycle_end(r, today)
+    if seen_cycle_end != end:
+        return False
+    r.continuation_declined_for = end
+    return True
 
 
 def delete_routine(db: Session, r: Routine, tz: ZoneInfo, now_local: datetime) -> int:

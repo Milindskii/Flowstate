@@ -73,7 +73,7 @@ void main() {
     expect(find.byType(Dialog), findsOneWidget);
   });
 
-  testWidgets('Appearance controls change theme mode, accent and density', (tester) async {
+  testWidgets('Appearance controls change theme mode and accent; Density and Routines are gone', (tester) async {
     await pumpProfile(tester);
     final theme = Provider.of<ThemeProvider>(tester.element(find.byType(ProfileSettingsTab)), listen: false);
     await tester.tap(find.text('Dark'));
@@ -83,9 +83,12 @@ void main() {
     await tester.tap(find.text(accent.label));
     await tester.pump();
     expect(theme.selectedAccent, accent);
-    final density = DensityMode.values.last;
-    await tester.tap(find.text(density.label));
-    await tester.pump();
-    expect(theme.densityMode, density);
+    // Density did nothing, so it is not offered; Routines moved to Insights.
+    expect(find.text('Density'), findsNothing);
+    for (final mode in DensityMode.values) {
+      expect(find.text(mode.label), findsNothing);
+    }
+    await tester.scrollUntilVisible(find.text('Sleep Schedule'), 200, scrollable: find.byType(Scrollable).first);
+    expect(find.text('Routines'), findsNothing);
   });
 }

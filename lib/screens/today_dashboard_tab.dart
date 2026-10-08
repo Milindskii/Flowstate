@@ -430,34 +430,8 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
             ],
           ),
         ),
-        // Header actions: Flow Companion Pill + User Avatar
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildFlowHeaderPill(context),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: () => state.setNavIndex(4), // Navigate to Profile
-              child: Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: FlowColors.surfaceElevated(context),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: FlowColors.border(context), width: 1.0),
-                ),
-                child: Center(
-                  child: Text(
-                    state.greetingName.isNotEmpty ? state.greetingName[0].toUpperCase() : 'U',
-                    style: FlowTypography.labelSmall(color: FlowColors.textSecondaryOf(context)).copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
+        // Header action: Noya's companion pill only. Profile lives in the bottom navigation, so no second avatar here.
+        _buildFlowHeaderPill(context),
       ],
     );
   }

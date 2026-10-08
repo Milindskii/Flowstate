@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../components/routines_sheet.dart';
 import '../providers/app_state_provider.dart';
 import '../providers/flow_provider.dart';
 import '../providers/theme_provider.dart';
@@ -17,7 +16,7 @@ import '../models/ai_plan_models.dart';
 import '../services/ai_plan_service.dart';
 import 'pro_subscription_screen.dart';
 
-/// Screen 10: Profile & Settings Screen with Accent, Density, and Theme Mode Selector
+/// Screen 10: Profile & Settings Screen with Accent and Theme Mode Selector
 class ProfileSettingsTab extends StatelessWidget {
   const ProfileSettingsTab({super.key});
 
@@ -110,7 +109,7 @@ class ProfileSettingsTab extends StatelessWidget {
               const _GoProProfileSection(),
               const SizedBox(height: 24),
 
-              // Appearance: theme, accent and density share one card
+              // Appearance: theme and accent share one card
               _buildSectionTitle('Appearance', textPrimary),
               const SizedBox(height: 12),
               Container(
@@ -219,57 +218,6 @@ class ProfileSettingsTab extends StatelessWidget {
                         );
                       }).toList(),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      child: Divider(height: 1, color: borderColor),
-                    ),
-                    _buildPrefLabel('Density', textPrimary),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: DensityMode.values.map((mode) {
-                        final isSelected = themeProvider.densityMode == mode;
-                        return Expanded(
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () {
-                              FlowHaptics.selection();
-                              themeProvider.setDensityMode(mode);
-                            },
-                            child: Container(
-                              constraints: const BoxConstraints(minHeight: 48),
-                              margin: const EdgeInsets.symmetric(horizontal: 4),
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 4),
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                color: isSelected
-                                    ? accent.withValues(alpha: 0.15)
-                                    : FlowColors.surfaceContainer(context),
-                                borderRadius: FlowRadii.inputRadius,
-                                border: Border.all(
-                                  color: isSelected ? accent : borderColor,
-                                  width: isSelected ? 1.5 : 1.0,
-                                ),
-                              ),
-                              child: FittedBox(
-                                fit: BoxFit.scaleDown,
-                                child: Text(
-                                  mode.label,
-                                  maxLines: 1,
-                                  style: FlowTypography.labelSmall(
-                                    color: isSelected ? textPrimary : textMuted,
-                                  ).copyWith(
-                                    fontWeight: isSelected
-                                        ? FontWeight.w700
-                                        : FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
                   ],
                 ),
               ),
@@ -329,14 +277,6 @@ class ProfileSettingsTab extends StatelessWidget {
                 subtitle:
                     '${state.personalData.wakeTime} wake up • ${_fmtHours(state.personalData.sleepHours)} hrs',
                 onTap: () => _showSleepSheet(context, state),
-                accent: accent,
-              ),
-              _buildSettingTile(
-                context: context,
-                icon: Icons.repeat_rounded,
-                title: 'Routines',
-                subtitle: 'Gym, classes and habits Noya plans around',
-                onTap: () => showRoutinesSheet(context, state.apiService),
                 accent: accent,
               ),
               _buildSettingTile(

@@ -20,7 +20,7 @@ class RoutineService {
     return 0;
   }
 
-  /// Also tops the 7-day horizon up on the server, so routines keep planning after an app restart.
+  /// Also brings the confirmed week up to date on the server (never past what the user confirmed).
   Future<List<Routine>> list() async {
     final tz = await TimezoneService.localIanaName();
     final res = await api.get('/api/v1/routines', queryParams: {if (tz != null) 'timezone': tz});
@@ -30,14 +30,63 @@ class RoutineService {
     return const [];
   }
 
-  Future<void> update(String id, {String? startHhmm, int? estimatedMinutes, String? title}) async {
+  /// A weekly routine the user sets up by hand (Insights > Routines): plans this week's occurrences on the server.
+  /// The same [idempotencyKey] never creates it twice. Never an AI call, never a Shield.
+  Future<int> create({
+    required String title,
+    required List<int> weekdays,
+    required String startHhmm,
+    required int estimatedMinutes,
+    required String idempotencyKey,
+    String category = 'General',
+    String taskType = 'personal',
+  }) async {
+    final tz = await TimezoneService.localIanaName();
+    final everyDay = weekdays.length == 7;
+    final res = await api.post('/api/v1/routines', body: {
+      'title': title,
+      'task_type': taskType,
+      'category': category,
+      'estimated_minutes': estimatedMinutes,
+      'kind': 'fixed',
+      'recurrence': everyDay ? 'daily' : 'weekly',
+      if (!everyDay) 'weekdays': weekdays,
+      'start_hhmm': startHhmm,
+      'idempotency_key': idempotencyKey,
+      if (tz != null) 'timezone': tz,
+    });
+    if (res is Map<String, dynamic>) return (res['created_count'] as num?)?.toInt() ?? 0;
+    return 0;
+  }
+
+  Future<void> update(String id,
+      {String? startHhmm, int? estimatedMinutes, String? title, List<int>? weekdays}) async {
     final tz = await TimezoneService.localIanaName();
     await api.patch('/api/v1/routines/$id', body: {
       if (startHhmm != null) 'start_hhmm': startHhmm,
       if (estimatedMinutes != null) 'estimated_minutes': estimatedMinutes,
       if (title != null) 'title': title,
+      if (weekdays != null) ...{
+        'recurrence': weekdays.length == 7 ? 'daily' : 'weekly',
+        if (weekdays.length != 7) 'weekdays': weekdays,
+      },
       if (tz != null) 'timezone': tz,
     });
+  }
+
+  /// The answer to "Continue your routine next week?": [proceed] plans next week once (a retry plans nothing more);
+  /// otherwise "Not now" keeps the routine without planning. Returns how many occurrences were planned. Free.
+  Future<int> answerContinuation(Routine routine, {required bool proceed}) async {
+    final end = routine.cycleEndParam;
+    if (end == null) return 0;
+    final tz = await TimezoneService.localIanaName();
+    final res = await api.post('/api/v1/routines/${routine.id}/continuation', body: {
+      'decision': proceed ? 'continue' : 'not_now',
+      'cycle_end': end,
+      if (tz != null) 'timezone': tz,
+    });
+    if (res is Map<String, dynamic>) return (res['created_count'] as num?)?.toInt() ?? 0;
+    return 0;
   }
 
   /// Stops future occurrences; completed and past tasks stay in history.

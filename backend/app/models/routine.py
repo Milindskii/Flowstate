@@ -34,6 +34,10 @@ class Routine(Base):
 
     effective_from = Column(Date, nullable=False)
     materialized_through = Column(Date, nullable=True)     # last local date occurrences were generated for
+    # Weekly cycles: occurrences are planned only through the date the user confirmed; the app asks at the end of the
+    # cycle whether to continue (never a silent, endless extension). A "Not now" is remembered for that one cycle.
+    confirmed_through = Column(Date, nullable=True)
+    continuation_declined_for = Column(Date, nullable=True)
     skipped_dates = Column(JSON, nullable=True)            # ["YYYY-MM-DD"]: one-day overrides, never re-created
     idempotency_key = Column(String(100), nullable=True)   # a double-confirm creates the routine once
     deleted_at = Column(UTCDateTime, nullable=True)

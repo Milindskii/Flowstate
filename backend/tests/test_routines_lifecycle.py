@@ -160,7 +160,7 @@ async def test_delete_stops_future_keeps_history():
 # ── restart / rolling horizon ────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_app_restart_tops_up_horizon_without_duplicates_or_resurrecting_deletions():
+async def test_app_restart_keeps_the_confirmed_week_without_duplicates_or_resurrecting_deletions():
     uid, h = make_user()
     async with client() as ac:
         res = await add_routine(ac, h)
@@ -181,7 +181,9 @@ async def test_app_restart_tops_up_horizon_without_duplicates_or_resurrecting_de
     days = sorted(t.routine_date for t in rows(uid))
     assert len(days) == len(set(days))                                    # still one per day
     assert TODAY + timedelta(days=2) not in days                          # a deleted occurrence is not resurrected
-    assert days[-1] == TODAY + timedelta(days=3) + timedelta(days=6)      # bounded: new 7-day window only
+    # bounded by the confirmed weekly cycle: a restart never extends the routine silently (Continue does, see
+    # test_routine_weekly_cycles.py)
+    assert days[-1] == TODAY + timedelta(days=6)
 
 
 @pytest.mark.asyncio

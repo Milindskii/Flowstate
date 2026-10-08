@@ -159,7 +159,15 @@ class AIEconomyService:
     @classmethod
     def get_pro_plans(cls) -> List[ProPlanInfo]:
         """The Pro catalog. Price comes from economy_config only. Purchases stay off until store billing is live."""
-        from ..core.economy_config import (PRO_MONTHLY_PRICE_INR, pro_billing_disclosure, pro_daily_price_display)
+        from ..core.economy_config import (
+            PRO_MONTHLY_PRICE_INR, PRO_YEARLY_PRICE_INR, pro_billing_disclosure, pro_daily_price_display,
+            pro_yearly_billing_disclosure, pro_yearly_daily_price_display)
+        features = [
+            "Unlimited AI Brain Dumps",
+            "Advanced circadian personalization",
+            "Flexible focus window scheduling",
+            "Priority feature updates",
+        ]
         return [
             ProPlanInfo(
                 plan_id="flowstate_pro_monthly",
@@ -172,12 +180,21 @@ class AIEconomyService:
                 purchasable=False,
                 is_best_value=False,
                 status="pricing_set",
-                features=[
-                    "Unlimited AI Brain Dumps",
-                    "Advanced circadian personalization",
-                    "Flexible focus window scheduling",
-                    "Priority feature updates",
-                ],
+                features=features,
+            ),
+            ProPlanInfo(
+                plan_id="flowstate_pro_yearly",
+                title="Yearly",
+                billing_period="yearly",
+                price_display=f"₹{PRO_YEARLY_PRICE_INR} / year",
+                monthly_price_inr=None,
+                yearly_price_inr=PRO_YEARLY_PRICE_INR,
+                daily_price_display=pro_yearly_daily_price_display(),
+                billing_disclosure=pro_yearly_billing_disclosure(),
+                purchasable=False,
+                is_best_value=True,   # a lower per-day price for the same Pro: stated by the numbers, not by a fake discount
+                status="pricing_set",
+                features=features,
             ),
         ]
 

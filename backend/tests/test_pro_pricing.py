@@ -26,7 +26,7 @@ async def test_plans_endpoint_serves_the_centralized_price():
         r = await ac.get("/api/v1/subscription/plans")
     assert r.status_code == 200
     plans = r.json()
-    assert [p["plan_id"] for p in plans] == ["flowstate_pro_monthly"]      # no yearly price was ever set
+    assert [p["plan_id"] for p in plans] == ["flowstate_pro_monthly", "flowstate_pro_yearly"]
     p = plans[0]
     assert p["monthly_price_inr"] == 89 and p["price_display"] == "₹89 / month"
     assert p["daily_price_display"] == "₹2.97/day"
@@ -49,3 +49,21 @@ async def test_a_client_can_never_grant_itself_pro():
         assert st.json()["is_pro"] is False
         ai = await ac.get("/api/v1/ai/status", headers=h)
         assert ai.json()["is_pro"] is False and ai.json()["subscription_tier"] == "free"
+
+
+def test_yearly_price_is_defined_once_and_the_daily_figure_is_exact():
+    assert eco.PRO_YEARLY_PRICE_INR == 999
+    assert eco.pro_yearly_daily_price_display() == "₹2.74/day"   # 999 / 365 = 2.7369... -> 2.74
+    assert eco.pro_yearly_billing_disclosure() == "₹999 billed yearly"
+
+
+@pytest.mark.asyncio
+async def test_plans_endpoint_serves_yearly_as_better_value_but_never_purchasable():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        plans = {p["plan_id"]: p for p in (await ac.get("/api/v1/subscription/plans")).json()}
+    y, m = plans["flowstate_pro_yearly"], plans["flowstate_pro_monthly"]
+    assert y["price_display"] == "₹999 / year" and y["yearly_price_inr"] == 999
+    assert y["daily_price_display"] == "₹2.74/day" and y["billing_disclosure"] == "₹999 billed yearly"
+    assert y["is_best_value"] is True and m["is_best_value"] is False
+    assert y["purchasable"] is False and m["purchasable"] is False, "no payment backend yet: nothing may look buyable"
+    assert float(y["daily_price_display"][1:-4]) < float(m["daily_price_display"][1:-4])

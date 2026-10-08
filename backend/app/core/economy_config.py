@@ -65,18 +65,33 @@ def input_limit_for(*, is_pro: bool = False) -> int:
 # gets (its offline fallback mirrors these numbers in lib/models/pricing_config.dart). Entitlement is never derived
 # from this file or from anything the client says; it comes from the server-verified subscription record.
 PRO_MONTHLY_PRICE_INR: int = 89
-PRO_PRICING_DAYS_PER_MONTH: int = 30   # the daily figure is the monthly price spread over a 30-day month
+PRO_YEARLY_PRICE_INR: int = 999
+PRO_PRICING_DAYS_PER_MONTH: int = 30   # the monthly daily figure is the monthly price spread over a 30-day month
+PRO_PRICING_DAYS_PER_YEAR: int = 365   # the yearly daily figure is the yearly price spread over 365 days
+
+
+def _daily_display(price_inr: int, days: int) -> str:
+    from decimal import Decimal, ROUND_HALF_UP
+    daily = (Decimal(price_inr) / Decimal(days)).quantize(Decimal("0.01"), ROUND_HALF_UP)
+    return f"₹{daily}/day"
 
 
 def pro_daily_price_display() -> str:
     """"₹2.97/day": monthly price / 30, rounded half-up to the paisa. Always shown WITH the monthly billing line."""
-    from decimal import Decimal, ROUND_HALF_UP
-    daily = (Decimal(PRO_MONTHLY_PRICE_INR) / Decimal(PRO_PRICING_DAYS_PER_MONTH)).quantize(Decimal("0.01"), ROUND_HALF_UP)
-    return f"₹{daily}/day"
+    return _daily_display(PRO_MONTHLY_PRICE_INR, PRO_PRICING_DAYS_PER_MONTH)
 
 
 def pro_billing_disclosure() -> str:
     return f"₹{PRO_MONTHLY_PRICE_INR} billed monthly"
+
+
+def pro_yearly_daily_price_display() -> str:
+    """"₹2.74/day": yearly price / 365, rounded half-up. Always shown WITH the yearly billing line."""
+    return _daily_display(PRO_YEARLY_PRICE_INR, PRO_PRICING_DAYS_PER_YEAR)
+
+
+def pro_yearly_billing_disclosure() -> str:
+    return f"₹{PRO_YEARLY_PRICE_INR} billed yearly"
 
 
 # Level Progression Table (Deterministic XP thresholds)
