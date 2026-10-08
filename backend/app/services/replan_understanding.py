@@ -119,7 +119,25 @@ def resolve_entities(message: str, entities: Sequence[PlanItem], meta: Callable[
     if not scored:
         return []
     best = max(s for s, _ in scored)
-    return [it for s, it in scored if s == best]
+    matches = [it for s, it in scored if s == best]
+    if len(matches) > 1:
+        m_t = re.search(r'\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|\bat\s+(\d{1,2})(?::(\d{2}))?\b|\b(\d{1,2}):(\d{2})\b', message, re.IGNORECASE)
+        if m_t:
+            h = int(m_t.group(1) or m_t.group(4) or m_t.group(6))
+            mi = int(m_t.group(2) or m_t.group(5) or m_t.group(7) or 0)
+            ampm = (m_t.group(3) or "").lower() if m_t.group(3) else None
+            if ampm:
+                if ampm == "pm" and h < 12:
+                    h += 12
+                elif ampm == "am" and h == 12:
+                    h = 0
+            time_matches = [e for e in matches if (e.start or e.origin_start) is not None and (
+                (((e.start or e.origin_start).hour, (e.start or e.origin_start).minute) == (h, mi))
+                or (((e.start or e.origin_start).hour % 12, (e.start or e.origin_start).minute) == (h % 12, mi))
+            )]
+            if time_matches:
+                return time_matches
+    return matches
 
 
 def _resolve_clock(hour: int, minute: int, ampm: Optional[str], now: datetime, same_day: bool) -> Optional[str]:
@@ -200,12 +218,30 @@ def understand(message: str, entities: Sequence[PlanItem], meta: Callable[[PlanI
 
     if len(found) > 1:
         verb = "move" if wants_move else ("cancel" if (cant or wants_cancel) else "move")
-        names = [e.title for e in found[:4]]
+        has_duplicate_titles = len({e.title for e in found}) < len(found)
+
+        def _lbl(e: PlanItem) -> str:
+            dt = e.start or e.origin_start
+            if has_duplicate_titles and dt is not None:
+                t_str = dt.strftime("%I:%M %p").lstrip("0")
+                return f"{e.title} at {t_str}"
+            return e.title
+
+        names = [_lbl(e) for e in found[:4]]
+        m_day = _DAY.search(text) if wants_move else None
+        opts = []
+        for e in found[:4]:
+            lbl = _lbl(e)
+            if verb == "move":
+                if m_day:
+                    opts.append(ReplanClarificationOption(label=lbl, message=f"move {lbl} to {m_day.group(1)}"))
+                else:
+                    opts.append(ReplanClarificationOption(label=lbl, prefill=f"move {lbl} to "))
+            else:
+                opts.append(ReplanClarificationOption(label=lbl, message=f"cancel {lbl}"))
         return Understanding(clarification=ReplanClarification(
             question=f"Which one do you mean: {', '.join(names)}?",
-            options=[ReplanClarificationOption(label=e.title, prefill=f"{verb} {e.title}" + (" to " if verb == "move" else ""))
-                     if verb == "move" else ReplanClarificationOption(label=e.title, message=f"cancel {e.title}")
-                     for e in found[:4]]))
+            options=opts))
 
     it = found[0]
     title = it.title

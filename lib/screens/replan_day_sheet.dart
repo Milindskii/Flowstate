@@ -48,6 +48,7 @@ class _ChatMessage {
   PlanDiff? proposal; // replaced when the user edits a new task in the preview
   final bool isError;
   final String? retryText; // the preserved request, resent by "Try again"
+  final String? retryKey; // idempotency key of the failed attempt: the retry reuses it
   final ReplanClarification? clarification; // Noya needs a detail: its options are shown under the question
   final DateTime timestamp;
 
@@ -57,6 +58,7 @@ class _ChatMessage {
     this.proposal,
     this.isError = false,
     this.retryText,
+    this.retryKey,
     this.clarification,
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
@@ -152,12 +154,14 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
     _scrollToBottom();
     FlowHaptics.lightTap();
 
+    final requestKey = retryOf?.retryKey ?? 'replan-${DateTime.now().microsecondsSinceEpoch}';
     try {
       final provider = Provider.of<AppStateProvider>(context, listen: false);
       final response = await provider.replanDay(
         date: widget.selectedDate,
         message: trimmed,
         quickAdd: quickAdd,
+        idempotencyKey: requestKey,
       );
 
       final diff = response.planDiff;
@@ -200,6 +204,7 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
             text: errText,
             isError: true,
             retryText: quickAdd == null ? trimmed : null,
+            retryKey: requestKey,
           ));
         });
         _scrollToBottom();
@@ -753,24 +758,18 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
     );
   }
 
-  /// The composer is an input CONTROL (a rounded rectangle with its own border and focus ring), deliberately not
-  /// shaped like a message bubble. It grows from one line up to [_composerMaxLines], then scrolls inside itself,
-  /// so it never takes over the screen. The send button is anchored inside it (48 dp target). While a request is
-  /// running the field is read-only and visibly dimmed; the draft is only cleared after a successful send.
+  /// The composer is ONE input control (a rounded rectangle with its own border and focus ring), deliberately not
+  /// shaped like a message bubble, and nothing else is drawn around it: the strip it sits in is only spacing. It grows
+  /// from one line up to [_composerMaxLines], then scrolls inside itself, so it never takes over the screen. The send
+  /// button is a round icon inside it (40 dp). While a request is running the field is read-only and visibly dimmed;
+  /// the draft is only cleared after a successful send.
   static const int _composerMaxLines = 5;
 
   Widget _buildBottomInputBar() {
     final border = FlowColors.border(context);
     return Container(
       key: const Key('replan_composer_bar'),
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      decoration: BoxDecoration(
-        color: FlowColors.surface(context),
-        border: Border(top: BorderSide(color: border)),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 12, offset: const Offset(0, -4)),
-        ],
-      ),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
       child: ListenableBuilder(
         listenable: Listenable.merge([_textCtrl, _focusNode]),
         builder: (context, _) {
@@ -816,10 +815,10 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
                     ),
                   ),
                   Padding(
-                    padding: const EdgeInsets.all(4),
+                    padding: const EdgeInsets.all(8),
                     child: SizedBox(
-                      width: 48,
-                      height: 48,
+                      width: 40,
+                      height: 40,
                       child: IconButton.filled(
                         key: const Key('replan_send'),
                         tooltip: 'Send',
@@ -832,9 +831,10 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
                               )
                             : const Icon(Icons.send_rounded, size: 20),
                         style: IconButton.styleFrom(
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          shape: const CircleBorder(),
+                          padding: EdgeInsets.zero,
                           backgroundColor: (canSend || busy) ? FlowColors.accentCyan : FlowColors.surface(context),
-                          disabledBackgroundColor: busy ? FlowColors.accentCyan : FlowColors.surface(context),
+                          disabledBackgroundColor: busy ? FlowColors.accentCyan : FlowColors.border(context),
                           foregroundColor: Colors.white,
                           disabledForegroundColor: busy ? Colors.white : FlowColors.textMutedOf(context),
                         ),

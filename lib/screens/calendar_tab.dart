@@ -31,6 +31,19 @@ enum CalendarView { path, list }
 
 /// Screen 8: Calendar Tab with Focus Windows & "Optimize My Day" Engine Action
 class CalendarTab extends StatefulWidget {
+  /// The task a stop stands for. The id decides; two tasks can share a name ("Gym" today and tomorrow), so a title
+  /// is only a fallback when it names exactly one task, and an ambiguous title opens nothing rather than the wrong one.
+  @visibleForTesting
+  static TaskItem? taskBehind(List<TaskItem> tasks, ScheduleItem item) {
+    final id = item.taskId ?? (item.id.startsWith('sched-') ? item.id.substring(6) : item.id);
+    for (final t in tasks) {
+      if (t.id == id) return t;
+    }
+    final title = item.title.toLowerCase();
+    final sameTitle = tasks.where((t) => t.title.toLowerCase() == title).toList();
+    return sameTitle.length == 1 ? sameTitle.first : null;
+  }
+
   final CalendarView initialView;
 
   const CalendarTab({super.key, this.initialView = CalendarView.path});
@@ -306,8 +319,9 @@ class _CalendarTabState extends State<CalendarTab> {
       );
     }
 
-    final isToday = (daySchedule?.isToday ?? false) ||
-        (selectedDate.year == now.year && selectedDate.month == now.month && selectedDate.day == now.day);
+    // The device date decides (a cached day keeps the server's is_today flag from when it was read, which goes
+    // stale at midnight).
+    final isToday = selectedDate.year == now.year && selectedDate.month == now.month && selectedDate.day == now.day;
     final isPast = selectedDate.isBefore(DateTime(now.year, now.month, now.day));
 
     final bedtimeHour = state.personalData.bedtimeHour;
@@ -455,10 +469,7 @@ class _CalendarTabState extends State<CalendarTab> {
     final dark = FlowColors.isDark(context);
     final accent = Theme.of(context).colorScheme.primary;
     final id = item.taskId ?? (item.id.startsWith('sched-') ? item.id.substring(6) : item.id);
-    final matchingTask = state.tasks.cast<TaskItem?>().firstWhere(
-      (t) => t?.id == id || t?.title.toLowerCase() == item.title.toLowerCase(),
-      orElse: () => null,
-    );
+    final matchingTask = CalendarTab.taskBehind(state.tasks, item);
 
     showModalBottomSheet(
       context: context,

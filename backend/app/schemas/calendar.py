@@ -75,6 +75,7 @@ class ReplanRequest(BaseModel):
     quick_add: Optional[QuickAddTask] = None
     current_local_time: Optional[datetime] = None
     timezone: Optional[str] = None     # IANA name; abbreviations fall back to the stored preference
+    idempotency_key: Optional[str] = None
 
 class ReplanOperation(BaseModel):
     op: str                            # add_task | move_task_date | move_task_time (target_time) | change_duration (delay_minutes = extra) | shift_task_preference | delay_remaining_schedule | cancel_task | change_duration | add_constraint | remove_constraint | move_later | prioritize | protect_block | unparsed

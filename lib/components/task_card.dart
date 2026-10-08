@@ -42,11 +42,11 @@ class TaskCard extends StatelessWidget {
 
   /// Deadlines that need attention today read in the warning colour; the rest stay quiet.
   bool get _deadlineIsUrgent {
-    final d = task.deadline.toLowerCase();
+    final d = task.deadlineLabel.toLowerCase();
     return d.contains('overdue') || d == 'due today' || d == 'tonight';
   }
 
-  String? get _deadlineText => task.deadline.isNotEmpty && task.deadline != 'Today' ? task.deadline : null;
+  String? get _deadlineText => task.deadlineLabel.isNotEmpty && task.deadlineLabel != 'Today' ? task.deadlineLabel : null;
 
   /// Focus demand as 1–3 short bars (light → high). Physical work has its own kind of effort and
   /// gets none.

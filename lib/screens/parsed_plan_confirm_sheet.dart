@@ -10,6 +10,7 @@ import '../theme/flow_colors.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
 import '../theme/flow_haptics.dart';
+import '../utils/friendly_error.dart';
 
 /// Bottom sheet that shows parsed tasks for user review + quick confirmation.
 ///
@@ -68,7 +69,8 @@ class _ParsedPlanConfirmSheetState extends State<_ParsedPlanConfirmSheet> {
       if (!mounted) return;
       setState(() => _isSubmitting = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(e.message, style: FlowTypography.bodySmall(color: FlowColors.textPrimaryOf(context))),
+        content: Text(plainOr(e.message, 'This plan needs another look. Please review it and try again.'),
+            style: FlowTypography.bodySmall(color: FlowColors.textPrimaryOf(context))),
         backgroundColor: FlowColors.surfaceElevated(context),
         duration: const Duration(seconds: 4),
         behavior: SnackBarBehavior.floating,

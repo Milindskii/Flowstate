@@ -2,14 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../components/ai_economy_sheets.dart';
+import '../core/config/brain_dump_limit.dart';
 import '../components/companion/noya_reaction_controller.dart';
 import '../components/noya_companion_view.dart';
 import '../components/noya_failure_state.dart';
 import '../components/noya_motion_view.dart';
+import '../components/noya_notice.dart';
+import '../components/routine_confirm_sheet.dart';
 import '../components/task_date_time_pickers.dart';
 import '../engines/plan_candidates.dart';
 import '../engines/scheduling_engine.dart';
 import '../models/ai_plan_models.dart';
+import '../models/routine.dart';
 import '../models/schedule_item.dart';
 import '../models/task_item.dart';
 import '../providers/app_state_provider.dart';
@@ -17,15 +21,18 @@ import '../providers/flow_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/ai_plan_service.dart';
 import '../services/plan_confirm_exception.dart';
+import '../services/routine_service.dart';
 import '../services/task_parse_service.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
 import '../utils/commitment_window.dart';
+import '../utils/word_count.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide AuthUser;
 import '../services/auth_service.dart';
 import 'auth_screen.dart';
+import '../utils/friendly_error.dart';
 
 enum _BrainDumpViewMode { input, preview, edit }
 
@@ -35,7 +42,8 @@ enum _BrainDumpViewMode { input, preview, edit }
 /// 1. Natural user text entry (no microphone in V1).
 /// 2. If clear and unambiguous, immediately parses locally via deterministic rules (0 AI credits, 0 latency).
 /// 3. If genuinely ambiguous or complex, attempts Gemini task structuring.
-/// 4. If Gemini fails (offline, timeout, API limit), seamlessly falls back to local parser without blocking.
+/// 4. If Gemini fails (offline, timeout, API limit), Noya's failure card offers "Try again" or "Plan it myself"
+/// (the local parser runs only when the user chooses it, never silently).
 /// 5. Flowstate deterministic scheduler builds the plan.
 /// 6. Shows Plan Preview with Noya companion header and pinned [ Add & Schedule ] action.
 /// 7. Editing allows fine-tuning structured candidates without losing data or returning to raw input.
@@ -106,8 +114,14 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
   // AI planning: one stable request id per brain dump ("Retry with AI" reuses it, so the server
   // charges at most once). A failure is shown with an explicit choice; never a silent local plan.
   String? _requestId;
-  String? _aiFailureMessage;
   String? _aiFailureCode;
+
+  /// Why the last edit was refused (a paste that did not fit); cleared by the next edit.
+  String? _limitNote;
+
+  int get _maxWords => _usageStatus?.maxInputWords ?? kDefaultBrainDumpMaxWords;
+  int get _wordCount => countWords(_ctrl.text);
+  int get _overBy => (_wordCount - _maxWords).clamp(0, 1 << 30);
   bool _isAiPlan = false;
 
   /// The last candidate removed from the preview and the plan as it was, for Undo (nothing was saved yet).
@@ -145,8 +159,12 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       _isValid = true;
     }
     _ctrl.addListener(() {
-      final v = _ctrl.text.trim().isNotEmpty;
-      if (v != _isValid) setState(() => _isValid = v);
+      if (!mounted) return;
+      // Every edit: the word counter is live. An edit clears the note about the previous refused paste.
+      setState(() {
+        _isValid = _ctrl.text.trim().isNotEmpty;
+        _limitNote = null;
+      });
     });
     _fetchUsageStatus();
   }
@@ -199,6 +217,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
 
   Future<void> _buildPlan() async {
     final rawText = _ctrl.text.trim();
+    if (_overBy > 0) return; // the button is disabled too; the counter says how much to trim
     if (rawText.isEmpty || _isLoading) {
       if (rawText.isEmpty) {
         setState(() =>
@@ -214,7 +233,6 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       _planId = null;
       _confirmError = null;
       _confirmErrors = {};
-      _aiFailureMessage = null;
       _aiFailureCode = null;
       _isAiPlan = false;
     });
@@ -304,12 +322,26 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
 
       if (!mounted) return;
 
-      if (result.tasks.isEmpty) {
+      if (result.tasks.isEmpty && result.routineProposals.isEmpty) {
         _showAiFailure('empty');
         return;
       }
       if (result.schedulingError != null) {
         _showAiFailure('scheduling_failed');
+        return;
+      }
+
+      // Routines found in the dump are applied only after the user confirms each one. Cancel saves nothing.
+      final savedRoutines = await _confirmRoutines(result.routineProposals, provider);
+      if (!mounted) return;
+      if (result.tasks.isEmpty) {
+        // Nothing else to plan: the routine was the whole request.
+        setState(() => _isLoading = false);
+        if (savedRoutines > 0) {
+          Navigator.of(context).pop();
+        } else {
+          _showAiFailure('empty');
+        }
         return;
       }
 
@@ -327,6 +359,16 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       });
       FlowHaptics.selection();
     } on AIPlanFailure catch (e) {
+      if (e.code == 'input_too_long') {
+        // The user can fix this right now: say so next to the field instead of showing a failure card.
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
+          _errorMessage = plainOr(e.message, 'That is a bit long for one plan. Please shorten it and try again.');
+          _viewMode = _BrainDumpViewMode.input;
+        });
+        return;
+      }
       _showAiFailure(e.code);
     } on AIEconomyException catch (e) {
       _showAiFailure(
@@ -337,6 +379,33 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
           requestId, 'unknown', e.runtimeType.toString());
       _showAiFailure('unknown');
     }
+  }
+
+  /// Asks the user about each detected routine. Returns how many were saved.
+  Future<int> _confirmRoutines(List<RoutineProposal> proposals, AppStateProvider provider) async {
+    var saved = 0;
+    for (final proposal in proposals) {
+      if (!mounted) return saved;
+      final ok = await showRoutineConfirmSheet(context, proposal);
+      if (!ok || !mounted) continue;
+      try {
+        // Stable per proposal: a retry or double tap can never create the routine twice.
+        await RoutineService(api: provider.apiService)
+            .confirm(proposal, idempotencyKey: 'rp-${proposal.proposalId}', now: DateTime.now());
+        saved++;
+        NoyaNoticeCenter.instance.show(NoyaNotice(
+            NoticeKind.success, '${proposal.title} will be planned around. ${proposal.summary}',
+            title: 'Routine saved'));
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text("Couldn't save ${proposal.title} as a routine. Please try again."),
+          ));
+        }
+      }
+    }
+    if (saved > 0) await provider.refreshTodayData();
+    return saved;
   }
 
   void _showAiFailure(String code) {
@@ -353,7 +422,6 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     if (text.isEmpty || _isLoading) return;
     setState(() {
       _isLoading = true;
-      _aiFailureMessage = null;
       _aiFailureCode = null;
     });
     await _runAiPlan(text);
@@ -381,7 +449,6 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     final text = _ctrl.text.trim();
     if (text.isEmpty) return;
     setState(() {
-      _aiFailureMessage = null;
       _aiFailureCode = null;
     });
     // Local rules only: no AI call, no usage check, nothing charged.
@@ -735,7 +802,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       if (!mounted) return;
       setState(() {
         _isSubmitting = false;
-        _confirmError = e.message;
+        _confirmError = plainOr(e.message, 'This plan needs another look. Please review it and try again.');
         _confirmErrors = {
           for (final er in e.errors)
             if (er.clientRef != null) er.clientRef!: er.message,
@@ -879,7 +946,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       noyaMessage =
           "It didn't save yet. Nothing is lost — try again when you're ready.";
       noyaState = NoyaState.encouraging;
-    } else if (_aiFailureMessage != null && _viewMode == _BrainDumpViewMode.input) {
+    } else if (_aiFailureCode != null && _viewMode == _BrainDumpViewMode.input) {
       phase = 'asleep';
       noyaTitle = '$name is resting';
       noyaMessage = _aiFailureCode == 'auth_required'
@@ -1156,7 +1223,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         ),
         const SizedBox(height: 16),
         // Shown above the editor so the choice is visible without scrolling past the dump.
-        if (_aiFailureMessage != null) ...[
+        if (_aiFailureCode != null) ...[
           _buildAiFailureCard(),
           const SizedBox(height: 12),
         ],
@@ -1178,6 +1245,18 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
             autofocus: true,
             maxLines: 5,
             minLines: 3,
+            inputFormatters: [
+              WordLimitFormatter(
+                maxWords: _maxWords,
+                maxChars: _maxWords * kBrainDumpCharsPerWord,
+                onRejected: (over) => WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  setState(() => _limitNote = over == 1 && _wordCount < _maxWords
+                      ? "That's too much text for one plan."
+                      : 'That paste would go $over ${over == 1 ? 'word' : 'words'} over the limit.');
+                }),
+              ),
+            ],
             style: FlowTypography.bodyMedium(),
             decoration: InputDecoration(
               hintText:
@@ -1192,14 +1271,35 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
           ),
         ),
 
-        if (_errorMessage != null) ...[
-          const SizedBox(height: 8),
-          Text(
-            _errorMessage!,
-            style: FlowTypography.bodySmall(color: FlowColors.warning),
-          ),
-        ],
+        const SizedBox(height: 8),
+        _buildWordCounterRow(),
         const SizedBox(height: 16),
+      ],
+    );
+  }
+
+  /// One quiet line under the field: why the last action was refused on the left, `247 / 450 words` on the right.
+  Widget _buildWordCounterRow() {
+    final over = _overBy;
+    final message = over > 0
+        ? 'Trim $over ${over == 1 ? 'word' : 'words'} to continue'
+        : (_limitNote ?? _errorMessage);
+    final nearLimit = _wordCount >= (_maxWords * 0.9).ceil();
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: message == null
+              ? const SizedBox.shrink()
+              : Text(message, style: FlowTypography.bodySmall(color: FlowColors.warning)),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          '$_wordCount / $_maxWords words',
+          key: const Key('brain_dump_word_counter'),
+          style: FlowTypography.bodySmall(
+              color: nearLimit ? FlowColors.warning : FlowColors.textMutedOf(context)),
+        ),
       ],
     );
   }
@@ -1356,6 +1456,32 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     );
   }
 
+  /// A 44x44 icon-only control for the plan cards (Edit, Delete): the same size and look, so they line up.
+  Widget _cardIconButton({
+    required Key key,
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return Semantics(
+      button: true,
+      label: label,
+      child: Tooltip(
+        message: label,
+        child: InkWell(
+          key: key,
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Center(child: Icon(icon, size: 20, color: FlowColors.textMutedOf(context))),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildTaskPreviewCard(
       TaskItem task, ScheduleItem? sched, Color accent, int index) {
     String? timeDisplay = task.scheduledTime;
@@ -1387,7 +1513,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         children: [
           // TASK (Title)
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Text(
@@ -1399,53 +1525,18 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                   ),
                 ),
               ),
-              GestureDetector(
+              // Two matching icon buttons, one row, one size: Edit, then the dustbin at the far right.
+              _cardIconButton(
+                key: Key('preview_edit_${task.id}'),
+                icon: Icons.edit_outlined,
+                label: 'Edit task',
                 onTap: () => _openEditMode(index),
-                child: Padding(
-                  padding: const EdgeInsets.all(4.0),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.edit_outlined,
-                          size: 14, color: FlowColors.textMutedOf(context)),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Edit',
-                        style: FlowTypography.labelSmall(
-                                color: FlowColors.textMutedOf(context))
-                            .copyWith(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ),
-              const SizedBox(width: 4),
-              // Delete from this proposed plan (dustbin icon button in top-right corner)
-              Semantics(
-                button: true,
+              _cardIconButton(
+                key: Key('preview_remove_${task.id}'),
+                icon: Icons.delete_outline_rounded,
                 label: 'Delete task',
-                child: Tooltip(
-                  message: 'Delete task',
-                  child: InkWell(
-                    key: Key('preview_remove_${task.id}'),
-                    borderRadius: BorderRadius.circular(8),
-                    onTap: () => _removeCandidate(index),
-                    child: ConstrainedBox(
-                      constraints:
-                          const BoxConstraints(minHeight: 44, minWidth: 44),
-                      child: Center(
-                        child: Icon(
-                          Icons.delete_outline_rounded,
-                          size: 18,
-                          color: FlowColors.textMutedOf(context),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+                onTap: () => _removeCandidate(index),
               ),
             ],
           ),
@@ -1994,10 +2085,10 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
             height: 50,
             child: ElevatedButton(
               key: const Key('brain_dump_build_button'),
-              onPressed: _isValid && !_isLoading ? _buildPlan : null,
+              onPressed: _isValid && _overBy == 0 && !_isLoading ? _buildPlan : null,
               style: ElevatedButton.styleFrom(
-                backgroundColor: _isValid ? accent : FlowColors.border(context),
-                foregroundColor: _isValid
+                backgroundColor: _isValid && _overBy == 0 ? accent : FlowColors.border(context),
+                foregroundColor: _isValid && _overBy == 0
                     ? FlowColors.textInverse
                     : FlowColors.textMutedOf(context),
                 elevation: 0,

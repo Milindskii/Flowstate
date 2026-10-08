@@ -13,6 +13,7 @@ from ..schemas.task import (
     FieldProvenance,
     TemporalConstraints,
     PlanningContext,
+    AvoidWindowContext,
     FixedEventContext,
     TravelContext,
     ProtectedPeriodContext,
@@ -89,6 +90,13 @@ def _resolve_weekday_date(weekday_name: str, now_local: datetime):
     if days_ahead == 0:
         days_ahead = 7
     return now_local.date() + timedelta(days=days_ahead)
+
+
+# One plan never holds more tasks than this, whatever the model returns (the confirm step accepts 100).
+MAX_PLAN_TASKS = 40
+
+
+from .routine_service import parse_weekdays  # noqa: E402
 
 
 class GeminiFailure(RuntimeError):
@@ -173,7 +181,9 @@ _GEMINI_TASK_SCHEMA_FIELDS = (
     '      "relative_after": "dinner" | "lunch" | "breakfast" | "class" | "meeting" | null,\n'
     '      "relative_before": "dinner" | "lunch" | "breakfast" | "bedtime" | "class" | "meeting" | null,\n'
     '      "confidence": 0.95,\n'
-    '      "needs_confirmation": false'
+    '      "needs_confirmation": false,\n'
+    '      "recurrence": "daily" | "weekly" | null,\n'
+    '      "recurrence_weekdays": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]'
 )
 
 _GEMINI_PLANNING_CONTEXT_SCHEMA = (
@@ -188,6 +198,9 @@ _GEMINI_PLANNING_CONTEXT_SCHEMA = (
     '    ],\n'
     '    "availability_windows": [\n'
     '      {"label": "office_hours", "start_time": "09:30", "end_time": "17:30", "target_date": "YYYY-MM-DD" | null}\n'
+    '    ],\n'
+    '    "avoid_windows": [\n'
+    '      {"activity": "workout", "start_time": "18:00", "end_time": "20:00", "recurring": true}\n'
     '    ],\n'
     '    "task_dependencies": [\n'
     '      {"predecessor": "Review numbers", "successor": "Finish monthly report"}\n'
@@ -264,6 +277,14 @@ def _build_initial_gemini_prompt(raw_text: str, today_str: str, user_timezone_st
         "    - 'Study DSA Friday morning' -> title: 'Study DSA', target_date: Friday's date, preferred_window: 'morning', deadline: null\n"
         "  * DO NOT generate titles like 'Gym to do', 'Work to do', 'Assignment task', or 'Task for gym'.\n"
         "  * Keep task category/type SEPARATE from title. Do not encode category into the title.\n"
+        "- ROUTINES & RECURRENCE (CRITICAL):\n"
+        "  * recurrence is set ONLY when the user describes something that repeats: 'every day', 'daily', 'every Monday', 'on weekdays', 'I usually ...', 'I always ...'. 'today', 'tomorrow' or a single date is NEVER a recurrence: recurrence: null.\n"
+        "  * 'I go to the gym every day at 4 PM' -> recurrence: 'daily', fixed_start: '16:00'. 'I have class every Monday at 10 AM' -> recurrence: 'weekly', recurrence_weekdays: ['mon'], fixed_start: '10:00'.\n"
+        "  * 'I usually go to the gym around 4 PM' -> recurrence: 'daily', preferred_start_hhmm: '16:00', fixed_start: null (a habit is a soft preference, not a fixed time).\n"
+        "  * 'I have gym today at 4 PM' -> recurrence: null, target_date: today, fixed_start: '16:00' (one-time).\n"
+        "  * 'gym anytime after 4 PM' -> earliest_start_hhmm: '16:00', fixed_start: null (an earliest boundary, not a start time). Add recurrence only if the user said it repeats.\n"
+        "  * 'I never work out between 6 and 8' -> NOT a task: planning_context.avoid_windows [{activity: 'workout', start_time: '18:00', end_time: '20:00', recurring: true}].\n"
+        "  * NEVER invent a time for a routine. A repeating activity with no stated time keeps every time field null.\n"
         "- PRIORITY RULES:\n"
         "  * If user explicitly specifies priority ('urgent', 'high priority', 'low priority', 'optional', 'absolutely don't sacrifice', etc.): set priority accordingly and priority_source='explicit'.\n"
         "  * If user does NOT explicitly specify priority: infer it from urgency cues (deadline today/tomorrow -> 'high'; 'optional'/'if I have time' -> 'low'; otherwise 'medium') and set priority_source='inferred'. Never return null.\n"
@@ -1428,6 +1449,10 @@ class AIService:
         )
         if not candidate_objects:
             raise GeminiFailure("empty", "Gemini found no tasks in the text.")
+        if len(candidate_objects) > MAX_PLAN_TASKS:
+            candidate_objects = candidate_objects[:MAX_PLAN_TASKS]
+            top_level_ambiguities = [*top_level_ambiguities,
+                                     f"That was a lot for one plan, so only the first {MAX_PLAN_TASKS} tasks were planned."]
         resolve_dependencies(candidate_objects, ref_map)
 
         planning_context_obj = cls._map_gemini_planning_context(
@@ -1517,9 +1542,15 @@ class AIService:
                         try:
                             data = resp.json()
                             text = data["candidates"][0]["content"]["parts"][0]["text"]
+                            finish_reason = data["candidates"][0].get("finishReason")
                         except (ValueError, KeyError, IndexError, TypeError):
                             error_class = "malformed"
                         else:
+                            if finish_reason == "MAX_TOKENS":
+                                # The answer was cut off by the output limit: repairing it or asking another model
+                                # would only spend more of the deadline on the same too-long answer.
+                                logger.warning("ai_service.gemini_truncated request_id=%s model=%s", request_id, model)
+                                raise GeminiFailure("malformed", "Gemini's answer was cut off by the output limit.")
                             usage = data.get("usageMetadata", {}) or {}
                             logger.info(
                                 "ai_service.gemini_ok request_id=%s model=%s latency_ms=%s input_tokens=%s output_tokens=%s",
@@ -1606,6 +1637,15 @@ class AIService:
                     target_date=pp_date,
                 ))
 
+        avoid_windows: List[AvoidWindowContext] = []
+        for aw in ctx_raw.get("avoid_windows") or []:
+            if (isinstance(aw, dict) and aw.get("activity") and _parse_hhmm(aw.get("start_time"))
+                    and _parse_hhmm(aw.get("end_time"))):
+                avoid_windows.append(AvoidWindowContext(
+                    activity=str(aw["activity"]).strip(), start_time=str(aw["start_time"]), end_time=str(aw["end_time"]),
+                    recurring=bool(aw.get("recurring", True)),
+                ))
+
         availability_windows: List[AvailabilityContext] = []
         for aw in ctx_raw.get("availability_windows", []):
             if isinstance(aw, dict) and aw.get("label"):
@@ -1643,6 +1683,7 @@ class AIService:
             travel_segments=travel_segments,
             protected_periods=protected_periods,
             availability_windows=availability_windows,
+            avoid_windows=avoid_windows,
             task_dependencies=task_dependencies,
             priority_order=priority_order,
             deferred_tasks=deferred_tasks,
@@ -1938,6 +1979,8 @@ class AIService:
                     preferred_window_start=tc_preferred_window_start if explicit_pref else None,
                     preferred_window_end=tc_preferred_window_end if explicit_pref else None,
                     depends_on=[str(r) for r in (item.get("depends_on") or []) if r],
+                    recurrence=(str(item.get("recurrence")).lower() if str(item.get("recurrence")).lower() in ("daily", "weekly") else None),
+                    recurrence_weekdays=parse_weekdays(item.get("recurrence_weekdays")) if str(item.get("recurrence")).lower() == "weekly" else [],
                 )
             )
             ref_map[str(item.get("ref") or f"t{len(candidate_objects)}")] = candidate_objects[-1].candidate_id

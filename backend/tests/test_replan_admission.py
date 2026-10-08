@@ -81,7 +81,7 @@ async def test_second_ai_replan_while_one_is_in_flight_is_refused_with_409(monke
     assert second.headers.get("retry-after")
     assert len(model.calls) == 1, "only one request may reach the provider"
     assert _replan_budget_used(uid) == 1, "the refused request spends no budget"
-    assert _rows(uid) == [("replan", "succeeded", "none")]
+    assert _rows(uid) == [("replan", "succeeded", "shield")]
 
 
 @pytest.mark.asyncio
@@ -133,7 +133,7 @@ async def test_ai_replan_releases_its_slot_on_success_and_failure(monkeypatch, a
         await ac.post("/api/v1/calendar/replan", headers=h, json=_body(AI_MESSAGE))
     statuses = [s for _, s, _ in _rows(uid)]
     assert len(statuses) == 2 and "reserved" not in statuses, statuses
-    assert all(source == "none" for *_, source in _rows(uid)), "Replan never charges Build My Day credits"
+    assert all(source in ("shield", "pro") for *_, source in _rows(uid)), "Replan charges Flow Shield, never Build My Day free credits"
 
 
 @pytest.mark.asyncio

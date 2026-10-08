@@ -39,6 +39,47 @@ void main() {
   });
   tearDown(() => FlowClock().stopTimer());
 
+  testWidgets('one input area: a single bordered container around the field, no nested boxes', (tester) async {
+    await _open(tester, MockClient((_) async => http.Response('{}', 200)));
+    final field = find.byKey(const Key('replan_composer'));
+    bool boxed(Widget w) =>
+        w is Container && w.decoration is BoxDecoration && (w.decoration as BoxDecoration).border != null;
+    final containers = find.ancestor(of: field, matching: find.byWidgetPredicate(boxed));
+    expect(containers, findsOneWidget, reason: 'exactly one bordered rectangle around the input');
+    // the strip around it is only spacing: no second fill, border or shadow
+    final bar = tester.widget<Container>(find.byKey(const Key('replan_composer_bar')));
+    expect(bar.decoration, isNull);
+  });
+
+  testWidgets('the send button is a round icon inside the field, with a comfortable tap target', (tester) async {
+    await _open(tester, MockClient((_) async => http.Response('{}', 200)));
+    final send = find.byKey(const Key('replan_send'));
+    final box = find.byKey(const Key('replan_composer_box'));
+    expect(find.descendant(of: box, matching: send), findsOneWidget);
+    final size = tester.getSize(send);
+    expect(size.width, greaterThanOrEqualTo(40));
+    expect(size.height, greaterThanOrEqualTo(40));
+    final button = tester.widget<IconButton>(send);
+    expect(button.style?.shape?.resolve({}), isA<CircleBorder>());
+    // there is only ONE send control and it sits at the field's trailing edge
+    expect(tester.getRect(send).right, lessThanOrEqualTo(tester.getRect(box).right));
+    expect(tester.getRect(send).left, greaterThan(tester.getRect(find.byKey(const Key('replan_composer'))).center.dx));
+  });
+
+  testWidgets('after a failure the composer is still usable: editable, with the draft and an enabled send', (tester) async {
+    await _open(tester, MockClient((_) async => http.Response('{"detail":"nope"}', 500)));
+    await tester.enterText(find.byKey(const Key('replan_composer')), 'move gym later');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('replan_send')));
+    await tester.pumpAndSettle();
+    final field = tester.widget<TextField>(find.byKey(const Key('replan_composer')));
+    expect(field.readOnly, isFalse);
+    expect(tester.widget<IconButton>(find.byKey(const Key('replan_send'))).onPressed, isNotNull);
+    await tester.enterText(find.byKey(const Key('replan_composer')), 'move gym later, please');
+    await tester.pump();
+    expect(tester.widget<TextField>(find.byKey(const Key('replan_composer'))).controller!.text, 'move gym later, please');
+  });
+
   testWidgets('long multiline input grows, stays capped, and the send button stays on screen', (tester) async {
     await _open(tester, MockClient((_) async => http.Response('{}', 200)));
     final field = find.byKey(const Key('replan_composer'));

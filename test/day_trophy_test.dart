@@ -153,6 +153,40 @@ void main() {
     });
   });
 
+  group('the rest of the table', () {
+    testWidgets('a day with no tasks has no Trophy', (tester) async {
+      await pump(tester);
+      expect(trophy(), findsNothing);
+    });
+
+    testWidgets('done + a skipped task that landed later today (still open): no Trophy, and it stays visible as a stop',
+        (tester) async {
+      world
+        ..add('A', 9, done: true)
+        ..add('B', 10);
+      world.skippedFrom['B'] = 10;
+      world.tasks['B']!.hour = 16; // the skip put B later the same day: it is still open work
+      await pump(tester);
+      expect(find.byKey(const Key('path_stop_sched-B')), findsOneWidget);
+      expect(trophy(), findsNothing);
+    });
+
+    testWidgets('repeated refreshes and a resume keep exactly one Trophy', (tester) async {
+      world
+        ..add('A', 9, done: true)
+        ..add('B', 10, done: true);
+      final provider = await pump(tester);
+      for (var i = 0; i < 3; i++) {
+        await provider.loadCalendarDay(provider.selectedCalendarDate, silent: true);
+        await provider.refreshAllData();
+      }
+      provider.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      await showTrophy(tester);
+      expect(trophy(), findsOneWidget);
+    });
+  });
+
   group('claiming', () {
     testWidgets('tapping the Trophy opens a compact sheet; claiming gives Noya the XP exactly once', (tester) async {
       world.add('A', 9, done: true);

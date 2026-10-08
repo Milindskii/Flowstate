@@ -179,7 +179,7 @@ async def test_empty_and_invalid_input(monkeypatch):
     async with client() as ac:
         r1 = await ac.post("/api/v1/ai/plan", headers=h, json={"raw_text": ""})
         r2 = await ac.post("/api/v1/ai/plan", headers=h, json={})
-        r3 = await ac.post("/api/v1/ai/plan", headers=h, json={"raw_text": "x" * 2000})
+        r3 = await ac.post("/api/v1/ai/plan", headers=h, json={"raw_text": "x " * 1000})  # over the word limit
     assert r1.status_code == 422 and r2.status_code == 422 and r3.status_code == 422
 
 

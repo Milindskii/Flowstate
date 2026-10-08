@@ -51,6 +51,8 @@ class PlanTemporal:
     preferred_window_end: Optional[datetime] = None
     relative_before: Optional[str] = None
     relative_after: Optional[str] = None
+    # "I never work out between 6 and 8": intervals this item may not overlap (hard, activity-scoped).
+    avoid: Tuple[Tuple[datetime, datetime], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -410,6 +412,9 @@ def plan(
 
     def try_place(it: PlanItem):
         hard, soft = busy_lists()
+        if it.temporal is not None and it.temporal.avoid:  # activity-scoped "never between X and Y": busy for this item only
+            hard = hard + list(it.temporal.avoid)
+            soft = soft + list(it.temporal.avoid)
         temporal = temporal_for(it)
         passes = (False, True) if (it.deadline_at is not None and it.deadline_kind == "soft") else (False,)
         for ignore_deadline in passes:
@@ -552,6 +557,9 @@ def _temporal_allows(it: PlanItem, start: datetime, end: datetime, tz: ZoneInfo)
         return False
     if t.latest_end is not None and end > t.latest_end:
         return False
+    for a_start, a_end in t.avoid:
+        if start < a_end and a_start < end:
+            return False
     return True
 
 

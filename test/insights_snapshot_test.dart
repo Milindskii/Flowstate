@@ -77,7 +77,7 @@ void main() {
     expect(s.completionsThisWeek, 1);
   });
 
-  test('time-of-day pattern needs 3 timed completions and a clear leader', () {
+  test('time-of-day counts appear from 3 timed completions; a best window is a claim and needs more (see insights_evidence_test)', () {
     final few = InsightsSnapshot.compute(
       tasks: [_done('a', DateTime(2026, 10, 1, 9)), _done('b', DateTime(2026, 10, 2, 10))],
       reflections: const [],
@@ -96,7 +96,7 @@ void main() {
     );
     expect(s.windowCounts[DayWindow.morning], 2);
     expect(s.windowCounts[DayWindow.evening], 1);
-    expect(s.bestWindow, DayWindow.morning);
+    expect(s.bestWindow, isNull, reason: 'three finishes are counts, not a habit');
 
     final tie = InsightsSnapshot.compute(
       tasks: [
@@ -124,8 +124,8 @@ void main() {
       tasks: const [],
       reflections: [
         _r('a', DateTime(2026, 10, 1, 9), energy: 4, focus: 5, difficulty: 2, distraction: 1, actual: 50, planned: 40),
-        _r('b', DateTime(2026, 10, 1, 10), energy: 4, focus: 4, difficulty: 3, distraction: 2, actual: 75, planned: 60),
-        _r('c', DateTime(2026, 10, 2, 20), energy: 1, focus: 3, difficulty: 4, distraction: 3, actual: 30, planned: 30),
+        _r('b', DateTime(2026, 10, 2, 10), energy: 4, focus: 4, difficulty: 3, distraction: 2, actual: 75, planned: 60),
+        _r('c', DateTime(2026, 10, 3, 20), energy: 1, focus: 3, difficulty: 4, distraction: 3, actual: 30, planned: 30),
       ],
       now: _now,
     );
@@ -238,7 +238,7 @@ void main() {
           _r('m1', DateTime(2026, 10, 1, 9), focus: 5),
           _r('m2', DateTime(2026, 10, 2, 9), focus: 4),
           _r('e1', DateTime(2026, 10, 1, 19), focus: 2),
-          _r('e2', DateTime(2026, 10, 2, 19), focus: 3),
+          _r('e2', DateTime(2026, 10, 3, 19), focus: 3),
         ],
         now: _now,
       );

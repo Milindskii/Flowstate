@@ -1,3 +1,4 @@
+import '../components/noya_notice.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'auth_screen.dart';
@@ -6,6 +7,7 @@ import '../components/companion/flow_companion_view.dart';
 import '../components/flow_ambient_background.dart';
 import '../components/noya_companion_view.dart';
 import '../components/shield_recovery_dialog.dart';
+import '../models/flow_challenge.dart';
 import '../models/flow_achievement.dart';
 import '../models/flow_companion.dart';
 import '../models/flow_daily_quest.dart';
@@ -17,6 +19,7 @@ import '../theme/flow_radii.dart';
 import '../theme/flow_spacing.dart';
 import '../theme/flow_typography.dart';
 import 'focus_ritual_screen.dart';
+import '../utils/friendly_error.dart';
 
 /// FLOWSTATE — LIVING FLOW COMPANION HUB
 ///
@@ -574,7 +577,7 @@ class _FlowScreenState extends State<FlowScreen> {
                   FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      '${companion.companionXp} / $totalBand XP',
+                      companion.isMaxLevel ? '${companion.companionXp} XP · MAX' : '${companion.companionXp} / $totalBand XP',
                       style: FlowTypography.labelMedium(color: FlowColors.mint).copyWith(
                         fontWeight: FontWeight.w800,
                       ),
@@ -596,7 +599,9 @@ class _FlowScreenState extends State<FlowScreen> {
               Text(
                 companion.isEvolutionReady
                     ? 'Evolution Ready! Noya is ready to transform.'
-                    : '${companion.xpToNextLevel} XP needed to reach next stage.',
+                    : (companion.isMaxLevel
+                        ? 'Super Noya. You reached the top level.'
+                        : '${companion.xpToNextLevel} XP needed to reach next level.'),
                 style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
               ),
               if (companion.isEvolutionReady) ...[
@@ -712,76 +717,115 @@ class _FlowScreenState extends State<FlowScreen> {
           const SizedBox(height: 16),
         ],
 
-        // Weekly Challenge Card
-        if (overview.activeChallenge != null) ...[
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: FlowColors.surfaceElevated(context),
-              borderRadius: BorderRadius.circular(FlowRadii.cardLarge),
-              border: Border.all(color: FlowColors.border(context)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'WEEKLY CHALLENGE',
-                        style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1.0,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFEAB308).withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(FlowRadii.pill),
-                      ),
-                      child: Text(
-                        '+${overview.activeChallenge!.rewardFlow} Flow',
-                        style: FlowTypography.labelSmall(color: const Color(0xFFEAB308)).copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  overview.activeChallenge!.title,
-                  style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 16,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Progress: ${overview.activeChallenge!.progressLabel}',
-                  style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
-                ),
-                const SizedBox(height: 12),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(FlowRadii.pill),
-                  child: LinearProgressIndicator(
-                    value: overview.activeChallenge!.progressFraction,
-                    minHeight: 8,
-                    backgroundColor: FlowColors.border(context),
-                    valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFEAB308)),
-                  ),
-                ),
-              ],
-            ),
-          ),
+        // Weekly quests (server-owned; reset every Monday)
+        for (final quest in (overview.weeklyQuests.isNotEmpty
+            ? List<FlowChallenge>.from(overview.weeklyQuests)
+            : <FlowChallenge>[if (overview.activeChallenge != null) overview.activeChallenge as FlowChallenge])) ...[
+          _buildWeeklyQuestCard(context, flow, quest),
+          const SizedBox(height: 12),
         ],
       ],
+    );
+  }
+
+  Future<void> _claimWeeklyQuest(BuildContext context, FlowProvider flow, FlowChallenge quest) async {
+    FlowHaptics.success();
+    final success = await flow.claimChallenge(quest.id);
+    if (!context.mounted) return;
+    if (success) {
+      NoyaNoticeCenter.instance.show(NoyaNotice(NoticeKind.success, '+${quest.rewardFlow} Flow added.', title: 'Quest claimed'));
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Quest reward already claimed or unavailable.'), duration: Duration(seconds: 2)),
+      );
+    }
+  }
+
+  Widget _buildWeeklyQuestCard(BuildContext context, FlowProvider flow, FlowChallenge quest) {
+    final claimable = quest.isCompleted && !quest.isClaimed;
+    return Container(
+      key: Key('weekly_quest_${quest.challengeType}'),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: FlowColors.surfaceElevated(context),
+        borderRadius: BorderRadius.circular(FlowRadii.cardLarge),
+        border: Border.all(color: FlowColors.border(context)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  'WEEKLY CHALLENGE',
+                  style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.0,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEAB308).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(FlowRadii.pill),
+                ),
+                child: Text(
+                  '+${quest.rewardFlow} Flow',
+                  style: FlowTypography.labelSmall(color: const Color(0xFFEAB308)).copyWith(fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            quest.title,
+            style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
+              fontWeight: FontWeight.w800,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Progress: ${quest.progressLabel}',
+            style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
+          ),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(FlowRadii.pill),
+            child: LinearProgressIndicator(
+              value: quest.progressFraction,
+              minHeight: 8,
+              backgroundColor: FlowColors.border(context),
+              valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFEAB308)),
+            ),
+          ),
+          if (claimable) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                key: Key('claim_weekly_${quest.challengeType}'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: FlowColors.mint,
+                  foregroundColor: Colors.black,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(FlowRadii.pill)),
+                ),
+                onPressed: () => _claimWeeklyQuest(context, flow, quest),
+                child: Text('CLAIM +${quest.rewardFlow}', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
+              ),
+            ),
+          ] else if (quest.isClaimed) ...[
+            const SizedBox(height: 10),
+            Text('Claimed', style: FlowTypography.labelSmall(color: FlowColors.mint).copyWith(fontWeight: FontWeight.w800)),
+          ],
+        ],
+      ),
     );
   }
 
@@ -1383,7 +1427,7 @@ class _FlowScreenState extends State<FlowScreen> {
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text(e.toString().replaceFirst('Exception: ', '')),
+                        content: Text(friendlyActionError(e, fallback: "That purchase didn't go through. Please try again.")),
                         backgroundColor: Colors.red.shade700,
                         duration: const Duration(seconds: 3),
                       ),

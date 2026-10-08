@@ -73,6 +73,7 @@ void main() {
       state.recordTaskFeedback(
         taskId: id, actualMinutes: 50, feeling: id == 'a' ? 4 : 3,
         energyScore: 4, focusScore: 4, difficultyScore: 2, distractionScore: 1, completedAt: morning,
+        durationMeasured: true, // as the Focus timer would
       );
     }
     await tester.pumpWidget(_host(state));
@@ -83,12 +84,13 @@ void main() {
     expect(find.byType(NoyaMotionView), findsOneWidget);
     expect(tester.widget<NoyaMotionView>(find.byKey(const Key('insights_noya'))).pose, NoyaState.idea);
     expect(find.byKey(Key('insights_day_${now.weekday - 1}_3')), findsOneWidget);
-    expect(find.text('You finish the most in the morning (5 AM – 12 PM).'), findsOneWidget);
+    // Three tasks ticked off in one sitting is not a pattern: no "you do best in the morning" claim.
+    expect(find.text('You finish the most in the morning (5 AM – 12 PM).'), findsNothing);
     expect(find.byKey(const Key('insights_feeling_4_1')), findsOneWidget);
     expect(find.byKey(const Key('insights_feeling_3_2')), findsOneWidget);
     // Interpretations carry the evidence behind them.
-    expect(find.text('You get the most done in the morning.'), findsOneWidget);
-    expect(find.text('3 of 3 finished tasks landed between 5 AM – 12 PM.'), findsOneWidget);
+    expect(find.text('You get the most done in the morning.'), findsNothing);
+    expect(find.textContaining('finished tasks over'), findsNothing);
     expect(find.text('Tasks tend to run about 25% over what you plan.'), findsOneWidget);
     // Only one part of the day has reflections, so no "sharpest focus" comparison is claimed.
     expect(find.byKey(const Key('insights_learned_focus_window')), findsNothing);

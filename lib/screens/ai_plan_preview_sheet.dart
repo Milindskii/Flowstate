@@ -12,6 +12,7 @@ import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
 import 'parsed_plan_confirm_sheet.dart';
+import '../utils/friendly_error.dart';
 
 /// Shows the Gemini Brain Dump confirmation or compact preview sheet.
 ///
@@ -62,7 +63,7 @@ class _AIPlanPreviewSheet extends StatelessWidget {
     } on PlanConfirmException catch (e) {
       // Nothing was saved; keep the sheet open so the user can retry or edit.
       messenger.showSnackBar(SnackBar(
-        content: Text(e.message, style: textStyle),
+        content: Text(plainOr(e.message, 'This plan needs another look. Please review it and try again.'), style: textStyle),
         backgroundColor: snackBg,
         duration: const Duration(seconds: 4),
         behavior: SnackBarBehavior.floating,

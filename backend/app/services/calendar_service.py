@@ -52,6 +52,7 @@ from ..schemas.calendar import (
     DayScheduleResponse,
     PlanDiff,
     ReplanClarification,
+    ReplanClarificationOption,
     ReplanIssue,
     ReplanOperation,
     ReplanRequest,
@@ -113,6 +114,67 @@ def _gateway_refusal(refusal) -> HTTPException:
     """An ai_gateway.GatewayError (409 in flight / 429 burst) as a user-safe HTTP error with Retry-After."""
     return HTTPException(status_code=refusal.http_status, detail={"code": refusal.code, "message": refusal.message},
                          headers=refusal.headers or None)
+
+
+_MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+_DAY_WORD = r"today|tomorrow|" + "|".join(WEEKDAYS)
+# words that, right before a day word, make it a DESTINATION ("move gym to tomorrow", "for friday"), never a source
+_DEST_PREPOSITIONS = frozenset({"to", "for", "until", "till", "by", "at", "next", "than"})
+
+
+def named_source_days(message: str, today: date) -> set:
+    """The days a message says its task is ON: "today's gym", "the gym tomorrow to friday", "gym on 9 oct to monday".
+
+    Replan only sees the day on screen, so a task named by another day must never be matched on the day shown (two
+    "Gym" tasks, one today and one tomorrow, are two different tasks). A day that is only a DESTINATION ("move gym to
+    tomorrow") is not a source and is not returned.
+    """
+    lower = (message or "").lower().replace("\u2019", "'")
+
+    def weekday_date(word: str) -> date:
+        if word == "today":
+            return today
+        if word == "tomorrow":
+            return today + timedelta(days=1)
+        return today + timedelta(days=(WEEKDAYS.index(word) - today.weekday()) % 7)
+
+    found: set = set()
+    # possessive: "today's gym", "todays gym", "friday's gym"
+    for m in re.finditer(rf"\b({_DAY_WORD})(?:'s|s)\s+[a-z0-9]", lower):
+        found.add(weekday_date(m.group(1)))
+    # "<task> [on|of|from] <day> to|until|till ...": the day sits between the task and where it goes
+    for m in re.finditer(rf"\b([a-z0-9']+)\s+(?:(on|of|from)\s+)?({_DAY_WORD})\s+(?:to|until|till)\b", lower):
+        if m.group(2) is None and m.group(1) in _DEST_PREPOSITIONS:
+            continue
+        found.add(weekday_date(m.group(3)))
+    # a calendar date: "on 9 oct to monday", "from oct 9 until friday", "of 2026-10-09 to monday"
+    date_re = r"\b(?:on|of|from)\s+(?:(\d{4})-(\d{2})-(\d{2})|(\d{1,2})\s+([a-z]{3})[a-z]*|([a-z]{3})[a-z]*\s+(\d{1,2}))\s+(?:to|until|till)\b"
+    for m in re.finditer(date_re, lower):
+        try:
+            if m.group(1):
+                found.add(date(int(m.group(1)), int(m.group(2)), int(m.group(3))))
+                continue
+            day_n = int(m.group(4) or m.group(7))
+            month = _MONTHS.get(m.group(5) or m.group(6))
+            if month is None:
+                continue
+            d = date(today.year, month, day_n)
+            found.add(d if d >= today else date(today.year + 1, month, day_n))
+        except ValueError:
+            continue
+    # "skip gym today", "cancel gym friday": a trailing day after skip/cancel names the task's day
+    m = re.match(rf"^(skip|cancel)\s+.+\s+({_DAY_WORD})$", lower.strip(" .!"))
+    if m and (m.group(1) == "cancel" or m.group(2) == "today"):
+        found.add(weekday_date(m.group(2)))
+    return found
+
+
+def _day_label(d: date, today: date) -> str:
+    if d == today:
+        return "Today"
+    if d == today + timedelta(days=1):
+        return "Tomorrow"
+    return f"{d.strftime('%A')}, {d.strftime('%b')} {d.day}"
 
 
 def _invalid_request(field: str, code: str, message: str) -> HTTPException:
@@ -552,9 +614,9 @@ class CalendarService:
         # moves to that day (default tomorrow) and today keeps a skipped/deferred history node.
         days = r'tomorrow|later this week|' + '|'.join(WEEKDAYS)
         m_dated = re.search(
-            r'\b(skip|defer|postpone|push|reschedule|move)\s+(?:the\s+|my\s+)?([a-z0-9\s]+?)\s+(?:to|until|till|for)\s+'
+            r'\b(skip|defer|postpone|push|reschedule|move)\s+(?:the\s+|my\s+)?([a-z0-9\s:]+?)\s+(?:to|until|till|for)\s+'
             rf'(?:next\s+)?({days})$', lower)
-        m_bare = re.search(r'\b(skip|defer|postpone|push back)\s+(?:the\s+|my\s+)?([a-z0-9\s]+?)(?:\s+(?:for\s+)?today)?$', lower)
+        m_bare = re.search(r'\b(skip|defer|postpone|push back)\s+(?:the\s+|my\s+)?([a-z0-9\s:]+?)(?:\s+(?:for\s+)?today)?$', lower)
         m_defer = m_dated or m_bare
         if m_defer:
             verb = m_defer.group(1)
@@ -565,19 +627,19 @@ class CalendarService:
                 intent={"skip": "skipped", "move": "rescheduled", "reschedule": "rescheduled"}.get(verb, "deferred")))
             return operations
 
-        m_cancel = re.search(r'cancel\s+(?:the\s+)?([a-zA-Z0-9\s]+?)(?:\s+today)?$', lower)
+        m_cancel = re.search(r'cancel\s+(?:the\s+)?([a-zA-Z0-9\s:]+?)(?:\s+today)?$', lower)
         if m_cancel:
             operations.append(ReplanOperation(op="cancel_task", task_query=m_cancel.group(1).strip()))
             return operations
 
-        m_move_pref = re.search(r'move\s+([a-zA-Z0-9\s]+?)\s+to\s+(morning|afternoon|evening|night|tonight)', lower)
+        m_move_pref = re.search(r'move\s+([a-zA-Z0-9\s:]+?)\s+to\s+(morning|afternoon|evening|night|tonight)', lower)
         if m_move_pref:
             operations.append(ReplanOperation(op="shift_task_preference", task_query=m_move_pref.group(1).strip(),
                                               preferred_window="evening" if m_move_pref.group(2).strip() == "tonight" else m_move_pref.group(2).strip(),
                                               constraint_value="tonight" if m_move_pref.group(2).strip() == "tonight" else None))
             return operations
 
-        m_push_meal = re.search(r'(?:push|move|schedule)\s+(?:the\s+)?([a-zA-Z0-9\s]+?)\s+after\s+(dinner|lunch|breakfast)', lower)
+        m_push_meal = re.search(r'(?:push|move|schedule)\s+(?:the\s+)?([a-zA-Z0-9\s:]+?)\s+after\s+(dinner|lunch|breakfast)', lower)
         if m_push_meal:
             operations.append(ReplanOperation(op="add_constraint", task_query=m_push_meal.group(1).strip(),
                                               constraint_type="relative_after", constraint_value=m_push_meal.group(2).strip()))
@@ -647,46 +709,43 @@ class CalendarService:
 
     @staticmethod
     def _ai_understand(db: Session, user: User, message: str, entities: List[PlanItem], now_local: datetime,
-                       tz: ZoneInfo):
+                       tz: ZoneInfo, idempotency_key: Optional[str] = None):
         """Semantic understanding (language model) for a message the deterministic layers could not read.
 
-        Metered: per-minute guard + a daily budget separate from Build My Day credits. Over budget, disabled or on
-        any provider problem it returns None and the deterministic answer stands (never an error of its own).
+        Metered & charged under the Replan Shield economy:
+        - AI Replan = 1 Shield (Rules-only Replan = 0 Shields, never calls this).
+        - Preserves atomic reservation on FlowProfile.shields_available.
+        - Exact refund on failure or no understanding.
+        - No Gemini call when the user cannot afford the Shield.
+        - Over budget, cannot afford, disabled or on provider problem it returns None and the deterministic answer stands.
         """
         from . import ai_gateway, replan_ai
-        from .ai_economy_service import AIEconomyService, effective_is_pro
 
         if not (settings.REPLAN_AI_ENABLED and settings.GEMINI_API_KEY) or not entities:
             return None
         if not replan_ai.allow_request(str(user.id)):
             return None
-        # One AI request in flight per user across all instances (the slot Build My Day uses): 409 while taken.
+
+        fingerprint = hashlib.sha256(message.encode("utf-8")).hexdigest()
         try:
-            slot = ai_gateway.claim_slot(db, user_id=user.id, kind="replan",
-                                         fingerprint=hashlib.sha256(message.encode("utf-8")).hexdigest())
+            ticket = ai_gateway.reserve_replan(db, user_id=user.id, fingerprint=fingerprint, idempotency_key=idempotency_key)
         except ai_gateway.GatewayError as refusal:
             raise _gateway_refusal(refusal)
+
+        if ticket is None:
+            # Cannot afford 1 Shield or over daily budget -> no Gemini call!
+            return None
+
         understood = None
         try:
-            try:
-                is_pro = effective_is_pro(AIEconomyService.get_or_create_usage(db, user.id))
-                cap = replan_ai.PRO_REPLAN_AI_PER_DAY if is_pro else replan_ai.FREE_REPLAN_AI_PER_DAY
-                allowed = ai_gateway.consume_period(db, user.id, "replan_day", cap)
-                db.commit()  # also ends the transaction: no pooled connection is held during the provider call
-            except Exception as exc:
-                db.rollback()
-                logger.warning(f"replan_ai budget check failed: {type(exc).__name__}")
-                return None
-            if not allowed:
-                return None
-            understood = replan_ai.interpret(message, entities, now_local, tz, request_id=uuid.uuid4().hex[:12])
+            understood = replan_ai.interpret(message, entities, now_local, tz, request_id=ticket.request_id)
             return understood
         finally:
             try:
-                ai_gateway.release_slot(db, slot, user.id, ok=understood is not None, code="no_understanding")
-            except Exception as exc:  # the deadline expiry frees it anyway
+                ai_gateway.finish_replan(db, ticket, ok=understood is not None, code="no_understanding")
+            except Exception as exc:
                 db.rollback()
-                logger.warning(f"replan_ai slot release failed: {type(exc).__name__}")
+                logger.warning(f"replan_ai finish failed: {type(exc).__name__}")
 
     # words that never name new work on their own ("ugh, behind schedule again")
     _JUNK_TITLE_WORDS = frozenset({"schedule", "again", "behind", "ugh", "hmm", "everything", "stuff", "things",
@@ -704,7 +763,7 @@ class CalendarService:
                 continue
             words = {w for w in _words(o.title) if w not in _MATCH_STOPWORDS}
             content = {w for w in words if w not in replan_understanding._NOISE}
-            if (content and content <= cls._JUNK_TITLE_WORDS and not re.search(r"\d|urgent", message.lower())):
+            if (content and content <= cls._JUNK_TITLE_WORDS and not re.search(r"\d|\burgent\b", message.lower())):
                 return "nameless"
             content -= cls._JUNK_TITLE_WORDS
             if any(content & {w for w in _words(e.title) if w not in _MATCH_STOPWORDS} for e in entities):
@@ -830,6 +889,18 @@ class CalendarService:
         if target_date < now_local.date():
             return _empty("Past days can't be replanned.", "past")
 
+        # A message that names another day ("today's gym" while Tomorrow is on screen) is never matched against the day
+        # shown: two tasks can share a name. Change nothing and say where to ask, so the right one is moved.
+        if request.quick_add is None:
+            named = named_source_days(request.user_message, now_local.date())
+            elsewhere = sorted(d for d in named if d != target_date)
+            if elsewhere:
+                where = " and ".join(_day_label(d, now_local.date()) for d in elsewhere)
+                return _empty(
+                    f"That's on {where}, but you're looking at {_day_label(target_date, now_local.date())}. "
+                    f"Open {where if len(elsewhere) == 1 else 'that day'} in the Calendar and ask me there, "
+                    f"so I change the right one. Nothing was changed.", "other_day")
+
         # Working set: the SAME query the day view uses (finding 7), plus completed work (immutable busy time).
         d_start, d_end = self._bounds(target_date, tz)
         open_rows = TaskRepository.list_open_for_day(db, user.id, target_date, d_start, d_end, target_date == now_local.date())
@@ -857,7 +928,8 @@ class CalendarService:
                                       f"{getattr(row_by_id.get(it.id), 'description', '') or ''}"),
                     now_local, target_date == now_local.date())
                 if found is None or found.vague:
-                    ai = self._ai_understand(db, user, request.user_message, plan_entities, now_local, tz)
+                    ai = self._ai_understand(db, user, request.user_message, plan_entities, now_local, tz,
+                                              idempotency_key=getattr(request, "idempotency_key", None))
                     if ai is not None:
                         found = ai
                 return found
@@ -901,7 +973,8 @@ class CalendarService:
                         "“running 20 min late” or “add a 30 min call at 5pm”.")
             elif any(o.op == "unparsed" for o in operations):
                 # part of a compound message was not understood: let the semantic layer read the whole message
-                ai = self._ai_understand(db, user, request.user_message, plan_entities, now_local, tz)
+                ai = self._ai_understand(db, user, request.user_message, plan_entities, now_local, tz,
+                                          idempotency_key=getattr(request, "idempotency_key", None))
                 if ai is not None and ai.clarification is not None:
                     return self._clarification_response(request, plan_id, before_schedule, tz_name, ai.clarification)
                 if ai is not None and ai.operations:
@@ -909,6 +982,7 @@ class CalendarService:
         # cancellations first: time a cancelled task frees is available to the moves in the same message,
         # whatever order the user said them in ("move gym to 8 and I can't go out")
         operations = sorted(operations, key=lambda o: o.op != "cancel_task")
+        clauses = self._split_replan_clauses(request.user_message)
         conflicts: List[str] = []
         issues: List[ReplanIssue] = []
         failed_queries: set = set()
@@ -946,6 +1020,71 @@ class CalendarService:
         time_moves: set = set()
         duration_changes: Dict[str, int] = {}
 
+        def _extract_query_time(q: str) -> Tuple[str, Optional[Tuple[int, int]]]:
+            m = re.search(r'\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|\bat\s+(\d{1,2})(?::(\d{2}))?\b|\b(\d{1,2}):(\d{2})\b', q, re.IGNORECASE)
+            if not m:
+                return q, None
+            h = int(m.group(1) or m.group(4) or m.group(6))
+            mi = int(m.group(2) or m.group(5) or m.group(7) or 0)
+            ampm = (m.group(3) or "").lower() if m.group(3) else None
+            if ampm:
+                if ampm == "pm" and h < 12:
+                    h += 12
+                elif ampm == "am" and h == 12:
+                    h = 0
+            cleaned = q[:m.start()] + q[m.end():]
+            cleaned = re.sub(r'\b(?:at)\b', '', cleaned, flags=re.IGNORECASE).strip()
+            return cleaned, (h, mi)
+
+        def _clarification_for_duplicates(op: ReplanOperation, found: List[PlanItem]) -> ReplanClarification:
+            seen_labels: set = set()
+            opts: List[ReplanClarificationOption] = []
+            for it in found[:4]:
+                if it.start is not None:
+                    time_str = clock_label(it.start, tz)
+                    base_lbl = f"{it.title} at {time_str}"
+                else:
+                    base_lbl = f"{it.title} (unscheduled)"
+
+                lbl = base_lbl
+                if lbl in seen_labels:
+                    lbl = f"{base_lbl} ({it.estimated_minutes}m)"
+                    if lbl in seen_labels:
+                        lbl = f"{base_lbl} #{len(seen_labels) + 1}"
+                seen_labels.add(lbl)
+
+                if op.op == "cancel_task":
+                    opts.append(ReplanClarificationOption(label=lbl, message=f"cancel {lbl}"))
+                elif op.op == "move_task_date":
+                    target = op.target_date or "tomorrow"
+                    opts.append(ReplanClarificationOption(label=lbl, message=f"move {lbl} to {target}"))
+                elif op.op == "move_task_time":
+                    if op.target_time:
+                        opts.append(ReplanClarificationOption(label=lbl, message=f"move {lbl} to {op.target_time}"))
+                    else:
+                        opts.append(ReplanClarificationOption(label=lbl, prefill=f"move {lbl} to "))
+                elif op.op == "move_later":
+                    opts.append(ReplanClarificationOption(label=lbl, message=f"move {lbl} later"))
+                elif op.op == "redo_task":
+                    opts.append(ReplanClarificationOption(label=lbl, message=f"redo {lbl}"))
+                elif op.op == "change_duration":
+                    if op.delay_minutes:
+                        opts.append(ReplanClarificationOption(label=lbl, message=f"{lbl} will take {op.delay_minutes} minutes longer"))
+                    else:
+                        opts.append(ReplanClarificationOption(label=lbl, prefill=f"{lbl} will take longer"))
+                elif op.op == "prioritize":
+                    opts.append(ReplanClarificationOption(label=lbl, message=f"prioritize {lbl}"))
+                else:
+                    opts.append(ReplanClarificationOption(label=lbl, message=f"move {lbl} to tomorrow"))
+
+            names = [o.label for o in opts]
+            question = f"Which one do you mean: {', '.join(names)}?"
+            clar = ReplanClarification(question=question, options=opts)
+            if len(clauses) > 1:
+                others = [c for c in clauses if not (op.task_query and op.task_query.lower() in c.lower())]
+                clar = self._carry_clauses(clar, others)
+            return clar
+
         def match(query: Optional[str], commitments: bool = False, task_id: Optional[str] = None) -> List[PlanItem]:
             """Resolve what the user said to open tasks. Never needs the exact title.
 
@@ -962,24 +1101,48 @@ class CalendarService:
             q = (query or "").strip().lower()
             if not q:
                 return []
-            exact = [i for i in open_items if q in i.title.lower()]
-            if exact:
-                return exact
-            words = [w for w in _words(q) if w not in _MATCH_STOPWORDS]
-            if not words:
-                return []
 
-            def meta(it: PlanItem) -> List[str]:
-                row = row_by_id.get(it.id)
-                return _words(f"{getattr(row, 'category', '') or ''} {getattr(row, 'description', '') or ''}")
+            cleaned_q, q_time = _extract_query_time(q)
 
-            full = [i for i in open_items if all(w in _words(i.title) or w in meta(i) for w in words)]
-            if full:
-                return full
-            distinctive = [w for w in words if w not in _MATCH_GENERIC]
-            scored = [(sum(1 for w in distinctive if w in _words(i.title)), i) for i in open_items]
-            best = max((n for n, _ in scored), default=0)
-            return [i for n, i in scored if best > 0 and n == best]
+            def _candidate_search(search_q: str) -> List[PlanItem]:
+                if not search_q:
+                    return []
+                exact = [i for i in open_items if search_q in i.title.lower()]
+                if exact:
+                    return exact
+                words = [w for w in _words(search_q) if w not in _MATCH_STOPWORDS]
+                if not words:
+                    return []
+
+                def meta(it: PlanItem) -> List[str]:
+                    row = row_by_id.get(it.id)
+                    return _words(f"{getattr(row, 'category', '') or ''} {getattr(row, 'description', '') or ''}")
+
+                full = [i for i in open_items if all(w in _words(i.title) or w in meta(i) for w in words)]
+                if full:
+                    return full
+                distinctive = [w for w in words if w not in _MATCH_GENERIC]
+                scored = [(sum(1 for w in distinctive if w in _words(i.title)), i) for i in open_items]
+                best = max((n for n, _ in scored), default=0)
+                return [i for n, i in scored if best > 0 and n == best]
+
+            candidates = _candidate_search(q)
+            if not candidates and cleaned_q and cleaned_q != q:
+                candidates = _candidate_search(cleaned_q)
+
+            if q_time is not None and len(candidates) > 1:
+                target_h, target_m = q_time
+                time_matches = [
+                    it for it in candidates
+                    if it.start is not None and (
+                        ((it.start.astimezone(tz).hour, it.start.astimezone(tz).minute) == (target_h, target_m))
+                        or ((it.start.astimezone(tz).hour % 12, it.start.astimezone(tz).minute) == (target_h % 12, target_m))
+                    )
+                ]
+                if time_matches:
+                    return time_matches
+
+            return candidates
 
         # prioritised tasks resolve first so a blanket delay can never push them later
         prioritized_ids: set = set()
@@ -988,6 +1151,9 @@ class CalendarService:
                 found = match(op.task_query, task_id=op.task_id)
                 if len(found) == 1:
                     prioritized_ids.add(found[0].id)
+                elif len(found) > 1 and len({f.title.lower() for f in found}) < len(found):
+                    clar = _clarification_for_duplicates(op, found)
+                    return self._clarification_response(request, plan_id, before_schedule, tz_name, clar)
 
         for op in operations:
             if op.op == "delay_remaining_schedule":
@@ -1015,6 +1181,9 @@ class CalendarService:
                         note_missing(op.task_query)
                     continue
                 if len(found) > 1:
+                    if len({f.title.lower() for f in found}) < len(found):
+                        clar = _clarification_for_duplicates(op, found)
+                        return self._clarification_response(request, plan_id, before_schedule, tz_name, clar)
                     names = ", ".join(f"'{f.title}'" for f in found[:4])
                     ambiguous(op.task_query, f"More than one task matches ({names}). Say which one to redo.")
                     continue
@@ -1034,6 +1203,9 @@ class CalendarService:
                     note_missing(op.task_query)
                     continue
                 if len(found) > 1:
+                    if len({f.title.lower() for f in found}) < len(found):
+                        clar = _clarification_for_duplicates(op, found)
+                        return self._clarification_response(request, plan_id, before_schedule, tz_name, clar)
                     names = ", ".join(f"'{f.title}'" for f in found[:4])
                     ambiguous(op.task_query, f"More than one task matches '{op.task_query}' ({names}). Be more specific.")
                     continue
@@ -1157,6 +1329,9 @@ class CalendarService:
                     note_missing(op.task_query)
                     continue
                 if len(found) > 1:
+                    if len({f.title.lower() for f in found}) < len(found):
+                        clar = _clarification_for_duplicates(op, found)
+                        return self._clarification_response(request, plan_id, before_schedule, tz_name, clar)
                     names = ", ".join(f"'{f.title}'" for f in found[:4])
                     ambiguous(op.task_query, f"More than one task matches '{op.task_query}' ({names}). Be more specific.")
                     continue

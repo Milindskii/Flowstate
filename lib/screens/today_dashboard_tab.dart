@@ -855,7 +855,6 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
   ) {
     final completedCount = state.todaySnapshot?.completedCount ??
         state.tasks.where((t) => t.isCompleted).length;
-    final focusMinutes = completedCount * 25;
     final now = DateTime.now();
 
     final bedtimeHour = state.personalData.bedtimeHour; // e.g. 23.0 (11:00 PM)
@@ -978,8 +977,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                     border: Border.all(color: FlowColors.border(context)),
                   ),
                   child: Text(
-                    '$completedCount ${completedCount == 1 ? 'task' : 'tasks'} completed'
-                    '${focusMinutes > 0 ? ' · $focusMinutes min focused' : ''}',
+                    '$completedCount ${completedCount == 1 ? 'task' : 'tasks'} completed',
                     style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
                       fontWeight: FontWeight.w600,
                     ),
@@ -1145,7 +1143,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
     if (state.schedule.isEmpty) return const SizedBox.shrink();
 
     final completedIds = state.tasks.where((t) => t.isCompleted).map((t) => t.id).toSet();
-    final completedTitles = state.tasks.where((t) => t.isCompleted).map((t) => t.title.toLowerCase()).toSet();
+    final knownIds = state.tasks.map((t) => t.id).toSet();
 
     // Filter out completed tasks and the primary task so it is not repeated immediately
     final filteredSchedule = state.schedule.where((item) {
@@ -1153,13 +1151,16 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
       final isItemDone = item.isCompleted ||
           completedIds.contains(item.id) ||
           completedIds.contains(cleanId) ||
-          (item.taskId != null && completedIds.contains(item.taskId)) ||
-          completedTitles.contains(item.title.toLowerCase());
+          (item.taskId != null && completedIds.contains(item.taskId));
       if (isItemDone) return false;
 
       if (recommended == null) return true;
+      // The same task by id. A same-named task on another day (or later today) is a different task and stays listed.
+      final linkedId = item.taskId ?? cleanId;
+      final linksToAnyTask = knownIds.contains(linkedId) || knownIds.contains(item.id);
       return item.id != recommended.id &&
-          item.title.toLowerCase() != recommended.title.toLowerCase();
+          linkedId != recommended.id &&
+          (linksToAnyTask || item.title.toLowerCase() != recommended.title.toLowerCase());
     }).toList();
 
     if (filteredSchedule.isEmpty) {

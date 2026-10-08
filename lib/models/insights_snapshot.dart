@@ -76,6 +76,17 @@ class Learning {
 class InsightsSnapshot {
   static const int minReflections = 3;
   static const int minTimedCompletions = 3;
+
+  /// "You get the most done in the morning" is a claim about a habit, so it needs a habit's worth of evidence: enough
+  /// finished tasks, on enough different days, a leader that holds at least half of them, and a clear lead. (Six
+  /// tasks ticked off in one sitting is one busy morning, not a pattern.)
+  static const int minWindowCompletions = 8;
+  static const int minWindowDays = 3;
+  static const double minWindowShare = 0.5;
+  static const int minWindowLead = 2;
+
+  /// "Your focus is sharpest in..." compares parts of the day, so its reflections must span several days too.
+  static const int minFocusDays = 3;
   static const int minPlannedForFollowThrough = 5;
   static const int maxSeries = 12;
 
@@ -188,9 +199,12 @@ class InsightsSnapshot {
     required List<TaskReflection> reflections,
     required DateTime now,
   }) {
-    // One completion per task: the reflection's time wins over the task's.
+    // One completion per task: the reflection's time wins over the task's. `times` is WHEN it was finished (used for
+    // "when do you finish things"); `owned` is the day it BELONGED TO (planned day, like Calendar, Today and History),
+    // used for the per-day counts, so a task planned for tomorrow and done early is not today's finish.
     final byTask = {for (final r in reflections) r.taskId: r};
     final times = <String, DateTime>{};
+    final owned = <String, DateTime>{};
     var withoutTime = 0;
     for (final t in tasks.where((t) => t.isCompleted)) {
       final at = byTask[t.id]?.completedAt ?? t.completedAt;
@@ -198,10 +212,14 @@ class InsightsSnapshot {
         withoutTime++;
       } else {
         times[t.id] = at;
+        owned[t.id] = t.owningDate ?? _day(at);
       }
     }
     for (final r in reflections) {
-      times.putIfAbsent(r.taskId, () => r.completedAt);
+      if (!times.containsKey(r.taskId)) {
+        times[r.taskId] = r.completedAt;
+        owned[r.taskId] = _day(r.completedAt);
+      }
     }
 
     final today = _day(now);
@@ -210,19 +228,24 @@ class InsightsSnapshot {
     final weekCounts = List<int>.filled(7, 0);
     var lastWeek = 0;
     final windowCounts = {for (final w in DayWindow.values) w: 0};
-    for (final at in times.values) {
-      final d = _day(at);
+    for (final id in times.keys) {
+      final at = times[id]!;
+      final d = owned[id]!;
       final offset = d.difference(weekStart).inDays;
       if (offset >= 0 && offset < 7) weekCounts[offset]++;
       if (!d.isBefore(lastWeekStart) && d.isBefore(weekStart)) lastWeek++;
       windowCounts[DayWindowLabel.of(at)] = windowCounts[DayWindowLabel.of(at)]! + 1;
     }
 
+    // A time-of-day pattern: enough finishes, on enough different days, a leader with a real share and a clear lead.
+    final finishDays = {for (final at in times.values) _day(at)}.length;
     DayWindow? best;
-    if (times.length >= minTimedCompletions) {
+    if (times.length >= minWindowCompletions && finishDays >= minWindowDays) {
       final ranked = windowCounts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
-      if (ranked.first.value > ranked[1].value) best = ranked.first.key;
+      final top = ranked.first.value;
+      if (top / times.length >= minWindowShare && top - ranked[1].value >= minWindowLead) best = ranked.first.key;
     }
+    final reflectionDays = {for (final r in reflections) _day(r.completedAt)}.length;
 
     ReflectionAverages? averages;
     DayWindow? mostFocused;
@@ -245,7 +268,7 @@ class InsightsSnapshot {
           double mean(List<int> xs) => xs.reduce((x, y) => x + y) / xs.length;
           return mean(b.value).compareTo(mean(a.value));
         });
-      if (candidates.isNotEmpty) mostFocused = candidates.first.key;
+      if (candidates.isNotEmpty && reflectionDays >= minFocusDays) mostFocused = candidates.first.key;
 
       final ratios = [
         for (final r in reflections)
@@ -261,8 +284,9 @@ class InsightsSnapshot {
 
     final fortnight = List<int>.filled(14, 0);
     final hours = List<int>.filled(24, 0);
-    for (final at in times.values) {
-      final offset = _day(at).difference(lastWeekStart).inDays;
+    for (final id in times.keys) {
+      final at = times[id]!;
+      final offset = owned[id]!.difference(lastWeekStart).inDays;
       if (offset >= 0 && offset < 14) fortnight[offset]++;
       hours[at.hour]++;
     }
@@ -300,6 +324,8 @@ class InsightsSnapshot {
       windowCounts: windowCounts,
       best: best,
       timed: times.length,
+      finishDays: finishDays,
+      reflectionDays: reflectionDays,
       ratio: ratio,
       ratioCount: reflections.where((r) => (r.plannedMinutes ?? 0) > 0 && r.actualMinutes > 0).length,
       planned: planned,
@@ -353,6 +379,8 @@ class InsightsSnapshot {
     required Map<DayWindow, int> windowCounts,
     required DayWindow? best,
     required int timed,
+    required int finishDays,
+    required int reflectionDays,
     required double? ratio,
     required int ratioCount,
     required int planned,
@@ -364,12 +392,12 @@ class InsightsSnapshot {
       out.add(Learning(
         id: 'best_window',
         text: 'You get the most done in the ${best.label.toLowerCase()}.',
-        evidence: '${windowCounts[best]} of $timed finished tasks landed between ${best.range}.',
+        evidence: '${windowCounts[best]} of $timed finished tasks over $finishDays days landed between ${best.range}.',
       ));
     }
 
     // Focus by part of day, only as a comparison: two parts of the day with 2+ reflections each.
-    if (reflections.length >= minReflections) {
+    if (reflections.length >= minReflections && reflectionDays >= minFocusDays) {
       final byWindow = <DayWindow, List<int>>{};
       for (final r in reflections) {
         byWindow.putIfAbsent(DayWindowLabel.of(r.completedAt), () => []).add(r.focus);

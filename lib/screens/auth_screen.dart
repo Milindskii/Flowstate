@@ -15,6 +15,7 @@ import 'main_shell.dart';
 import 'legal/privacy_policy_screen.dart';
 import 'legal/terms_of_service_screen.dart';
 import 'legal/refund_policy_screen.dart';
+import '../utils/friendly_error.dart';
 
 /// Screen 2: Login & Sign Up
 /// Calm, alive, tactile entry screen with soft ambient breathing motion.
@@ -313,19 +314,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                 _finishAuthentication(appState);
                               }
                             } catch (e) {
-                              String msg = e.toString();
-                              if (msg.contains('Exception:')) {
-                                msg = msg.replaceAll('Exception:', '').trim();
-                              }
-                              if (msg.contains('Invalid login credentials') || msg.contains('invalid_credentials')) {
-                                msg = 'Invalid email or password. Please try again.';
-                              } else if (msg.contains('User already registered') || msg.contains('user_already_exists')) {
-                                msg = 'Account already exists. Please log in instead.';
-                              } else if (msg.contains('Email not confirmed') || msg.contains('email_not_confirmed')) {
-                                msg = 'Please check your email and verify your account before logging in.';
-                              } else if (msg.contains('over_email_send_rate_limit') || msg.contains('rate limit')) {
-                                msg = 'Email rate limit reached. Please wait a few minutes before trying again.';
-                              }
+                              final msg = friendlyAuthMessage(e);
                               setSheetState(() {
                                 isSubmitting = false;
                                 errorMessage = msg;
@@ -395,13 +384,9 @@ class _AuthScreenState extends State<AuthScreen> {
       }
     } catch (e) {
       if (mounted) {
-        String err = e.toString();
-        if (err.contains('Exception:')) {
-          err = err.replaceAll('Exception:', '').trim();
-        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Google Sign-In: $err'),
+            content: Text(friendlyAuthMessage(e, fallback: "Google sign-in didn't finish. Please try again.")),
             backgroundColor: const Color(0xFFB91C1C),
             duration: const Duration(seconds: 4),
           ),

@@ -380,3 +380,47 @@ async def test_build_my_day_is_refused_with_no_charge_while_a_replan_holds_the_a
             res = await _post(ac, headers, consume_shield=True)
     assert res.status_code == 409
     assert extract.call_count == 0 and _shields(uid) == COST
+
+
+# ── AI Replan Shield economy ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_ai_replan_charges_exactly_one_shield_on_success(monkeypatch):
+    from tests.test_replan_admission import AI_MESSAGE, Model, _body, op, ops, ref
+    from tests.test_replan_ai import _day
+
+    Model(monkeypatch, lambda p: ops(op("cancel_task", ref(p, "Going out"))))
+    uid, h = _poor_free_user(2)
+    _day(uid)
+    async with client() as ac:
+        r = await ac.post("/api/v1/calendar/replan", headers=h, json=_body(AI_MESSAGE))
+    assert r.status_code == 200, r.text
+    assert _shields(uid) == 1  # 2 - 1 = 1 shield
+
+
+@pytest.mark.asyncio
+async def test_ai_replan_refunds_shield_on_gemini_failure(monkeypatch):
+    from tests.test_replan_admission import AI_MESSAGE, Model, _body
+    from tests.test_replan_ai import _day
+
+    Model(monkeypatch, lambda p: "not json at all")
+    uid, h = _poor_free_user(2)
+    _day(uid)
+    async with client() as ac:
+        r = await ac.post("/api/v1/calendar/replan", headers=h, json=_body(AI_MESSAGE))
+    # Failure to understand refunds the reserved shield in full
+    assert _shields(uid) == 2
+
+
+@pytest.mark.asyncio
+async def test_ai_replan_without_enough_shields_never_calls_gemini(monkeypatch):
+    from tests.test_replan_admission import AI_MESSAGE, Model, _body
+    from tests.test_replan_ai import _day
+
+    model = Model(monkeypatch, lambda p: "should not be called")
+    uid, h = _poor_free_user(0)  # 0 shields available
+    _day(uid)
+    async with client() as ac:
+        r = await ac.post("/api/v1/calendar/replan", headers=h, json=_body(AI_MESSAGE))
+    assert len(model.calls) == 0, "Gemini must not be called when user cannot afford shield"
+    assert _shields(uid) == 0

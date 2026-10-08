@@ -66,14 +66,16 @@ class StopGeometry {
 
 /// The single source of truth for the Day Path route.
 ///
-/// ONE canonical route runs through every stop, top to bottom (the first task of the day at the top, the last at the
-/// bottom), sampled on a fixed grid. Its shape depends on the stops' positions only, never on their state:
+/// ONE canonical route runs top to bottom (the first task of the day at the top, the last at the bottom), sampled on
+/// a fixed grid. Stops never move: their places depend on the chronological index only. The road's shape is derived
+/// from the latest stop states every time they change:
 ///
-///   stop position  ->  route geometry  ->  segment state  ->  node state
+///   task states  ->  stop roles  ->  route points  ->  sampled geometry  ->  segment state / node state
 ///
+/// The road runs through each stop, except a skipped, missed or failed one: there it swings past the node (which stays
+/// at its timeline slot) and continues to the next stop. A stop recovered later is back on the road.
 /// The route is cut into segments, one per stop (the stretch arriving at it), and each segment gets a colour from
-/// its stop: green when walked, orange when the stop was recovered, blue otherwise. So a skipped, missed or
-/// recovered stop changes how it is drawn, but the road through it is the same line, still continuous.
+/// its stop: green when walked, orange when the stop was recovered, blue otherwise.
 ///
 /// Two geometries with the same [layoutSignature] can be morphed by interpolating [sampleXs].
 class DayRouteGeometry {
@@ -189,6 +191,22 @@ class DayRouteGeometry {
 
   static double _smooth(double u) => u * u * (3 - 2 * u);
 
+  /// Roles whose node the road does not run through.
+  static bool isDeviation(StopRouteRole role) =>
+      role == StopRouteRole.skipped || role == StopRouteRole.bypassed || role == StopRouteRole.failed;
+
+  /// How far (centre to centre) the road passes from a bypassed node: node radius + road half-width + air.
+  static const double detourDistance = nodeRadius + nearHalfWidth + 5;
+
+  /// The road's x beside a bypassed stop: away from its label, or to the other side when that would leave the screen.
+  static double _detourX(StopGeometry s, double width) {
+    final dir = s.labelOnLeft ? 1.0 : -1.0;
+    final preferred = s.center.dx + dir * detourDistance;
+    const margin = nearHalfWidth + 4;
+    if (preferred >= margin && preferred <= width - margin) return preferred;
+    return s.center.dx - dir * detourDistance;
+  }
+
   /// The colour of the road arriving at [s].
   static RouteSegmentState _stateInto(StopGeometry s, {required bool isFinish}) {
     if (isFinish) return RouteSegmentState.traveled; // the finish only exists once the day is done
@@ -242,22 +260,49 @@ class DayRouteGeometry {
       final role = roleOf(item);
       stops.add(place(i, item.id, role, role == StopRouteRole.onRoute && (item.isCompleted || item.id == nowItemId)));
     }
+    // The journey went past a skipped / missed / failed stop when something after it was walked: the road that
+    // arrives at it is then already travelled (the node keeps its own look, so nothing is faked as done).
+    var lastWalked = -1;
+    for (var i = 0; i < n; i++) {
+      if (stops[i].walked) lastWalked = i;
+    }
+    for (var i = 0; i < n; i++) {
+      final s = stops[i];
+      if (isDeviation(s.role) && i < lastWalked) {
+        stops[i] = StopGeometry(
+          id: s.id,
+          index: s.index,
+          center: s.center,
+          depth: s.depth,
+          scale: s.scale,
+          labelOnLeft: s.labelOnLeft,
+          role: s.role,
+          walked: true,
+        );
+      }
+    }
     final end = finish ? place(n, finishId, StopRouteRole.onRoute, true) : null;
 
-    // The route passes through EVERY point, whatever its state: smooth S-curves between consecutive points.
+    // The route is a function of the stops' STATES as well as their places: every point it passes through is the
+    // stop itself, except a stop the journey bypassed (skipped / missed / failed), where the road swings past the
+    // node on the side its label is not on. The node stays at its timeline slot; the road bends around it and
+    // carries on to the next stop. Between consecutive points: smooth S-curves.
     final route = [...stops, if (end != null) end];
+    final waypoints = <Offset>[
+      for (final s in route) isDeviation(s.role) ? Offset(_detourX(s, width), s.center.dy) : s.center,
+    ];
     double routeX(double y) {
-      if (y <= route.first.center.dy) return route.first.center.dx;
-      if (y >= route.last.center.dy) return route.last.center.dx;
-      for (var k = 0; k + 1 < route.length; k++) {
-        final a = route[k].center;
-        final b = route[k + 1].center;
+      if (y <= waypoints.first.dy) return waypoints.first.dx;
+      if (y >= waypoints.last.dy) return waypoints.last.dx;
+      for (var k = 0; k + 1 < waypoints.length; k++) {
+        final a = waypoints[k];
+        final b = waypoints[k + 1];
         if (y >= a.dy && y <= b.dy) {
           final u = (y - a.dy) / (b.dy - a.dy);
           return a.dx + (b.dx - a.dx) * _smooth(u);
         }
       }
-      return route.last.center.dx;
+      return waypoints.last.dx;
     }
 
     // Sample grid: the road begins at the first stop and ends at the last point (no lead-in, no tail).

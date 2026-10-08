@@ -10,6 +10,8 @@ import '../theme/flow_spacing.dart';
 import '../theme/flow_typography.dart';
 import 'task_date_time_pickers.dart';
 
+import '../services/smart_reminder_service.dart';
+
 /// Premium, intentional bottom sheet for rescheduling a task.
 /// Reuses [TaskDateTimePickers] to ensure complete visual and architectural consistency.
 class RescheduleTaskSheet extends StatefulWidget {
@@ -45,6 +47,7 @@ class _RescheduleTaskSheetState extends State<RescheduleTaskSheet> {
   @override
   void initState() {
     super.initState();
+    SmartReminderService.instance.activeViewingTaskId = widget.task.id;
     final now = DateTime.now();
     // Default date is today (or existing task date if in future)
     if (widget.task.scheduledStart != null) {
@@ -68,6 +71,14 @@ class _RescheduleTaskSheetState extends State<RescheduleTaskSheet> {
       _selectedDate = DateTime(now.year, now.month, now.day);
       _selectedTime = TaskDateTimePickers.parseTimeString(widget.task.scheduledTime);
     }
+  }
+
+  @override
+  void dispose() {
+    if (SmartReminderService.instance.activeViewingTaskId == widget.task.id) {
+      SmartReminderService.instance.activeViewingTaskId = null;
+    }
+    super.dispose();
   }
 
   bool get _isToday {
@@ -242,7 +253,7 @@ class _RescheduleTaskSheetState extends State<RescheduleTaskSheet> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${widget.task.durationMinutes} min · ${widget.task.difficulty.tagText} · Current: ${widget.task.deadline}',
+                    '${widget.task.durationMinutes} min · ${widget.task.difficulty.tagText} · Current: ${widget.task.deadlineLabel}',
                     style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
                   ),
                 ],

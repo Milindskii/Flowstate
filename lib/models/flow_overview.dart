@@ -67,6 +67,8 @@ class FlowOverview {
   final FlowCompanion companion;
   final FlowProfile profile;
   final FlowChallenge? activeChallenge;
+  /// This week's quests (priority tasks, focus sessions, focus minutes). Server-owned; reset every Monday.
+  final List<FlowChallenge> weeklyQuests;
   final List<FlowDailyQuest> dailyQuests;
   final List<FlowAchievement> achievements;
   final FlowWeeklyProgress? weeklyProgress;
@@ -88,6 +90,7 @@ class FlowOverview {
     required this.companion,
     required this.profile,
     this.activeChallenge,
+    this.weeklyQuests = const [],
     this.dailyQuests = const [],
     this.achievements = const [],
     this.weeklyProgress,
@@ -289,6 +292,7 @@ class FlowOverview {
     final leagueJson = json['league'] as Map<String, dynamic>? ?? {};
     final personalJson = json['personal_progress'] as Map<String, dynamic>? ?? {};
     final questsJson = json['daily_quests'] as List<dynamic>? ?? [];
+    final weeklyJson = json['weekly_quests'] as List<dynamic>? ?? [];
     final achsJson = json['achievements'] as List<dynamic>? ?? [];
     final wpJson = json['weekly_progress'] as Map<String, dynamic>?;
 
@@ -296,6 +300,7 @@ class FlowOverview {
       companion: FlowCompanion.fromJson(compJson),
       profile: FlowProfile.fromJson(profJson),
       activeChallenge: chalJson != null ? FlowChallenge.fromJson(chalJson) : null,
+      weeklyQuests: weeklyJson.whereType<Map<String, dynamic>>().map(FlowChallenge.fromJson).toList(),
       dailyQuests: questsJson
           .map((q) => FlowDailyQuest.fromJson(q as Map<String, dynamic>))
           .toList(),
@@ -326,6 +331,7 @@ class FlowOverview {
       'companion': companion.toJson(),
       'profile': profile.toJson(),
       if (activeChallenge != null) 'active_challenge': activeChallenge!.toJson(),
+      'weekly_quests': weeklyQuests.map((q) => q.toJson()).toList(),
       'daily_quests': dailyQuests.map((q) => q.toJson()).toList(),
       'achievements': achievements.map((a) => a.toJson()).toList(),
       if (weeklyProgress != null) 'weekly_progress': weeklyProgress!.toJson(),
@@ -353,6 +359,7 @@ class FlowOverview {
     FlowCompanion? companion,
     FlowProfile? profile,
     FlowChallenge? activeChallenge,
+    List<FlowChallenge>? weeklyQuests,
     List<FlowDailyQuest>? dailyQuests,
     List<FlowAchievement>? achievements,
     FlowWeeklyProgress? weeklyProgress,
@@ -374,6 +381,7 @@ class FlowOverview {
       companion: companion ?? this.companion,
       profile: profile ?? this.profile,
       activeChallenge: activeChallenge ?? this.activeChallenge,
+      weeklyQuests: weeklyQuests ?? this.weeklyQuests,
       dailyQuests: dailyQuests ?? this.dailyQuests,
       achievements: achievements ?? this.achievements,
       weeklyProgress: weeklyProgress ?? this.weeklyProgress,

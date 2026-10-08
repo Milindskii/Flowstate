@@ -262,7 +262,7 @@ class _RightNowTaskCardState extends State<RightNowTaskCard> {
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    widget.task.deadline,
+                                    widget.task.deadlineLabel,
                                     style: FlowTypography.bodySmall(color: FlowColors.textPrimaryOf(context)).copyWith(
                                       fontWeight: FontWeight.w700,
                                     ),

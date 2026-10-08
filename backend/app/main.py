@@ -9,7 +9,7 @@ from .db.session import get_db, Base, engine
 # Ensure all models are registered with Base metadata
 from . import models  # noqa: F401
 
-from .api.routes import auth, tasks, today, flow, admin, readiness, personalization, insights, ai, subscription, calendar
+from .api.routes import auth, tasks, today, flow, admin, readiness, personalization, insights, ai, subscription, calendar, routines
 from .core.security_headers import SecurityHeadersMiddleware
 from .core.rate_limit import RateLimitMiddleware
 
@@ -123,6 +123,7 @@ app.include_router(ai.router, prefix=settings.API_V1_STR)
 app.add_exception_handler(ai.PlanFailure, ai.plan_failure_handler)
 app.include_router(subscription.router, prefix=settings.API_V1_STR)
 app.include_router(calendar.router, prefix=settings.API_V1_STR)
+app.include_router(routines.router, prefix=settings.API_V1_STR)
 
 @app.get("/health", tags=["Health"])
 def health_check():

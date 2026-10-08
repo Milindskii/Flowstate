@@ -11,6 +11,7 @@ import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_spacing.dart';
 import '../theme/flow_typography.dart';
+import '../services/smart_reminder_service.dart';
 import 'brain_dump_sheet.dart';
 
 /// Add Task Modal with real calendar date & clock time selection,
@@ -41,6 +42,7 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
   @override
   void initState() {
     super.initState();
+    SmartReminderService.instance.isCreatingTask = true;
     _selectedDate = widget.initialDate;
     if (_selectedDate != null) {
       _selectedDeadline = TaskDateTimePickers.formatDateDisplay(_selectedDate);
@@ -199,6 +201,7 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
 
   @override
   void dispose() {
+    SmartReminderService.instance.isCreatingTask = false;
     _titleController.dispose();
     super.dispose();
   }
@@ -482,13 +485,15 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
             }
           });
         },
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 40),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          constraints: const BoxConstraints(minHeight: 38),
           alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
           decoration: BoxDecoration(
             color: isSelected
-                ? FlowColors.accentCyan.withValues(alpha: 0.18)
+                ? FlowColors.accentCyan.withValues(alpha: isDark ? 0.22 : 0.12)
                 : (isDark
                     ? FlowColors.surfaceContainerDark
                     : FlowColors.surfaceContainerLight),
@@ -497,17 +502,41 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
               color: isSelected
                   ? FlowColors.accentCyan
                   : FlowColors.border(context),
-              width: isSelected ? 1.2 : 0.8,
+              width: isSelected ? 1.4 : 0.8,
             ),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: FlowColors.accentCyan.withValues(alpha: isDark ? 0.28 : 0.18),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
           ),
-          child: Text(
-            label,
-            style: FlowTypography.labelSmall(
-              color: isSelected
-                  ? FlowColors.accentCyan
-                  : FlowColors.textSecondaryOf(context),
-            ).copyWith(
-                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isSelected) ...[
+                const Icon(
+                  Icons.check_rounded,
+                  size: 13,
+                  color: FlowColors.accentCyan,
+                ),
+                const SizedBox(width: 5),
+              ],
+              Text(
+                label,
+                style: FlowTypography.labelSmall(
+                  color: isSelected
+                      ? FlowColors.accentCyan
+                      : FlowColors.textSecondaryOf(context),
+                ).copyWith(
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ],
           ),
         ),
       ),

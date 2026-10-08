@@ -87,7 +87,7 @@ class RecommendedTaskCard extends StatelessWidget {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        '${task.durationMinutes} min • ${task.deadline}',
+                        '${task.durationMinutes} min • ${task.deadlineLabel}',
                         style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,

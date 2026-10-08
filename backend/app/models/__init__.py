@@ -1,6 +1,7 @@
 from .user import User
 from .user_preferences import UserPreferences
 from .task import Task, TaskStatus, TaskType, TaskDifficulty, TaskPriority, TaskSource
+from .routine import Routine
 from .task_performance import TaskPerformance
 from .readiness_profile import ReadinessProfile
 from .readiness_observation import ReadinessObservation, ObservationSource
@@ -22,6 +23,7 @@ from .flow_progression import (
 from .ai_usage import AIUsageRecord, AIPlanningRequestCache, AIPlanningAttempt, AIRequest, AIUsagePeriod, RateLimitWindow
 
 __all__ = [
+    "Routine",
     "User",
     "UserPreferences",
     "Task",

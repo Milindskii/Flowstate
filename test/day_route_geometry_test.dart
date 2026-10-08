@@ -52,6 +52,27 @@ void expectSameRoad(DayRouteGeometry g, DayRouteGeometry reference) {
   }
 }
 
+/// A bypassed stop (skipped / missed / failed) stays at its slot while the road swings past it and carries on.
+void expectBypassed(DayRouteGeometry g, String id) {
+  final s = g.stopById(id);
+  expect(g.distanceToRoute(s.center), greaterThan(DayRouteGeometry.nodeRadius + 10), reason: '$id: the road never runs under the node');
+  expect((g.routeXAt(s.center.dy) - s.center.dx).abs(), closeTo(DayRouteGeometry.detourDistance, 0.5), reason: '$id: it swings past');
+}
+
+/// Every stop except [bypassed] is on the road, and every stop is exactly where it is without any state.
+void expectBendsOnlyAt(DayRouteGeometry g, DayRouteGeometry planned, Set<String> bypassed) {
+  expect(g.layoutSignature, planned.layoutSignature);
+  for (var i = 0; i < g.stops.length; i++) {
+    final s = g.stops[i];
+    expect(s.center, planned.stops[i].center, reason: '${s.id} keeps its timeline slot');
+    if (bypassed.contains(s.id)) {
+      expectBypassed(g, s.id);
+    } else {
+      expect(g.distanceToRoute(s.center), lessThan(0.5), reason: '${s.id} is on the route');
+    }
+  }
+}
+
 void main() {
   test('stops run chronologically from the top (first task) down to the bottom (last task)', () {
     final g = geo([item('a'), item('b'), item('c')]);
@@ -86,30 +107,33 @@ void main() {
     expect(allAre(between(g, c, d), RouteSegmentState.ahead), isTrue, reason: 'beyond NOW is still ahead');
   });
 
-  test('a skipped stop changes its node only: the road is the same line and stays blue through it', () {
+  test('a skipped stop stays at its slot and the road swings around it, continuing to the next stop', () {
     final all = geo([item('a'), item('b'), item('c'), item('d')]);
     final g = geo([item('a'), item('b', skipped: true), item('c'), item('d')]);
     final a = g.stopById('a'), b = g.stopById('b'), c = g.stopById('c'), d = g.stopById('d');
     expect(b.role, StopRouteRole.skipped);
-    expectSameRoad(g, all);
+    expectBendsOnlyAt(g, all, {'b'});
+    expect(g.sampleXs, isNot(all.sampleXs), reason: 'the route model is regenerated from the states');
     expect(allAre(between(g, a, b), RouteSegmentState.ahead), isTrue, reason: 'blue runs INTO the skipped stop');
     expect(allAre(between(g, b, c), RouteSegmentState.ahead), isTrue, reason: 'and on out of it');
     expect(allAre(between(g, c, d), RouteSegmentState.ahead), isTrue);
   });
 
-  test('skipped between two done stops: blue into it (it was not walked), green after it', () {
+  test('skipped between two done stops: the journey went past it, so the road into it is walked too', () {
     final g = geo([item('a', completed: true), item('b', skipped: true), item('c', completed: true), item('d')], now: 'd');
     final a = g.stopById('a'), b = g.stopById('b'), c = g.stopById('c'), d = g.stopById('d');
-    expect(allAre(between(g, a, b), RouteSegmentState.ahead), isTrue);
+    expect(b.walked, isTrue, reason: 'c was done after it');
+    expect(b.role, StopRouteRole.skipped, reason: 'but the node is still a skip, never a completion');
+    expect(allAre(between(g, a, b), RouteSegmentState.traveled), isTrue);
     expect(allAre(between(g, b, c), RouteSegmentState.traveled), isTrue);
     expect(allAre(between(g, c, d), RouteSegmentState.traveled), isTrue);
-    expectSameRoad(g, geo([item('a'), item('b'), item('c'), item('d')]));
+    expectBendsOnlyAt(g, geo([item('a'), item('b'), item('c'), item('d')]), {'b'});
   });
 
-  test('a deferred history node is a skipped node on the same road', () {
+  test('a deferred history node is a skipped node: the road goes around it', () {
     final g = geo([item('a'), item('h', deviation: 'deferred'), item('c')]);
     expect(g.stopById('h').role, StopRouteRole.skipped);
-    expectSameRoad(g, geo([item('a'), item('h'), item('c')]));
+    expectBendsOnlyAt(g, geo([item('a'), item('h'), item('c')]), {'h'});
   });
 
   test('a recovered stop: the orange state follows the SAME winding route, no separate line', () {
@@ -135,20 +159,20 @@ void main() {
     expect(states, containsAll([RouteSegmentState.traveled, RouteSegmentState.recovered, RouteSegmentState.ahead]));
   });
 
-  test('a missed stop stays at its planned position and on the road; only its node says it was missed', () {
+  test('a missed stop stays at its planned position; the road bends around it to the next stop', () {
     final all = geo([item('a'), item('m'), item('c')]);
     final g = geo([item('a'), item('m', missed: true), item('c')]);
     final m = g.stopById('m');
     expect(m.role, StopRouteRole.bypassed);
     expect(g.stops.map((s) => s.id).toList(), ['a', 'm', 'c'], reason: 'chronological order is preserved');
     expect(m.center, all.stopById('m').center, reason: 'the node does not move');
-    expectSameRoad(g, all);
+    expectBendsOnlyAt(g, all, {'m'});
   });
 
-  test('failed is a red node on the same road (red is reserved for true failure)', () {
+  test('failed is a red node the road goes around (red is reserved for true failure)', () {
     final g = geo([item('a'), item('f', failed: true), item('c')]);
     expect(g.stopById('f').role, StopRouteRole.failed);
-    expectSameRoad(g, geo([item('a'), item('f'), item('c')]));
+    expectBendsOnlyAt(g, geo([item('a'), item('f'), item('c')]), {'f'});
   });
 
   test('a commitment is a normal stop on the route', () {
@@ -156,14 +180,14 @@ void main() {
     expect(g.stopById('go').role, StopRouteRole.onRoute);
   });
 
-  test('skipping the first and the last stop still leaves one continuous road through them', () {
+  test('skipping the first and the last stop still leaves one continuous road from the first to the last', () {
     final g = geo([item('a', skipped: true), item('b'), item('c', skipped: true)]);
-    expectSameRoad(g, geo([item('a'), item('b'), item('c')]));
+    expectBendsOnlyAt(g, geo([item('a'), item('b'), item('c')]), {'a', 'c'});
     expect(g.sampleYs.first, g.stopById('a').center.dy);
     expect(g.sampleYs.last, g.stopById('c').center.dy);
   });
 
-  test('every state at once: one continuous, gap-free route through all stops', () {
+  test('every state at once: one continuous, gap-free route; only bypassed stops are skirted', () {
     final items = [
       item('a', completed: true),
       item('b', skipped: true),
@@ -173,7 +197,7 @@ void main() {
       item('f'),
     ];
     final g = geo(items, now: 'f');
-    expectSameRoad(g, geo([for (final i in items) item(i.id)]));
+    expectBendsOnlyAt(g, geo([for (final i in items) item(i.id)]), {'b', 'd', 'e'});
     for (var i = 0; i + 1 < g.sampleYs.length; i++) {
       expect(g.sampleYs[i + 1] - g.sampleYs[i], lessThanOrEqualTo(DayRouteGeometry.sampleStep + 0.01), reason: 'no gap');
     }
@@ -211,7 +235,7 @@ void main() {
     expect(a.sampleXs.length, b.sampleXs.length);
   });
 
-  test('skipping or recovering a stop never moves any stop or the road: same stops, same line, new colours', () {
+  test('skipping moves the road (not the stops); recovering keeps the line and changes colours', () {
     final base = geo([item('a'), item('b'), item('c'), item('d')]);
     final skipped = geo([item('a', completed: true), item('b', skipped: true), item('c'), item('d')]);
     final recovered = geo([item('a', completed: true), item('b', completed: true, recovered: true), item('c'), item('d')]);
@@ -220,9 +244,10 @@ void main() {
         expect(other.stops[i].center, base.stops[i].center);
         expect(other.stops[i].labelOnLeft, base.stops[i].labelOnLeft);
       }
-      expect(other.sampleXs, base.sampleXs, reason: 'the line itself is identical');
-      expect(base.sameRoute(other), isFalse, reason: 'only the colours / node state differ');
+      expect(base.sameRoute(other), isFalse);
     }
+    expect(recovered.sampleXs, base.sampleXs, reason: 'a recovered stop is on the road: the line is identical');
+    expect(skipped.sampleXs, isNot(base.sampleXs), reason: 'a skipped stop bends the line');
   });
 
   test('the road begins at the first stop and ends at the last stop', () {
@@ -270,9 +295,10 @@ void main() {
       final items = [item('a', completed: true), item('b', skipped: true), item('c', completed: true, recovered: true)];
       final g = geo(items, finish: true);
       expect(g.distanceToRoute(g.finish!.center), lessThan(0.5));
-      for (final s in g.stops) {
+      for (final s in g.stops.where((s) => s.id != 'b')) {
         expect(g.distanceToRoute(s.center), lessThan(0.5));
       }
+      expectBypassed(g, 'b');
     });
   });
 }

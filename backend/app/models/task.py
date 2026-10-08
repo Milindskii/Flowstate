@@ -47,7 +47,11 @@ class TaskSource(str, enum.Enum):
 
 class Task(Base):
     __tablename__ = "tasks"
-    __table_args__ = (Index("ix_tasks_user_scheduled_start", "user_id", "scheduled_start"),)
+    __table_args__ = (
+        Index("ix_tasks_user_scheduled_start", "user_id", "scheduled_start"),
+        # One occurrence per routine per local day (NULLs are distinct, so ordinary tasks are unaffected).
+        Index("uq_tasks_routine_occurrence", "routine_id", "routine_date", unique=True),
+    )
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -87,6 +91,10 @@ class Task(Base):
     preferred_start = Column(UTCDateTime, nullable=True)
     preferred_window_start = Column(UTCDateTime, nullable=True)
     preferred_window_end = Column(UTCDateTime, nullable=True)
+
+    # Set only on tasks materialized from a Routine template (migration 015).
+    routine_id = Column(String, ForeignKey("routines.id", ondelete="SET NULL"), nullable=True)
+    routine_date = Column(Date, nullable=True)
 
     status = Column(SQLEnum(TaskStatus), nullable=False, default=TaskStatus.todo, index=True)
     source = Column(SQLEnum(TaskSource), nullable=False, default=TaskSource.manual)

@@ -136,12 +136,13 @@ void main() {
       expect(find.byKey(const Key('path_skipped_item-b')), findsOneWidget);
       expect(find.textContaining('Skipped'), findsOneWidget);
 
-      // The road is continuous: it runs through B (and A, C, D) and stays the normal blue, not removed or bent away.
+      // The road is continuous and stays the normal blue; it runs through A, C, D and swings around the skipped B.
       final g = paintedGeometry(tester);
       expect(g.stopById('item-b').role, StopRouteRole.skipped);
-      for (final id in ['item-a', 'item-b', 'item-c', 'item-d']) {
+      for (final id in ['item-a', 'item-c', 'item-d']) {
         expect(g.distanceToRoute(g.stopById(id).center), lessThan(0.5));
       }
+      expect(g.distanceToRoute(g.stopById('item-b').center), greaterThan(DayRouteGeometry.nodeRadius + 10));
       expect(g.sampleStates.every((s) => s == RouteSegmentState.ahead), isTrue, reason: 'nothing walked: all blue');
     });
 
@@ -198,10 +199,10 @@ void main() {
       expect(find.byKey(const Key('path_check_item-a')), findsOneWidget);
       expect(find.byKey(const Key('path_skipped_item-b')), findsOneWidget);
       expect(find.byKey(const Key('path_check_item-c')), findsOneWidget);
-      // A -> B is still the blue road into the skipped stop; B -> C was walked (green); beyond C it is blue.
+      // C was done after B was skipped: the journey went past B, so A -> B -> C is walked (green); beyond C it is blue.
       final g = paintedGeometry(tester);
       expect(g.stopById('item-b').role, StopRouteRole.skipped);
-      expect(traveledBetween(g, 'item-a', 'item-b'), isFalse);
+      expect(traveledBetween(g, 'item-a', 'item-b'), isTrue);
       expect(traveledBetween(g, 'item-b', 'item-c'), isTrue);
       expect(traveledBetween(g, 'item-c', 'item-d'), isFalse);
     });

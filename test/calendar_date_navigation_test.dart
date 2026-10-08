@@ -1599,7 +1599,7 @@ void main() {
       ]);
       provider.recordTaskFeedback(
         taskId: 'gym', actualMinutes: 50, feeling: 3, energyScore: 4, focusScore: 3, difficultyScore: 2, distractionScore: 2,
-        completedAt: DateTime(2026, 10, 3, 8, 0),
+        completedAt: DateTime(2026, 10, 3, 8, 0), durationMeasured: true,
       );
       await tester.pumpAndSettle();
       expect(find.text('Done 8:00 AM · 50 min'), findsOneWidget);

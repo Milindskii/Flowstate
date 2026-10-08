@@ -1,7 +1,9 @@
+import '../components/noya_notice.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../utils/single_flight.dart';
 import '../models/flow_companion.dart';
 import '../models/flow_profile.dart';
 import '../models/flow_challenge.dart';
@@ -11,11 +13,15 @@ import '../models/flow_overview.dart';
 import '../services/flow_service.dart';
 import '../services/api_service.dart';
 import '../components/companion/flow_companion_animation_controller.dart';
+import '../utils/friendly_error.dart';
 
 /// Central state provider for the Flow Companion Simulator & Progression Economy.
 /// Coordinates UI state, the server-owned focus session lifecycle, and the
 /// decoupled animation controller.
 class FlowProvider extends ChangeNotifier {
+  /// Rapid repeated taps on the same action become ONE request (a second call shares the first one's result).
+  final SingleFlight _flight = SingleFlight();
+
   final FlowService flowService;
   final ApiService? apiService;
   final FlowCompanionAnimationController animController = FlowCompanionAnimationController();
@@ -93,6 +99,13 @@ class FlowProvider extends ChangeNotifier {
     _overview = _overview.copyWith(
       dailyQuests: updatedQuests,
       totalSessionsCompleted: _overview.totalSessionsCompleted + 1,
+      weeklyQuests: _overview.weeklyQuests.map((w) {
+        if (isPriority && w.challengeType == 'priority_tasks' && !w.isCompleted) {
+          final n = (w.currentCount + 1).clamp(0, w.targetCount);
+          return w.copyWith(currentCount: n, isCompleted: n >= w.targetCount);
+        }
+        return w;
+      }).toList(),
       activeChallenge: (isPriority &&
               _overview.activeChallenge != null &&
               !_overview.activeChallenge!.isCompleted)
@@ -120,6 +133,11 @@ class FlowProvider extends ChangeNotifier {
 
     notifyListeners();
   }
+
+  /// Quests that are finished but not yet claimed (daily + weekly).
+  int _claimableQuestCount() =>
+      _overview.dailyQuests.where((q) => q.isCompleted && !q.isClaimed).length +
+      _overview.weeklyQuests.where((q) => q.isCompleted && !q.isClaimed).length;
 
   Future<void> loadOverview() async {
     if (_mockMode) return;
@@ -159,7 +177,7 @@ class FlowProvider extends ChangeNotifier {
     } on ApiException catch (e) {
       _errorMessage = e.statusCode == 401
           ? 'Authentication required. Please sign in.'
-          : (e.message.isNotEmpty ? e.message : 'Failed to sync progression state.');
+          : friendlyActionError(e, fallback: "Your progress couldn't sync right now. Pull down to try again.");
       _isLoading = false;
       notifyListeners();
     } catch (e) {
@@ -182,7 +200,10 @@ class FlowProvider extends ChangeNotifier {
   }
 
   /// Initiates server-owned focus session
-  Future<void> startSession({String? taskId, String? taskTitle}) async {
+  Future<void> startSession({String? taskId, String? taskTitle}) =>
+      _flight.run('start-session', () => _startSession(taskId: taskId, taskTitle: taskTitle));
+
+  Future<void> _startSession({String? taskId, String? taskTitle}) async {
     try {
       final sessionId = await flowService.startFocusSession(taskId: taskId);
       _activeSessionId = sessionId;
@@ -211,6 +232,16 @@ class FlowProvider extends ChangeNotifier {
 
   /// Completes focus session with server-calculated duration and atomic rewards
   Future<Map<String, dynamic>> completeSession({
+    bool taskCompleted = true,
+    int? feelingScore,
+    String? idempotencyKey,
+  }) =>
+      _flight.run(
+        'complete-session',
+        () => _completeSession(taskCompleted: taskCompleted, feelingScore: feelingScore, idempotencyKey: idempotencyKey),
+      );
+
+  Future<Map<String, dynamic>> _completeSession({
     bool taskCompleted = true,
     int? feelingScore,
     String? idempotencyKey,
@@ -243,7 +274,15 @@ class FlowProvider extends ChangeNotifier {
         message: 'Session Complete! +${res['xp_awarded']} XP · +${res['flow_awarded']} Flow',
       );
 
+      final before = _claimableQuestCount();
       await loadOverview();
+      final milestone = milestoneFromSession(res);
+      if (milestone != null) {
+        NoyaNoticeCenter.instance.show(milestone);
+      } else if (_claimableQuestCount() > before) {
+        NoyaNoticeCenter.instance.show(const NoyaNotice(NoticeKind.questComplete, 'A quest is ready to claim.',
+            title: 'Quest complete'));
+      }
       return res;
     } catch (e) {
       _activeSessionId = null;
@@ -271,13 +310,16 @@ class FlowProvider extends ChangeNotifier {
   }
 
   /// Triggers companion stage evolution
-  Future<bool> evolveCompanion() async {
+  Future<bool> evolveCompanion() => _flight.run('evolve', _evolveCompanion);
+
+  Future<bool> _evolveCompanion() async {
     try {
       final updated = await flowService.evolveCompanion();
       _overview = FlowOverview(
         companion: updated,
         profile: _overview.profile,
         activeChallenge: _overview.activeChallenge,
+        weeklyQuests: _overview.weeklyQuests,
         dailyQuests: _overview.dailyQuests,
         achievements: _overview.achievements,
         leagueTier: _overview.leagueTier,
@@ -301,7 +343,10 @@ class FlowProvider extends ChangeNotifier {
   }
 
   /// Claims weekly challenge reward
-  Future<bool> claimChallenge(String challengeId) async {
+  Future<bool> claimChallenge(String challengeId) =>
+      _flight.run('claim-weekly-$challengeId', () => _claimChallenge(challengeId));
+
+  Future<bool> _claimChallenge(String challengeId) async {
     try {
       await flowService.claimChallenge(challengeId);
       await loadOverview();
@@ -312,7 +357,10 @@ class FlowProvider extends ChangeNotifier {
   }
 
   /// Claims daily quest reward
-  Future<bool> claimDailyQuest(String questId) async {
+  Future<bool> claimDailyQuest(String questId) =>
+      _flight.run('claim-daily-$questId', () => _claimDailyQuest(questId));
+
+  Future<bool> _claimDailyQuest(String questId) async {
     try {
       await flowService.claimDailyQuest(questId);
       await loadOverview();
@@ -330,6 +378,7 @@ class FlowProvider extends ChangeNotifier {
         companion: updated,
         profile: _overview.profile,
         activeChallenge: _overview.activeChallenge,
+        weeklyQuests: _overview.weeklyQuests,
         dailyQuests: _overview.dailyQuests,
         achievements: _overview.achievements,
         weeklyProgress: _overview.weeklyProgress,
@@ -356,7 +405,10 @@ class FlowProvider extends ChangeNotifier {
   /// Purchase a companion from the Flow Shop using Flow Points.
   /// Returns a result map with keys: species, name, flow_spent, new_balance, message.
   /// Throws on error so the UI can display the specific reason.
-  Future<Map<String, dynamic>> purchaseCompanion(String species) async {
+  Future<Map<String, dynamic>> purchaseCompanion(String species) =>
+      _flight.run('purchase-$species', () => _purchaseCompanion(species));
+
+  Future<Map<String, dynamic>> _purchaseCompanion(String species) async {
     final result = await flowService.purchaseCompanion(species);
     // Reload overview so balance and shop ownership update atomically
     await loadOverview();
@@ -367,7 +419,9 @@ class FlowProvider extends ChangeNotifier {
   }
 
   /// User-confirmed streak shield activation
-  Future<bool> useStreakShield() async {
+  Future<bool> useStreakShield() => _flight.run('use-shield', _useStreakShield);
+
+  Future<bool> _useStreakShield() async {
     try {
       final res = await flowService.useStreakShield();
       if (res['success'] == true) {

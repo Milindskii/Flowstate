@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../components/routines_sheet.dart';
 import '../providers/app_state_provider.dart';
 import '../providers/flow_provider.dart';
 import '../providers/theme_provider.dart';
@@ -328,6 +329,14 @@ class ProfileSettingsTab extends StatelessWidget {
                 subtitle:
                     '${state.personalData.wakeTime} wake up • ${_fmtHours(state.personalData.sleepHours)} hrs',
                 onTap: () => _showSleepSheet(context, state),
+                accent: accent,
+              ),
+              _buildSettingTile(
+                context: context,
+                icon: Icons.repeat_rounded,
+                title: 'Routines',
+                subtitle: 'Gym, classes and habits Noya plans around',
+                onTap: () => showRoutinesSheet(context, state.apiService),
                 accent: accent,
               ),
               _buildSettingTile(

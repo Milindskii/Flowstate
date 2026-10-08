@@ -114,6 +114,7 @@ class FlowOverviewResponse(BaseModel):
     companion: FlowCompanionResponse
     profile: FlowProfileResponse
     active_challenge: Optional[FlowChallengeResponse] = None
+    weekly_quests: List[FlowChallengeResponse] = []
     daily_quests: List[FlowDailyQuestResponse] = []
     achievements: List[FlowAchievementResponse] = []
     league: LeagueCohortResponse

@@ -178,6 +178,34 @@ void main() {
       }
     });
 
+    testWidgets('card controls: an Edit pencil and a dustbin, same size, same row, no text labels', (tester) async {
+      await _openPreview(tester, _PlanApi());
+      for (final id in ['c_a', 'c_b', 'c_c']) {
+        final edit = find.byKey(Key('preview_edit_$id'));
+        final remove = find.byKey(Key('preview_remove_$id'));
+        expect(edit, findsOneWidget);
+        expect(tester.getSize(edit), tester.getSize(remove), reason: 'matching targets');
+        expect(tester.getSize(edit).height, greaterThanOrEqualTo(44));
+        expect(tester.getCenter(edit).dy, tester.getCenter(remove).dy, reason: 'aligned on one line');
+        expect(tester.getTopRight(remove).dx, greaterThan(tester.getTopRight(edit).dx), reason: 'dustbin sits at the far right');
+        expect(find.descendant(of: edit, matching: find.byIcon(Icons.edit_outlined)), findsOneWidget);
+        expect(find.descendant(of: remove, matching: find.byIcon(Icons.delete_outline_rounded)), findsOneWidget);
+        expect(find.descendant(of: edit, matching: find.byType(Text)), findsNothing, reason: 'icon only');
+        expect(find.descendant(of: remove, matching: find.byType(Text)), findsNothing, reason: 'icon only');
+      }
+      expect(find.text('Remove'), findsNothing);
+      expect(find.byTooltip('Edit task'), findsNWidgets(3));
+      expect(find.byTooltip('Delete task'), findsNWidgets(3));
+    });
+
+    testWidgets('the pencil opens the editor for that card', (tester) async {
+      await _openPreview(tester, _PlanApi());
+      await tester.tap(find.byKey(const Key('preview_edit_c_b')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('structured_task_editor')), findsOneWidget);
+      expect(find.text('2 of 3'), findsOneWidget);
+    });
+
     testWidgets('remove one task: the others stay, the removed one is never saved, the chain is repaired',
         (tester) async {
       final api = _PlanApi();

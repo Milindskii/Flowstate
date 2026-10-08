@@ -8,6 +8,7 @@ Central, authoritative source of truth for:
 - Flow Shield thresholds and inventory caps
 - Companion species catalog
 """
+import os
 from typing import Tuple, Dict, Any, List
 
 # Focus time & XP conversion
@@ -41,6 +42,39 @@ INITIAL_SHIELDS: int = 2
 # Server-authoritative (ai_gateway charges exactly this many in one conditional UPDATE); /ai/status reports it
 # so the app never hard-codes the price.
 SHIELD_COST_BUILD_MY_DAY: int = 2
+# Shields one AI Replan costs when the deterministic rules cannot read the request. Rules-only replan costs 0 Shields.
+SHIELD_COST_REPLAN: int = 1
+
+# Build My Day input limit. ONE value, server-authoritative: /ai/status reports it, the app counter shows it, and
+# /ai/plan enforces it before any Shield is reserved or any model is called. PROVISIONAL until
+# the paced benchmark (backend/scripts/bmd_limit_benchmark.py, docs/superpowers/plans/bmd-limit-benchmark-run2.md):
+# 150 words was clean, 250-350 had tail-latency risk, 450 timed out. 200 sits under the observed knee with headroom.
+# Words are what the user sees; the character cap is the backstop for text without spaces (CJK, one giant token).
+BMD_MAX_INPUT_WORDS: int = int(os.getenv("BMD_MAX_INPUT_WORDS", "200"))  # env-overridable; /ai/status tells the app
+BMD_MAX_INPUT_CHARS: int = BMD_MAX_INPUT_WORDS * 8
+
+
+def input_limit_for(*, is_pro: bool = False) -> int:
+    """Words one Build My Day dump may hold. Basic and Pro share a limit for now; a Pro tier changes only this."""
+    return BMD_MAX_INPUT_WORDS
+
+# Flowstate Pro pricing. The ONLY place the price lives: /subscription/plans serves it, the app displays what it
+# gets (its offline fallback mirrors these numbers in lib/models/pricing_config.dart). Entitlement is never derived
+# from this file or from anything the client says; it comes from the server-verified subscription record.
+PRO_MONTHLY_PRICE_INR: int = 89
+PRO_PRICING_DAYS_PER_MONTH: int = 30   # the daily figure is the monthly price spread over a 30-day month
+
+
+def pro_daily_price_display() -> str:
+    """"₹2.97/day": monthly price / 30, rounded half-up to the paisa. Always shown WITH the monthly billing line."""
+    from decimal import Decimal, ROUND_HALF_UP
+    daily = (Decimal(PRO_MONTHLY_PRICE_INR) / Decimal(PRO_PRICING_DAYS_PER_MONTH)).quantize(Decimal("0.01"), ROUND_HALF_UP)
+    return f"₹{daily}/day"
+
+
+def pro_billing_disclosure() -> str:
+    return f"₹{PRO_MONTHLY_PRICE_INR} billed monthly"
+
 
 # Level Progression Table (Deterministic XP thresholds)
 # Level 1: 0, Level 2: 60, Level 3: 150, Level 4: 270, Level 5: 420 (Young evolution)
@@ -80,25 +114,26 @@ def get_cumulative_xp_for_level(level: int) -> int:
         last += step
     return last
 
+MAX_LEVEL: int = 100  # Level 1 is Baby Noya, level 100 is Super Noya. XP past the cap is kept but never levels further.
+
+
 def get_level_for_xp(xp: int) -> Tuple[int, int, int]:
     """
     Given total cumulative XP, returns:
     (current_level, xp_into_current_level, xp_needed_for_next_level)
+
+    At MAX_LEVEL there is no next level: xp_needed_for_next_level is 0 (the app shows a full bar).
     """
     if xp < 0:
         xp = 0
     level = 1
-    while True:
+    while level < MAX_LEVEL:
         next_xp = get_cumulative_xp_for_level(level + 1)
         if xp < next_xp:
             current_level_base = get_cumulative_xp_for_level(level)
-            xp_into_level = xp - current_level_base
-            xp_needed = next_xp - current_level_base
-            return level, xp_into_level, xp_needed
+            return level, xp - current_level_base, next_xp - current_level_base
         level += 1
-        if level >= 100:  # Safety ceiling
-            current_level_base = get_cumulative_xp_for_level(level)
-            return level, xp - current_level_base, 1000
+    return MAX_LEVEL, xp - get_cumulative_xp_for_level(MAX_LEVEL), 0
 
 # Stages
 STAGE_BABY = "Baby"
@@ -106,6 +141,8 @@ STAGE_YOUNG = "Young"
 STAGE_EXPLORER = "Explorer"
 STAGE_ADULT = "Adult"
 STAGE_EVOLVED = "Evolved"
+STAGE_SUPER = "Super"  # level 100: Super Noya
+STAGES = ["Baby", "Young", "Explorer", "Adult", "Evolved", "Super"]
 
 def get_stage_for_level(level: int) -> str:
     if level < 5:
@@ -116,19 +153,21 @@ def get_stage_for_level(level: int) -> str:
         return STAGE_EXPLORER
     elif level < 35:
         return STAGE_ADULT
-    else:
+    elif level < MAX_LEVEL:
         return STAGE_EVOLVED
+    else:
+        return STAGE_SUPER
 
 def check_evolution_ready(level: int, current_stage: str) -> bool:
     """Checks if companion has reached the level threshold for next stage evolution."""
     target_stage = get_stage_for_level(level)
-    stages = [STAGE_BABY, STAGE_YOUNG, STAGE_EXPLORER, STAGE_ADULT, STAGE_EVOLVED]
+    stages = STAGES
     current_idx = stages.index(current_stage) if current_stage in stages else 0
     target_idx = stages.index(target_stage) if target_stage in stages else 0
     return target_idx > current_idx
 
 def get_next_stage(current_stage: str) -> str:
-    stages = [STAGE_BABY, STAGE_YOUNG, STAGE_EXPLORER, STAGE_ADULT, STAGE_EVOLVED]
+    stages = STAGES
     current_idx = stages.index(current_stage) if current_stage in stages else 0
     if current_idx < len(stages) - 1:
         return stages[current_idx + 1]
@@ -307,6 +346,14 @@ DAILY_QUESTS_TEMPLATES: List[Dict[str, Any]] = [
         "target_count": 1,
         "reward_flow": 10,
     },
+]
+
+# Weekly quests (reset every ISO week, Monday start, in the user's own timezone). The first is the legacy "weekly
+# challenge" and stays the app's `active_challenge`.
+WEEKLY_QUESTS_TEMPLATES: List[Dict[str, Any]] = [
+    {"type": "priority_tasks", "title": "Complete 5 priority tasks", "target_count": 5, "reward_flow": FLOW_REWARD_WEEKLY_CHALLENGE},
+    {"type": "focus_sessions", "title": "Finish 4 focus sessions", "target_count": 4, "reward_flow": 60},
+    {"type": "focus_minutes", "title": "Focus for 120 minutes", "target_count": 120, "reward_flow": 80},
 ]
 
 # Every task of a day done: the trophy at the end of the day path (once per user per local date)

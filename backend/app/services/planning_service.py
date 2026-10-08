@@ -100,6 +100,7 @@ def _temporal(c: TaskCandidateResponse, tz: ZoneInfo) -> Optional[PlanTemporal]:
         preferred_window_end=_aware(t.preferred_window_end, tz),
         relative_before=t.relative_before,
         relative_after=t.relative_after,
+        avoid=tuple((_aware(a[0], tz), _aware(a[1], tz)) for a in (t.avoid or []) if len(a) == 2),
     )
 
 

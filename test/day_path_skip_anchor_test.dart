@@ -87,8 +87,9 @@ void main() {
       expect(skipped.stops.map((s) => s.id), ['sched-A', 'sched-B', 'sched-C', 'sched-D'], reason: 'B did not reorder');
       expect(_centers(skipped), _centers(planned), reason: 'every stop keeps its exact position');
       expect(skipped.stops[1].role, StopRouteRole.skipped);
-      expect(skipped.distanceToRoute(skipped.stops[1].center), lessThan(0.5), reason: 'the route still runs through B');
-      expect(skipped.sampleXs, planned.sampleXs, reason: 'skipping changes B\'s node, never the road');
+      expect(skipped.distanceToRoute(skipped.stops[1].center), greaterThan(DayRouteGeometry.nodeRadius + 10),
+          reason: 'the route bends around B');
+      expect(skipped.sampleXs, isNot(planned.sampleXs), reason: 'the route model follows B\'s new state');
       expect(planned.sameRoute(skipped), isFalse, reason: 'B\'s state changed');
       expect(planned.layoutSignature, skipped.layoutSignature, reason: 'same stops: nothing remounts');
     });
@@ -110,8 +111,10 @@ void main() {
       expect(bypassed.stops.map((s) => s.id), planned.stops.map((s) => s.id));
       expect(_centers(bypassed), _centers(planned));
       expect(bypassed.stops[1].role, StopRouteRole.bypassed);
-      expect(bypassed.distanceToRoute(bypassed.stops[1].center), lessThan(0.5), reason: 'the road still runs through B');
-      expect(bypassed.sampleXs, planned.sampleXs);
+      expect(bypassed.distanceToRoute(bypassed.stops[1].center), greaterThan(DayRouteGeometry.nodeRadius + 10),
+          reason: 'the road bends around B and carries on to C');
+      expect(bypassed.distanceToRoute(bypassed.stops[2].center), lessThan(0.5));
+      expect(bypassed.sampleXs, isNot(planned.sampleXs));
       expect(planned.sameRoute(bypassed), isFalse);
     });
 

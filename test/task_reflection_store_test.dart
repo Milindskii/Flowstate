@@ -40,6 +40,7 @@ void main() {
       durationFeedback: 'shorter',
       blockerNote: 'none',
       completedAt: DateTime(2026, 10, 3, 8, 5),
+      durationMeasured: true, // as the Focus timer records it
     );
 
     final r = state.reflectionFor('t1')!;

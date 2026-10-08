@@ -11,8 +11,8 @@ import 'package:http/http.dart' as http;
 class CalendarWorld {
   CalendarWorld(this.today);
 
-  /// Local midnight of the day the tests treat as "today".
-  final DateTime today;
+  /// Local midnight of the day the tests treat as "today". [rollOver] moves it on, like the calendar does at midnight.
+  DateTime today;
 
   /// id -> task. `day` is an offset from [today]; `hour` the slot's local start hour.
   final Map<String, WorldTask> tasks = {};
@@ -20,6 +20,46 @@ class CalendarWorld {
   /// Original hour of a skipped task, per id (the server keeps it as history).
   final Map<String, double> skippedFrom = {};
   final Set<String> claimedDays = {};
+
+  /// Answer GET /today with a small real payload (date, tomorrow's open tasks) instead of 404.
+  bool serveToday = false;
+
+  /// Make GET /today fail with a 500 (offline-ish: the app falls back to its cached payload).
+  bool failToday = false;
+
+  /// The task id GET /today names as the current recommendation (null: none).
+  String? recommendId;
+
+  /// Midnight passes on the server: the next day becomes today. Tasks keep their absolute date.
+  void rollOver() {
+    today = DateTime(today.year, today.month, today.day).add(const Duration(days: 1));
+    for (final t in tasks.values) {
+      t.day -= 1;
+    }
+  }
+
+  String todayBody() {
+    final tomorrow = [for (final t in tasks.values) if (t.day == 1 && !t.done) t];
+    final open = [for (final t in tasks.values) if (t.day == 0 && !t.done) t];
+    return jsonEncode({
+      'date': dateStr(0),
+      'state': 'tasks_success',
+      'has_actionable_tasks': open.isNotEmpty,
+      'completed_count': 0,
+      if (recommendId != null && tasks[recommendId] != null)
+        'current_recommendation': {'task': taskRow(tasks[recommendId]!), 'reasons': <String>[]},
+      'tomorrow_tasks': [
+        for (final t in tomorrow)
+          {
+            'id': t.id,
+            'title': t.title,
+            'start_time': at(t.hour, day: 1).toUtc().toIso8601String(),
+            'duration_minutes': 30,
+          }
+      ],
+      'upcoming_timeline': [for (final t in open) _item('sched-${t.id}', t)],
+    });
+  }
 
   int dayGets = 0;
   int taskGets = 0;
@@ -33,6 +73,7 @@ class CalendarWorld {
   Completer<void>? holdNextTasks;
   Completer<void>? holdNextToday;
   Completer<void>? holdNextComplete;
+  Completer<void>? holdNextSkip;
   Completer<void>? holdNextDelete;
   Completer<void>? holdNextPatch;
   Completer<void>? holdNextClaim;
@@ -43,8 +84,8 @@ class CalendarWorld {
   bool failNextPatch = false;
   bool failNextClaim = false;
 
-  WorldTask add(String id, double hour, {int day = 0, bool done = false}) =>
-      tasks[id] = WorldTask(id: id, title: 'Task $id', hour: hour, day: day, done: done);
+  WorldTask add(String id, double hour, {int day = 0, bool done = false, String? title}) =>
+      tasks[id] = WorldTask(id: id, title: title ?? 'Task $id', hour: hour, day: day, done: done);
 
   DateTime at(double hour, {int day = 0}) {
     final base = DateTime(today.year, today.month, today.day).add(Duration(days: day));
@@ -157,6 +198,8 @@ class CalendarWorld {
       final c = holdNextToday;
       holdNextToday = null;
       await _hold(c);
+      if (failToday) return http.Response('{"detail":"boom"}', 500, headers: headers);
+      if (serveToday) return ok(todayBody());
       return http.Response('{"detail":"no today in this world"}', 404, headers: headers);
     }
     final complete = RegExp(r'/api/v1/tasks/([^/]+)/complete$').firstMatch(path);
@@ -173,6 +216,9 @@ class CalendarWorld {
     }
     final skip = RegExp(r'/api/v1/today/skip/([^/]+)$').firstMatch(path);
     if (skip != null && r.method == 'POST') {
+      final c = holdNextSkip;
+      holdNextSkip = null;
+      await _hold(c);
       final t = tasks[skip.group(1)!];
       if (t != null) {
         skippedFrom[t.id] = t.hour;

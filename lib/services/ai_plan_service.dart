@@ -136,13 +136,16 @@ class AIPlanService {
     }
   }
 
+  static const _reportableCodes = {'privacy_declined', 'gemini_error', 'input_too_long', 'client_error'};
+
   /// Diagnostics for failures that never reach the server's Gemini call (privacy declined,
   /// network error). Never blocks the UI and never charges.
   Future<void> reportFailure(String requestId, String code, [String? reason]) async {
     try {
       await api.post('/api/v1/ai/planning-attempts', body: {
         'request_id': requestId,
-        'failure_code': code,
+        // The server accepts a fixed set of codes (a 422 here used to drop the report silently).
+        'failure_code': _reportableCodes.contains(code) ? code : 'client_error',
         if (reason != null) 'failure_reason': reason,
       });
     } catch (_) {}
@@ -168,17 +171,8 @@ class AIPlanService {
     try {
       final response = await api.get('/api/v1/subscription/plans');
       if (response is List) {
-        return response
-            .whereType<Map<String, dynamic>>()
-            .map<ProPlanConfig>((p) => ProPlanConfig(
-                  id: p['id'] as String? ?? 'monthly',
-                  title: p['name'] as String? ?? (p['title'] as String? ?? 'Monthly'),
-                  displayPrice: p['display_price'] as String? ?? '₹— / month',
-                  billingPeriod: p['billing_period'] as String? ?? 'monthly',
-                  isBestValue: p['is_best_value'] as bool? ?? false,
-                  status: p['pricing_note'] as String? ?? 'pricing_coming_soon',
-                ))
-            .toList();
+        final plans = response.whereType<Map<String, dynamic>>().map<ProPlanConfig>(ProPlanConfig.fromJson).toList();
+        if (plans.isNotEmpty) return plans;
       }
     } catch (_) {}
     return ProPlanConfig.defaultPlans;

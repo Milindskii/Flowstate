@@ -11,6 +11,8 @@ import '../utils/commitment_window.dart';
 import 'task_date_time_pickers.dart';
 import 'task_interactive_controls.dart';
 
+import '../services/smart_reminder_service.dart';
+
 /// Modal sheet for editing task details, including date, time, duration, and priority.
 class EditTaskSheet extends StatefulWidget {
   final TaskItem task;
@@ -50,6 +52,7 @@ class _EditTaskSheetState extends State<EditTaskSheet> {
   @override
   void initState() {
     super.initState();
+    SmartReminderService.instance.activeViewingTaskId = widget.task.id;
     final task = widget.task;
     _titleController = TextEditingController(text: task.title);
     _deadlineController = TextEditingController(text: task.deadline);
@@ -79,6 +82,9 @@ class _EditTaskSheetState extends State<EditTaskSheet> {
 
   @override
   void dispose() {
+    if (SmartReminderService.instance.activeViewingTaskId == widget.task.id) {
+      SmartReminderService.instance.activeViewingTaskId = null;
+    }
     _titleController.dispose();
     _deadlineController.dispose();
     super.dispose();

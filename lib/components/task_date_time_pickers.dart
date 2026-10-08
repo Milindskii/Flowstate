@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
+import '../theme/flow_theme.dart';
 import '../theme/flow_typography.dart';
 
 /// Reusable Date and Time Picker row component with real calendar & clock dialogs.
@@ -103,15 +104,16 @@ class TaskDateTimePickers extends StatelessWidget {
                 ? ColorScheme.dark(
                     primary: themeColor,
                     onPrimary: FlowColors.textInverse,
-                    surface: FlowColors.surfaceElevated(ctx),
-                    onSurface: FlowColors.textPrimaryOf(ctx),
+                    surface: FlowColors.surfaceElevatedDark,
+                    onSurface: FlowColors.textPrimaryDark,
                   )
                 : ColorScheme.light(
                     primary: themeColor,
                     onPrimary: FlowColors.textInverse,
-                    surface: FlowColors.surface(ctx),
-                    onSurface: FlowColors.textPrimaryOf(ctx),
+                    surface: FlowColors.surfaceLight,
+                    onSurface: FlowColors.textPrimaryLight,
                   ),
+            datePickerTheme: FlowTheme.buildDatePickerTheme(isDark, themeColor),
           ),
           child: child ?? const SizedBox.shrink(),
         );
@@ -141,15 +143,16 @@ class TaskDateTimePickers extends StatelessWidget {
                 ? ColorScheme.dark(
                     primary: themeColor,
                     onPrimary: FlowColors.textInverse,
-                    surface: FlowColors.surfaceElevated(ctx),
-                    onSurface: FlowColors.textPrimaryOf(ctx),
+                    surface: FlowColors.surfaceElevatedDark,
+                    onSurface: FlowColors.textPrimaryDark,
                   )
                 : ColorScheme.light(
                     primary: themeColor,
                     onPrimary: FlowColors.textInverse,
-                    surface: FlowColors.surface(ctx),
-                    onSurface: FlowColors.textPrimaryOf(ctx),
+                    surface: FlowColors.surfaceLight,
+                    onSurface: FlowColors.textPrimaryLight,
                   ),
+            timePickerTheme: FlowTheme.buildTimePickerTheme(isDark, themeColor),
           ),
           child: child ?? const SizedBox.shrink(),
         );
@@ -160,6 +163,7 @@ class TaskDateTimePickers extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final activeAccent = accentColor ?? FlowColors.mint;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Row(
       children: [
@@ -189,21 +193,42 @@ class TaskDateTimePickers extends StatelessWidget {
                   }
                 },
                 borderRadius: BorderRadius.circular(FlowRadii.button),
-                child: Container(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   decoration: BoxDecoration(
-                    color: FlowColors.surfaceElevated(context),
+                    color: selectedDate != null
+                        ? activeAccent.withValues(alpha: isDark ? 0.12 : 0.08)
+                        : (isDark
+                            ? FlowColors.surface(context)
+                            : FlowColors.surfaceElevated(context)),
                     borderRadius: BorderRadius.circular(FlowRadii.button),
                     border: Border.all(
-                      color: selectedDate != null ? activeAccent : FlowColors.border(context),
+                      color: selectedDate != null
+                          ? activeAccent.withValues(alpha: 0.7)
+                          : FlowColors.border(context),
+                      width: selectedDate != null ? 1.2 : 1.0,
                     ),
                   ),
                   child: Row(
                     children: [
-                      Icon(
-                        Icons.calendar_today_rounded,
-                        size: 16,
-                        color: selectedDate != null ? activeAccent : FlowColors.textSecondaryOf(context),
+                      Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: selectedDate != null
+                              ? activeAccent.withValues(alpha: isDark ? 0.22 : 0.15)
+                              : (isDark
+                                  ? FlowColors.surfaceContainerDark
+                                  : FlowColors.surfaceContainerLight),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        alignment: Alignment.center,
+                        child: Icon(
+                          Icons.calendar_today_rounded,
+                          size: 14,
+                          color: selectedDate != null ? activeAccent : FlowColors.textSecondaryOf(context),
+                        ),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -213,18 +238,34 @@ class TaskDateTimePickers extends StatelessWidget {
                             color: selectedDate != null
                                 ? FlowColors.textPrimaryOf(context)
                                 : FlowColors.textMutedOf(context),
-                          ).copyWith(fontWeight: FontWeight.w600),
+                          ).copyWith(
+                            fontWeight: selectedDate != null ? FontWeight.w700 : FontWeight.w500,
+                          ),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       if (selectedDate != null)
                         GestureDetector(
                           key: clearDateKey,
+                          behavior: HitTestBehavior.opaque,
                           onTap: () {
                             FlowHaptics.lightTap();
                             onDateChanged(null);
                           },
-                          child: Icon(Icons.clear_rounded, size: 14, color: FlowColors.textMutedOf(context)),
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? Colors.white.withValues(alpha: 0.08)
+                                  : Colors.black.withValues(alpha: 0.05),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.close_rounded,
+                              size: 13,
+                              color: FlowColors.textMutedOf(context),
+                            ),
+                          ),
                         ),
                     ],
                   ),
@@ -261,21 +302,42 @@ class TaskDateTimePickers extends StatelessWidget {
                   }
                 },
                 borderRadius: BorderRadius.circular(FlowRadii.button),
-                child: Container(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   decoration: BoxDecoration(
-                    color: FlowColors.surfaceElevated(context),
+                    color: selectedTime != null
+                        ? activeAccent.withValues(alpha: isDark ? 0.12 : 0.08)
+                        : (isDark
+                            ? FlowColors.surface(context)
+                            : FlowColors.surfaceElevated(context)),
                     borderRadius: BorderRadius.circular(FlowRadii.button),
                     border: Border.all(
-                      color: selectedTime != null ? activeAccent : FlowColors.border(context),
+                      color: selectedTime != null
+                          ? activeAccent.withValues(alpha: 0.7)
+                          : FlowColors.border(context),
+                      width: selectedTime != null ? 1.2 : 1.0,
                     ),
                   ),
                   child: Row(
                     children: [
-                      Icon(
-                        Icons.access_time_rounded,
-                        size: 16,
-                        color: selectedTime != null ? activeAccent : FlowColors.textSecondaryOf(context),
+                      Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: selectedTime != null
+                              ? activeAccent.withValues(alpha: isDark ? 0.22 : 0.15)
+                              : (isDark
+                                  ? FlowColors.surfaceContainerDark
+                                  : FlowColors.surfaceContainerLight),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        alignment: Alignment.center,
+                        child: Icon(
+                          Icons.access_time_rounded,
+                          size: 15,
+                          color: selectedTime != null ? activeAccent : FlowColors.textSecondaryOf(context),
+                        ),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -285,18 +347,34 @@ class TaskDateTimePickers extends StatelessWidget {
                             color: selectedTime != null
                                 ? FlowColors.textPrimaryOf(context)
                                 : FlowColors.textMutedOf(context),
-                          ).copyWith(fontWeight: FontWeight.w600),
+                          ).copyWith(
+                            fontWeight: selectedTime != null ? FontWeight.w700 : FontWeight.w500,
+                          ),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       if (selectedTime != null)
                         GestureDetector(
                           key: clearTimeKey,
+                          behavior: HitTestBehavior.opaque,
                           onTap: () {
                             FlowHaptics.lightTap();
                             onTimeChanged(null);
                           },
-                          child: Icon(Icons.clear_rounded, size: 14, color: FlowColors.textMutedOf(context)),
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? Colors.white.withValues(alpha: 0.08)
+                                  : Colors.black.withValues(alpha: 0.05),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.close_rounded,
+                              size: 13,
+                              color: FlowColors.textMutedOf(context),
+                            ),
+                          ),
                         ),
                     ],
                   ),

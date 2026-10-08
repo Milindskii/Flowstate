@@ -43,7 +43,7 @@ Widget _host(List<ScheduleItem> items, {bool reduced = false}) => MaterialApp(
 DayRoutePainter _painter(WidgetTester tester) => tester.widget<CustomPaint>(find.byKey(const Key('flow_day_route'))).painter as DayRoutePainter;
 
 void main() {
-  testWidgets('skipping a task never moves the road: only the node changes', (tester) async {
+  testWidgets('skipping a task moves no stop: the node changes and the road bends around it, morphing', (tester) async {
     await tester.pumpWidget(_host([_it('a'), _it('b'), _it('c'), _it('d')]));
     await tester.pumpAndSettle();
     final before = List<double>.from(_painter(tester).geometry.sampleXs);
@@ -52,11 +52,12 @@ void main() {
     await tester.pumpWidget(_host([_it('a'), _it('b', skipped: true), _it('c'), _it('d')]));
     await tester.pumpAndSettle();
     final after = _painter(tester).geometry;
-    expect(after.sampleXs, before, reason: 'the winding line is identical');
+    expect(after.sampleXs, isNot(before), reason: 'the route model was regenerated from the new states');
     expect(after.stopById('b').role, StopRouteRole.skipped);
-    expect(after.distanceToRoute(after.stopById('b').center), lessThan(0.5));
+    expect(after.distanceToRoute(after.stopById('b').center), greaterThan(DayRouteGeometry.nodeRadius + 10),
+        reason: 'the road goes around the node');
     expect(find.byKey(const Key('path_skipped_b')), findsOneWidget);
-    expect(_painter(tester).fromXs, isNull, reason: 'nothing had to morph');
+    expect(_painter(tester).fromXs, isNull, reason: 'settled: the morph is over');
   });
 
   testWidgets('completing a stop colours the road in (green creeping down it) over a restrained duration', (tester) async {
@@ -89,7 +90,7 @@ void main() {
     expect(_painter(tester).geometry.sampleStates, contains(RouteSegmentState.traveled));
   });
 
-  testWidgets('recovering a skipped task turns the road into it orange, on the same line, and marks the node recovered',
+  testWidgets('recovering a skipped task brings the road back through it, orange, and marks the node recovered',
       (tester) async {
     await tester.pumpWidget(_host([_it('a', done: true), _it('b', skipped: true), _it('c')]));
     await tester.pumpAndSettle();
@@ -100,7 +101,8 @@ void main() {
     await tester.pumpAndSettle();
     final g = _painter(tester).geometry;
     expect(g.sampleStates, contains(RouteSegmentState.recovered));
-    expect(g.sampleXs, skippedXs, reason: 'no new line: the same road, recoloured');
+    expect(g.sampleXs, isNot(skippedXs), reason: 'the detour closes: the road runs through the recovered stop again');
+    expect(g.distanceToRoute(g.stopById('b').center), lessThan(0.5));
     expect(find.byKey(const Key('path_check_b')), findsOneWidget);
     expect(find.textContaining('Recovered'), findsOneWidget);
   });

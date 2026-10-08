@@ -2,9 +2,11 @@ from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from pydantic import AliasChoices, BaseModel, Field
 from .task import TaskCandidateResponse, PlanningContext
+from .routine import RoutineProposal
 
 class AIPlanRequest(BaseModel):
-    raw_text: str = Field(..., min_length=2, max_length=1500, description="Raw natural-language task brain dump")
+    raw_text: str = Field(..., min_length=2, max_length=20000,  # memory ceiling only; the real limit is economy_config.input_limit_for
+        description="Raw natural-language task brain dump")
     # IANA zone name (e.g. "Asia/Kolkata"). `user_timezone` is accepted for older clients.
     # No default: an absent value resolves to the stored user preference (never silently UTC).
     timezone: Optional[str] = Field(default=None, max_length=64, validation_alias=AliasChoices("timezone", "user_timezone"))
@@ -15,7 +17,7 @@ class AIPlanRequest(BaseModel):
 class PlanningAttemptReport(BaseModel):
     """Client-side Build My Day failure that never reached the server's Gemini call."""
     request_id: str = Field(..., min_length=1, max_length=100)
-    failure_code: Literal["privacy_declined", "gemini_error"]
+    failure_code: Literal["privacy_declined", "gemini_error", "input_too_long", "client_error"]
     failure_reason: Optional[str] = Field(default=None, max_length=2000)
 
 
@@ -30,6 +32,8 @@ class AIUsageStatus(BaseModel):
     can_plan_free: bool = True
     requires_shield: bool = False
     shield_cost: int = 2          # Shields one AI plan costs once the free use is gone (server-owned)
+    shield_cost_replan: int = 1   # Shields one AI replan costs (server-owned)
+    max_input_words: int = 200    # Build My Day dump limit (server-owned; the app counter shows it)
     can_afford_shield_plan: bool = False
     subscription_tier: str = "free"
     subscription_status: str = "inactive"
@@ -47,14 +51,19 @@ class AIPlanResponse(BaseModel):
     scheduling_error: Optional[str] = None
     failure_code: Optional[str] = None   # "scheduling_failed" when the plan could not be scheduled (never charged)
     conflicts: List[Dict[str, Any]] = Field(default_factory=list)
+    routine_proposals: List[RoutineProposal] = Field(default_factory=list)   # routines to CONFIRM; none is saved yet
 
 class ProPlanInfo(BaseModel):
     plan_id: str
     title: str
     billing_period: str # "monthly" or "yearly"
-    price_display: str # e.g. "₹— / month"
+    price_display: str # e.g. "₹89 / month"
+    monthly_price_inr: Optional[int] = None
+    daily_price_display: Optional[str] = None      # "₹2.97/day": the headline figure
+    billing_disclosure: Optional[str] = None       # "₹89 billed monthly": always shown with the daily figure
+    purchasable: bool = False                      # true only once store billing is live (never inferred by the app)
     is_best_value: bool = False
-    status: str = "pricing_coming_soon"
+    status: str = "pricing_set"
     features: List[str] = Field(default_factory=list)
 
 class ProSubscriptionStatusResponse(BaseModel):

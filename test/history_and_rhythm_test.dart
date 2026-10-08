@@ -155,7 +155,7 @@ void main() {
       await state.reflectionsReady;
       state.recordTaskFeedback(
         taskId: 'Gym', actualMinutes: 45, feeling: 3, energyScore: 4, focusScore: 3, difficultyScore: 3,
-        distractionScore: 1, completedAt: yesterday,
+        distractionScore: 1, completedAt: yesterday, durationMeasured: true,
       );
       await tester.pumpWidget(MaterialApp(
         home: ChangeNotifierProvider<AppStateProvider>.value(value: state, child: const InsightsTab()),

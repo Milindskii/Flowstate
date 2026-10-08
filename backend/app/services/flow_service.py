@@ -27,6 +27,7 @@ from ..core.economy_config import (
     get_next_stage,
     COMPANION_CATALOG,
     DAILY_QUESTS_TEMPLATES,
+    WEEKLY_QUESTS_TEMPLATES,
     ACHIEVEMENTS_CATALOG,
 )
 from ..core.timezone import resolve_timezone
@@ -66,6 +67,11 @@ from ..schemas.flow import (
     UseShieldResponse,
 )
 
+def _now() -> datetime:
+    """The one clock the progression rules read (aware, UTC). Tests replace it to cross day and week boundaries."""
+    return datetime.now(timezone.utc)
+
+
 def _make_aware(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
@@ -80,11 +86,49 @@ class FlowService:
         return cache[user_id]
 
     def _get_user_today_str(self, user_tz: zoneinfo.ZoneInfo) -> str:
-        return datetime.now(user_tz).strftime("%Y-%m-%d")
+        return _now().astimezone(user_tz).strftime("%Y-%m-%d")
 
     def _get_current_week_identifier(self, user_tz: zoneinfo.ZoneInfo) -> str:
-        now = datetime.now(user_tz)
-        return now.strftime("%Y-W%W")
+        # ISO year + ISO week (Monday start): a week is never split by New Year, so a weekly reset happens exactly once.
+        iso = _now().astimezone(user_tz).isocalendar()
+        return f"{iso[0]}-W{iso[1]:02d}"
+
+    def _local_day_start_utc(self, user_tz: zoneinfo.ZoneInfo) -> datetime:
+        """Start of the user's current local day, in UTC: daily caps reset at the user's midnight, not UTC's."""
+        local = _now().astimezone(user_tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        return local.astimezone(timezone.utc)
+
+    def get_weekly_quests(self, db: Session, user: User, week: str) -> List[FlowChallenge]:
+        """All of this week's quests, created on first read. A new week gets fresh rows; last week's stay as history."""
+        cache = db.info.setdefault("flow_weekly_quests", {})   # one read per request, not one per helper
+        if (user.id, week) in cache:
+            return cache[(user.id, week)]
+        rows = db.query(FlowChallenge).filter(FlowChallenge.user_id == user.id,
+                                              FlowChallenge.week_identifier == week).all()
+        have = {r.challenge_type for r in rows}
+        for t in WEEKLY_QUESTS_TEMPLATES:
+            if t["type"] not in have:
+                db.add(FlowChallenge(user_id=user.id, week_identifier=week, title=t["title"],
+                                     target_count=t["target_count"], current_count=0, reward_flow=t["reward_flow"],
+                                     is_completed=False, is_claimed=False, challenge_type=t["type"]))
+        if len(have) < len(WEEKLY_QUESTS_TEMPLATES):
+            db.commit()
+            rows = db.query(FlowChallenge).filter(FlowChallenge.user_id == user.id,
+                                                  FlowChallenge.week_identifier == week).all()
+        order = {t["type"]: i for i, t in enumerate(WEEKLY_QUESTS_TEMPLATES)}
+        cache[(user.id, week)] = sorted(rows, key=lambda r: order.get(r.challenge_type, 99))
+        return cache[(user.id, week)]
+
+    def _advance_weekly_quests(self, db: Session, user: User, week: str, *, priority: int = 0, sessions: int = 0,
+                               minutes: int = 0) -> None:
+        amounts = {"priority_tasks": priority, "focus_sessions": sessions, "focus_minutes": minutes}
+        for q in self.get_weekly_quests(db, user, week):
+            inc = amounts.get(q.challenge_type, 0)
+            if inc and not q.is_completed:
+                q.current_count = min(q.current_count + inc, q.target_count)
+                if q.current_count >= q.target_count:
+                    q.is_completed = True
+        db.flush()
 
     def get_or_create_flow_profile(
         self, db: Session, user: User
@@ -141,29 +185,8 @@ class FlowService:
             db.add(companion)
             db.flush()
 
-        challenge = (
-            db.query(FlowChallenge)
-            .filter(
-                FlowChallenge.user_id == user.id,
-                FlowChallenge.week_identifier == current_week,
-            )
-            .first()
-        )
-        if not challenge:
-            changed = True
-            challenge = FlowChallenge(
-                user_id=user.id,
-                week_identifier=current_week,
-                title="Complete 5 priority tasks",
-                target_count=5,
-                current_count=0,
-                reward_flow=FLOW_REWARD_WEEKLY_CHALLENGE,
-                is_completed=False,
-                is_claimed=False,
-                challenge_type="priority_tasks",
-            )
-            db.add(challenge)
-            db.flush()
+        quests = self.get_weekly_quests(db, user, current_week)
+        challenge = next(q for q in quests if q.challenge_type == "priority_tasks")
 
         if changed:
             db.commit()
@@ -439,7 +462,7 @@ class FlowService:
                 daily_focus_totals[day_key] = daily_focus_totals.get(day_key, 0) + (s.duration_minutes or 0)
         best_focus_day_mins = max(daily_focus_totals.values(), default=0)
 
-        now_tz = datetime.now(user_tz)
+        now_tz = _now().astimezone(user_tz)
         week_start = (now_tz - timedelta(days=now_tz.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
         weekly_sessions = [
             s for s in completed_sessions
@@ -515,6 +538,8 @@ class FlowService:
             companion=FlowCompanionResponse.model_validate(companion),
             profile=FlowProfileResponse.model_validate(profile),
             active_challenge=FlowChallengeResponse.model_validate(challenge) if challenge else None,
+            weekly_quests=[FlowChallengeResponse.model_validate(q)
+                           for q in self.get_weekly_quests(db, user, self._get_current_week_identifier(user_tz))],
             daily_quests=[FlowDailyQuestResponse.model_validate(q) for q in daily_quests],
             achievements=[FlowAchievementResponse.model_validate(a) for a in achievements],
             league=league,
@@ -651,7 +676,8 @@ class FlowService:
 
         # Rewards calculation with Daily Focus XP Cap (MAX_XP_PER_DAY = 300)
         base_xp = duration_minutes * COMPANION_XP_PER_FOCUS_MINUTE
-        today_start_utc = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        user_tz = self._get_user_timezone(db, user.id)
+        today_start_utc = self._local_day_start_utc(user_tz)
         today_xp_sum = (
             db.query(func.coalesce(func.sum(FlowEconomicEvent.xp_awarded), 0))
             .filter(
@@ -666,7 +692,6 @@ class FlowService:
         flow_earned = FLOW_REWARD_FOCUS_SESSION
 
         # Priority task check & daily cap with anti-farming complexity guard
-        user_tz = self._get_user_timezone(db, user.id)
         today_str = self._get_user_today_str(user_tz)
 
         is_priority_task = False
@@ -687,7 +712,13 @@ class FlowService:
                     )
                     .count()
                 )
-                if today_priority_rewards < MAX_PRIORITY_REWARDS_PER_DAY:
+                already_paid = (
+                    db.query(FlowEconomicEvent.id)
+                    .filter(FlowEconomicEvent.user_id == user.id, FlowEconomicEvent.event_type == "priority_task",
+                            FlowEconomicEvent.reference_id == task.id)
+                    .first()
+                )
+                if today_priority_rewards < MAX_PRIORITY_REWARDS_PER_DAY and not already_paid:
                     flow_earned += FLOW_REWARD_PRIORITY_TASK
                     # Record priority task event
                     try:
@@ -781,14 +812,11 @@ class FlowService:
                         profile.last_qualifying_date = today_str
                         profile.shield_progress_days = 1
 
-        # Advance challenge
-        if challenge and not challenge.is_completed:
-            if challenge.challenge_type == "priority_tasks" and is_priority_task:
-                challenge.current_count += 1
-            elif challenge.challenge_type == "focus_minutes":
-                challenge.current_count += duration_minutes
-            if challenge.current_count >= challenge.target_count:
-                challenge.is_completed = True
+        # Advance this week's quests (priority tasks, focus sessions, focus minutes)
+        counts_priority = bool(is_priority_task and session.task_id
+                               and self._mark_once(db, user.id, "priority_progress", session.task_id))
+        self._advance_weekly_quests(db, user, self._get_current_week_identifier(user_tz),
+                                    priority=1 if counts_priority else 0, sessions=1, minutes=duration_minutes)
 
         # Advance daily quests
         self.get_or_create_daily_quests(db, user, today_str)
@@ -807,7 +835,7 @@ class FlowService:
         weekly_progress.sessions_completed += 1
         weekly_progress.focus_minutes_logged += duration_minutes
         weekly_progress.flow_points_earned += flow_earned
-        if is_priority_task:
+        if counts_priority:
             weekly_progress.priority_tasks_completed += 1
         if feeling_score is not None:
             weekly_progress.feedback_given += 1
@@ -1241,7 +1269,7 @@ class FlowService:
         db.refresh(profile)
 
         # Protect streak: if user missed yesterday, keep streak chain alive
-        yesterday_str = (datetime.now(user_tz) - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday_str = (_now().astimezone(user_tz) - timedelta(days=1)).strftime("%Y-%m-%d")
         profile.last_qualifying_date = yesterday_str
 
         event = FlowEconomicEvent(
@@ -1264,68 +1292,81 @@ class FlowService:
             current_streak=profile.current_streak,
         )
 
+    def _mark_once(self, db: Session, user_id: str, event_type: str, reference_id: str) -> bool:
+        """Insert a ledger marker for (user, event_type, reference). False when it already exists: the caller must not
+        reward again. The unique constraint backs this up if two requests race (the loser's commit fails whole)."""
+        exists = (
+            db.query(FlowEconomicEvent.id)
+            .filter(FlowEconomicEvent.user_id == user_id, FlowEconomicEvent.event_type == event_type,
+                    FlowEconomicEvent.reference_id == reference_id)
+            .first()
+        )
+        if exists:
+            return False
+        db.add(FlowEconomicEvent(user_id=user_id, idempotency_key=f"{event_type}-{user_id}-{reference_id}",
+                                 event_type=event_type, reference_id=reference_id, flow_awarded=0, xp_awarded=0))
+        db.flush()
+        return True
+
     def on_task_completed(self, db: Session, user_id: str, task: Task) -> None:
         """
-        Authoritative hook invoked when a task is completed.
+        Authoritative hook invoked when a task is completed. Idempotent per task: completing, reopening and
+        completing the same task again never counts twice.
         - Increments daily quest 'finish_2_tasks'
-        - If task is a priority task, increments weekly challenge 'priority_tasks'
-          and updates weekly progress.
+        - If task is a priority task, advances the weekly 'priority_tasks' quest and weekly progress once.
         """
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return
 
-        user_tz = self._get_user_timezone(db, user_id)
-        today_str = self._get_user_today_str(user_tz)
-        current_week = self._get_current_week_identifier(user_tz)
+        try:
+            if not self._mark_once(db, user_id, "task_completed", task.id):
+                return
 
-        # 1. Update daily quest 'finish_2_tasks'
-        self.get_or_create_daily_quests(db, user, today_str)
-        self._update_daily_quest_progress(db, user_id, today_str, "finish_2_tasks", 1)
+            user_tz = self._get_user_timezone(db, user_id)
+            today_str = self._get_user_today_str(user_tz)
+            current_week = self._get_current_week_identifier(user_tz)
 
-        # 2. Check if priority task
-        is_prio = getattr(task, "is_priority", False) or str(getattr(task, "priority", "")).lower().endswith(("high", "urgent"))
-        if is_prio:
-            profile, companion, challenge = self.get_or_create_flow_profile(db, user)
-            if challenge and not challenge.is_completed and challenge.challenge_type == "priority_tasks":
-                challenge.current_count = min(challenge.current_count + 1, challenge.target_count)
-                if challenge.current_count >= challenge.target_count:
-                    challenge.is_completed = True
+            self.get_or_create_daily_quests(db, user, today_str)
+            self._update_daily_quest_progress(db, user_id, today_str, "finish_2_tasks", 1)
 
-            weekly_progress = self._get_or_create_weekly_progress(db, user_id, current_week)
-            weekly_progress.priority_tasks_completed += 1
+            is_prio = getattr(task, "is_priority", False) or str(getattr(task, "priority", "")).lower().endswith(("high", "urgent"))
+            if is_prio:
+                profile, _companion, _challenge = self.get_or_create_flow_profile(db, user)
+                weekly_progress = self._get_or_create_weekly_progress(db, user_id, current_week)
+                # The focus-session path may already have counted this task toward the weekly quest.
+                if self._mark_once(db, user_id, "priority_progress", task.id):
+                    self._advance_weekly_quests(db, user, current_week, priority=1)
+                    weekly_progress.priority_tasks_completed += 1
 
-            # Award priority task flow points if below daily cap
-            today_start_utc = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-            today_prio_events = (
-                db.query(FlowEconomicEvent)
-                .filter(
-                    FlowEconomicEvent.user_id == user_id,
-                    FlowEconomicEvent.event_type == "priority_task",
-                    FlowEconomicEvent.created_at >= today_start_utc,
+                today_prio_events = (
+                    db.query(FlowEconomicEvent)
+                    .filter(
+                        FlowEconomicEvent.user_id == user_id,
+                        FlowEconomicEvent.event_type == "priority_task",
+                        FlowEconomicEvent.created_at >= self._local_day_start_utc(user_tz),
+                    )
+                    .count()
                 )
-                .count()
-            )
-            if today_prio_events < MAX_PRIORITY_REWARDS_PER_DAY:
-                try:
-                    p_event = FlowEconomicEvent(
+                already_paid = (
+                    db.query(FlowEconomicEvent.id)
+                    .filter(FlowEconomicEvent.user_id == user_id, FlowEconomicEvent.event_type == "priority_task",
+                            FlowEconomicEvent.reference_id == task.id)
+                    .first()
+                )
+                if today_prio_events < MAX_PRIORITY_REWARDS_PER_DAY and not already_paid:
+                    db.add(FlowEconomicEvent(
                         user_id=user_id,
-                        idempotency_key=f"priority-{task.id}-{datetime.now(timezone.utc).timestamp()}",
+                        idempotency_key=f"priority-{task.id}-{_now().timestamp()}",
                         event_type="priority_task",
                         reference_id=task.id,
                         flow_awarded=FLOW_REWARD_PRIORITY_TASK,
                         xp_awarded=0,
-                    )
-                    db.add(p_event)
+                    ))
                     profile.flow_balance += FLOW_REWARD_PRIORITY_TASK
                     profile.lifetime_flow += FLOW_REWARD_PRIORITY_TASK
                     profile.weekly_flow_points += FLOW_REWARD_PRIORITY_TASK
                     weekly_progress.flow_points_earned += FLOW_REWARD_PRIORITY_TASK
-                except Exception:
-                    pass
-
-        try:
             db.commit()
         except Exception:
             db.rollback()
-

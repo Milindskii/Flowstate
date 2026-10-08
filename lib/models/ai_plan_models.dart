@@ -1,4 +1,6 @@
 import 'package:intl/intl.dart';
+import '../core/config/brain_dump_limit.dart';
+import 'routine.dart';
 import 'task_item.dart';
 
 /// Structured task item returned by the Gemini input-understanding layer.
@@ -43,6 +45,9 @@ class ExtractedTaskItem {
   final DateTime? preferredStart; // top-level preferred times are user-stated only
   final DateTime? preferredWindowStart;
   final DateTime? preferredWindowEnd;
+  /// This explicit one-day request replaces that day's routine occurrence (routine itself unchanged).
+  final String? routineOverrideId;
+  final String? routineOverrideDate; // YYYY-MM-DD
 
   const ExtractedTaskItem({
     required this.title,
@@ -83,6 +88,8 @@ class ExtractedTaskItem {
     this.preferredStart,
     this.preferredWindowStart,
     this.preferredWindowEnd,
+    this.routineOverrideId,
+    this.routineOverrideDate,
   });
 
   bool get isPriorityExplicit => prioritySource == 'explicit';
@@ -191,6 +198,8 @@ class ExtractedTaskItem {
       preferredStart: _instant(json['preferred_start']),
       preferredWindowStart: _instant(json['preferred_window_start']),
       preferredWindowEnd: _instant(json['preferred_window_end']),
+      routineOverrideId: json['routine_override_id'] as String?,
+      routineOverrideDate: json['routine_override_date'] as String?,
     );
   }
 
@@ -394,6 +403,8 @@ class ExtractedTaskItem {
       preferredWindowStart: preferredWindowStart,
       preferredWindowEnd: preferredWindowEnd,
       unscheduledReason: unscheduledReason,
+      routineOverrideId: routineOverrideId,
+      routineOverrideDate: routineOverrideDate,
     );
   }
 }
@@ -425,9 +436,14 @@ class AIUsageStatus {
   /// Shields one AI plan costs once the free use is gone. Owned by the server (`shield_cost`); the app only
   /// displays it, so a price change never needs an app release.
   final int shieldCost;
+  final int shieldCostReplan;
 
   /// True when the Shield price can be paid right now (Pro never pays Shields).
   bool get canAffordShieldPlan => shieldsAvailable >= shieldCost;
+  bool get canAffordShieldReplan => shieldsAvailable >= shieldCostReplan;
+
+  /// Words one Build My Day dump may hold. Owned by the server (`max_input_words`), same for Basic and Pro today.
+  final int maxInputWords;
 
   const AIUsageStatus({
     required this.isPro,
@@ -440,9 +456,12 @@ class AIUsageStatus {
     required this.requiresShield,
     required this.hourlyRequestsRemaining,
     this.shieldCost = defaultShieldCost,
+    this.shieldCostReplan = defaultReplanShieldCost,
+    this.maxInputWords = kDefaultBrainDumpMaxWords,
   });
 
   static const int defaultShieldCost = 2;
+  static const int defaultReplanShieldCost = 1;
 
   factory AIUsageStatus.fromJson(Map<String, dynamic> json) {
     final freeRemaining = json['free_uses_remaining'] as int?;
@@ -466,6 +485,8 @@ class AIUsageStatus {
       requiresShield: json['requires_shield'] as bool? ?? (!freeAvailable),
       hourlyRequestsRemaining: json['hourly_requests_remaining'] as int? ?? 5,
       shieldCost: json['shield_cost'] as int? ?? defaultShieldCost,
+      shieldCostReplan: json['shield_cost_replan'] as int? ?? defaultReplanShieldCost,
+      maxInputWords: json['max_input_words'] as int? ?? kDefaultBrainDumpMaxWords,
     );
   }
 
@@ -493,6 +514,8 @@ class AIPlanResult {
   final String? timezoneUsed; // IANA zone the server planned in
   final String? schedulingError; // non-null => tasks came back without slots
   final List<Map<String, dynamic>> conflicts;
+  /// Routines found in the dump. NONE is saved until the user confirms it.
+  final List<RoutineProposal> routineProposals;
 
   const AIPlanResult({
     required this.tasks,
@@ -502,6 +525,7 @@ class AIPlanResult {
     this.timezoneUsed,
     this.schedulingError,
     this.conflicts = const [],
+    this.routineProposals = const [],
   });
 
   factory AIPlanResult.fromJson(Map<String, dynamic> json) {
@@ -532,6 +556,11 @@ class AIPlanResult {
       timezoneUsed: json['timezone_used'] as String?,
       schedulingError: json['scheduling_error'] as String?,
       conflicts: (json['conflicts'] as List<dynamic>?)?.whereType<Map<String, dynamic>>().toList() ?? const [],
+      routineProposals: (json['routine_proposals'] as List<dynamic>?)
+              ?.whereType<Map<String, dynamic>>()
+              .map(RoutineProposal.fromJson)
+              .toList() ??
+          const [],
     );
   }
 }

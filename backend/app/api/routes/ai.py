@@ -22,8 +22,9 @@ from ...services import ai_gateway
 from ...services.ai_economy_service import AIEconomyService
 from ...services.ai_service import AIService, GeminiFailure
 from ...services.calendar_service import CalendarService
-from ...services import planning_service
+from ...services import planning_service, routine_planning, routine_service
 from ...core.timezone import resolve_user_timezone
+from ...core.economy_config import BMD_MAX_INPUT_CHARS, input_limit_for
 from ...repositories.task_repository import TaskRepository
 
 router = APIRouter(prefix="/ai", tags=["AI Planning Economy"])
@@ -43,13 +44,15 @@ _NEUTRAL_FAILURE_DEFAULT = "Flowstate AI is temporarily unavailable"
 class PlanFailure(Exception):
     """A Build My Day failure answered as {"detail": message, "failure_code": code} (spec §7)."""
 
-    def __init__(self, http_status: int, code: str, message: str, headers: Optional[Dict[str, str]] = None):
+    def __init__(self, http_status: int, code: str, message: str, headers: Optional[Dict[str, str]] = None,
+                 extra: Optional[Dict[str, Any]] = None):
         super().__init__(message)
         self.http_status, self.code, self.message, self.headers = http_status, code, message, headers or {}
+        self.extra = extra or {}
 
 
 def plan_failure_handler(_request, exc: "PlanFailure") -> JSONResponse:
-    return JSONResponse(status_code=exc.http_status, content={"detail": exc.message, "failure_code": exc.code},
+    return JSONResponse(status_code=exc.http_status, content={"detail": exc.message, "failure_code": exc.code, **exc.extra},
                         headers=exc.headers or None)
 calendar_service = CalendarService()
 
@@ -85,6 +88,17 @@ def generate_ai_plan(
     """
     user_id = current_user.id
     tz_obj, user_tz = resolve_user_timezone(current_user, request.timezone)
+
+    # 0. Input limit: before the idempotency lookup, the rate limit, any Shield reservation and any provider call, so an
+    # oversized dump costs nothing and never takes a gateway slot. Words are counted exactly as the app counts them.
+    word_count = len(request.raw_text.split())
+    word_limit = input_limit_for(is_pro=False)  # same for everyone today; pass the real tier when Pro gets its own
+    if word_count > word_limit or len(request.raw_text) > BMD_MAX_INPUT_CHARS:
+        raise PlanFailure(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "input_too_long",
+            f"That is a bit long for one plan. Please trim it to {word_limit} words or fewer. Nothing was charged.",
+            extra={"limit_words": word_limit, "words": word_count},
+        )
 
     # One stable planning request id (the client's idempotency key); every Gemini call is its own attempt.
     idempotency_key = request.idempotency_key or uuid.uuid4().hex
@@ -169,6 +183,7 @@ def generate_ai_plan(
     # Failures are reported to the client (scheduling_error) instead of being swallowed.
     scheduling_error: Optional[str] = None
     plan_conflicts: List[Dict[str, Any]] = []
+    routine_proposals: List[Any] = []
     try:
         from ...engines.scheduling_engine import PlanningProfile
         from ...repositories.readiness_repository import ReadinessRepository
@@ -197,15 +212,28 @@ def generate_ai_plan(
         # Enforce segmentation outside the prompt: split multi-activity candidates before scheduling
         candidates = AIService.validate_and_segment_candidates(candidates, now_local, tz_obj)
 
+        # Personal routines: keep the rolling 7-day horizon topped up, split routine statements out of the one-time
+        # task list into proposals (confirmed by the user before anything is saved), and turn saved/stated routine
+        # constraints into planner inputs. The deterministic planner still decides every flexible placement.
+        today_local = now_local.date()
+        routine_service.ensure_horizon(db, current_user.id, tz_obj, now_local)
+        db.commit()
+        saved_routines = routine_service.active_routines(db, current_user.id)
+        candidates, routine_proposals = routine_planning.extract_proposals(
+            candidates, planning_context, saved_routines, today=today_local, now_local=now_local, tz=tz_obj)
+        routine_planning.apply_constraints(candidates, planning_context, saved_routines, today=today_local, tz=tz_obj)
+        overridden = routine_planning.mark_overrides(candidates, saved_routines, tz=tz_obj, today=today_local)
+
         today_start_utc = datetime.combine(now_local.date(), time.min, tzinfo=tz_obj).astimezone(timezone.utc)
-        existing_tasks = TaskRepository.list_for_planning(db, current_user.id, today_start_utc)
+        existing_tasks = [t for t in TaskRepository.list_for_planning(db, current_user.id, today_start_utc)
+                          if (t.routine_id, t.routine_date) not in overridden]
 
         base_day = next((c.temporal.target_date for c in candidates if c.temporal and c.temporal.target_date), now_local.date())
         planning_service.commitments_from_context(
             candidates, planning_context, request.raw_text, tz=tz_obj, base_date=base_day, now_local=now_local)
         plan_conflicts = planning_service.schedule_candidates(
             candidates,
-            planning_context,
+            routine_planning.planning_context_with_routine_busy(planning_context, routine_proposals, tz_obj),
             existing_tasks,
             profile=plan_profile,
             tz=tz_obj,
@@ -234,6 +262,7 @@ def generate_ai_plan(
         "scheduling_error": scheduling_error,
         "failure_code": "scheduling_failed" if scheduling_error else None,
         "conflicts": plan_conflicts,
+        "routine_proposals": [p.model_dump(mode="json") for p in routine_proposals],
     }
     AIEconomyService.record_attempt(
         db, user_id=user_id, request_id=request_id,
@@ -263,6 +292,7 @@ def generate_ai_plan(
         scheduling_error=scheduling_error,
         failure_code=response_data["failure_code"],
         conflicts=plan_conflicts,
+        routine_proposals=routine_proposals,
     )
 
 

@@ -100,7 +100,12 @@ def batch_create(db: Session, user: User, request: BatchCreateAndScheduleRequest
     # Plan input: this user's existing tasks are PINNED (never moved); batch items are validated
     # against them by the shared planner (valid proposed slots are kept, stale ones re-placed).
     today_start = datetime.combine(now.date(), time.min, tzinfo=tz).astimezone(timezone.utc)
-    existing_rows = TaskRepository.list_for_planning(db, user.id, today_start)
+    # An explicit one-day request ("Today I have gym at 6 PM") replaces that day's routine occurrence: it is neither
+    # a conflict for the new item nor kept afterwards. The routine template and every other day are untouched.
+    overrides = {(it.routine_override_id, it.routine_override_date) for it in request.tasks
+                 if it.routine_override_id and it.routine_override_date}
+    existing_rows = [t for t in TaskRepository.list_for_planning(db, user.id, today_start)
+                     if (t.routine_id, t.routine_date) not in overrides]
     from dataclasses import replace as dc_replace
 
     existing_items = [dc_replace(planning_service.task_row_to_plan_item(t, tz=tz), pinned=True) for t in existing_rows]
@@ -214,6 +219,14 @@ def batch_create(db: Session, user: User, request: BatchCreateAndScheduleRequest
                    if d in item_of_ref and item_of_ref[d] != f"item-{i}"]
             created[i].depends_on = ids or None
         db.flush()
+        if overrides:
+            from ..models.routine import Routine
+            from . import routine_service
+            for rid, day in overrides:
+                routine = db.query(Routine).filter(Routine.id == rid, Routine.user_id == user.id,
+                                                   Routine.deleted_at.is_(None)).first()
+                if routine is not None:
+                    routine_service.skip_day(db, routine, day)
         response = BatchCreateAndScheduleResponse(
             created_count=len(created) - len(deduplicated),
             tasks=[TaskResponse.model_validate(t) for t in created],

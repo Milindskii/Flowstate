@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
-from ..core.economy_config import SHIELD_COST_BUILD_MY_DAY
+from ..core.economy_config import SHIELD_COST_BUILD_MY_DAY, SHIELD_COST_REPLAN, input_limit_for
 from ..models.ai_usage import AIUsageRecord, AIPlanningAttempt
 from ..models.flow_progression import FlowProfile
 from ..models.user import User
@@ -120,6 +120,8 @@ class AIEconomyService:
             can_plan_free=can_plan_free,
             requires_shield=requires_shield,
             shield_cost=SHIELD_COST_BUILD_MY_DAY,
+            shield_cost_replan=SHIELD_COST_REPLAN,
+            max_input_words=input_limit_for(is_pro=is_pro),
             can_afford_shield_plan=shields >= SHIELD_COST_BUILD_MY_DAY,
             subscription_tier=usage.subscription_tier,
             subscription_status=usage.subscription_status,
@@ -151,33 +153,25 @@ class AIEconomyService:
 
     @classmethod
     def get_pro_plans(cls) -> List[ProPlanInfo]:
-        """Returns centralized pricing config model. Prices are intentionally TBD in V1."""
+        """The Pro catalog. Price comes from economy_config only. Purchases stay off until store billing is live."""
+        from ..core.economy_config import (PRO_MONTHLY_PRICE_INR, pro_billing_disclosure, pro_daily_price_display)
         return [
             ProPlanInfo(
                 plan_id="flowstate_pro_monthly",
                 title="Monthly",
                 billing_period="monthly",
-                price_display="₹— / month",
+                price_display=f"₹{PRO_MONTHLY_PRICE_INR} / month",
+                monthly_price_inr=PRO_MONTHLY_PRICE_INR,
+                daily_price_display=pro_daily_price_display(),
+                billing_disclosure=pro_billing_disclosure(),
+                purchasable=False,
                 is_best_value=False,
-                status="pricing_coming_soon",
+                status="pricing_set",
                 features=[
                     "Unlimited AI Brain Dumps",
                     "Advanced circadian personalization",
                     "Flexible focus window scheduling",
                     "Priority feature updates",
-                ],
-            ),
-            ProPlanInfo(
-                plan_id="flowstate_pro_yearly",
-                title="Yearly",
-                billing_period="yearly",
-                price_display="₹— / year",
-                is_best_value=True,
-                status="pricing_coming_soon",
-                features=[
-                    "All Monthly features",
-                    "Best value commitment",
-                    "Continuous progression shield boosts",
                 ],
             ),
         ]

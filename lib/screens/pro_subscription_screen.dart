@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/pricing_config.dart';
+import '../providers/app_state_provider.dart';
+import '../services/ai_plan_service.dart';
 import '../providers/theme_provider.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
@@ -18,7 +20,22 @@ class ProSubscriptionScreen extends StatefulWidget {
 }
 
 class _ProSubscriptionScreenState extends State<ProSubscriptionScreen> {
-  int _selectedPlanIndex = 1; // Default to Yearly (Best Value)
+  // The server owns the price; until it answers (or if it cannot) the mirrored fallback is shown.
+  List<ProPlanConfig> _plans = ProPlanConfig.defaultPlans;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPlans();
+  }
+
+  Future<void> _loadPlans() async {
+    try {
+      final state = Provider.of<AppStateProvider>(context, listen: false);
+      final plans = await AIPlanService(api: state.apiService).getProPlans();
+      if (mounted && plans.isNotEmpty) setState(() => _plans = plans);
+    } catch (_) {}
+  }
 
   void _onContinuePressed(BuildContext context) {
     FlowHaptics.lightTap();
@@ -36,7 +53,7 @@ class _ProSubscriptionScreenState extends State<ProSubscriptionScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Google Play manages your subscription.\n\nOfficial Play Store billing will activate upon production release. In development, prices are intentionally TBD to prevent unauthorized charges.',
+              'Google Play manages your subscription.\n\nSubscribing is not open yet. Nothing is charged until Play Store billing is live, and Flowstate will tell you then.',
               style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(ctx)),
             ),
           ],
@@ -65,7 +82,7 @@ class _ProSubscriptionScreenState extends State<ProSubscriptionScreen> {
     final cardBg = FlowColors.surface(context);
     final borderColor = FlowColors.border(context);
 
-    const plans = ProPlanConfig.defaultPlans;
+    final plans = _plans;
 
     return Scaffold(
       backgroundColor: FlowColors.background(context),
@@ -167,26 +184,8 @@ class _ProSubscriptionScreenState extends State<ProSubscriptionScreen> {
               ),
               const SizedBox(height: 24),
 
-              // Plan Selectors: Monthly vs Yearly
-              Row(
-                children: [
-                  for (int i = 0; i < plans.length; i++) ...[
-                    if (i > 0) const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildPlanCard(
-                        context,
-                        plan: plans[i],
-                        isSelected: _selectedPlanIndex == i,
-                        accent: accent,
-                        onTap: () {
-                          FlowHaptics.selection();
-                          setState(() => _selectedPlanIndex = i);
-                        },
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+              // The plan: the daily figure leads, the monthly billing is stated right under it.
+              for (final plan in plans) _buildPlanCard(context, plan: plan, accent: accent),
               const SizedBox(height: 24),
 
               // Primary CTA: Continue with Pro
@@ -244,80 +243,44 @@ class _ProSubscriptionScreenState extends State<ProSubscriptionScreen> {
     );
   }
 
-  Widget _buildPlanCard(
-    BuildContext context, {
-    required ProPlanConfig plan,
-    required bool isSelected,
-    required Color accent,
-    required VoidCallback onTap,
-  }) {
+  Widget _buildPlanCard(BuildContext context, {required ProPlanConfig plan, required Color accent}) {
     final textPrimary = FlowColors.textPrimaryOf(context);
     final textSecondary = FlowColors.textSecondaryOf(context);
-    final borderColor = isSelected ? accent : FlowColors.border(context);
-    final bg = isSelected ? accent.withValues(alpha: 0.08) : FlowColors.surface(context);
 
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: FlowRadii.cardRadius,
-          border: Border.all(color: borderColor, width: isSelected ? 2.0 : 1.0),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 4,
-              runSpacing: 4,
-              children: [
-                Text(
-                  plan.title,
-                  style: FlowTypography.titleSmall(color: textPrimary).copyWith(fontWeight: FontWeight.w800),
-                ),
-                if (plan.isBestValue)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: FlowColors.accentCyan.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(FlowRadii.badge),
-                    ),
-                    child: Text(
-                      'Best value',
-                      style: FlowTypography.labelSmall(color: FlowColors.accentCyan).copyWith(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 9,
-                      ),
-                    ),
-                  ),
-              ],
+    return Container(
+      key: Key('pro_plan_${plan.billingPeriod}'),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.08),
+        borderRadius: FlowRadii.cardRadius,
+        border: Border.all(color: accent, width: 2.0),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            plan.title,
+            style: FlowTypography.titleSmall(color: textPrimary).copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            plan.dailyPriceDisplay.isNotEmpty ? plan.dailyPriceDisplay : plan.displayPrice,
+            key: const Key('pro_daily_price'),
+            style: FlowTypography.headlineMedium(color: textPrimary).copyWith(
+              fontWeight: FontWeight.w800,
+              fontSize: 28,
             ),
-            const SizedBox(height: 8),
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(
-                plan.displayPrice,
-                style: FlowTypography.headlineMedium(color: textPrimary).copyWith(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 16,
-                ),
-              ),
-            ),
+          ),
+          if (plan.billingDisclosure.isNotEmpty) ...[
             const SizedBox(height: 4),
             Text(
-              'Pricing coming soon',
-              style: FlowTypography.labelSmall(color: textSecondary).copyWith(
-                fontSize: 11,
-                fontStyle: FontStyle.italic,
-              ),
+              plan.billingDisclosure,
+              key: const Key('pro_billing_disclosure'),
+              style: FlowTypography.bodyMedium(color: textSecondary).copyWith(fontWeight: FontWeight.w600),
             ),
           ],
-        ),
+        ],
       ),
     );
   }

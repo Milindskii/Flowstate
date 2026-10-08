@@ -36,8 +36,11 @@ class CalendarService {
     String? timezone,
     /// A structured new task ("Urgent work arrived"): sent as typed, never parsed from prose.
     Map<String, dynamic>? quickAdd,
+    /// Stable per user message: a retry of the same message never costs a second Shield.
+    String? idempotencyKey,
   }) async {
     final body = <String, dynamic>{
+      if (idempotencyKey != null) 'idempotency_key': idempotencyKey,
       'selected_date': dateStr,
       'user_message': message,
       if (quickAdd != null) 'quick_add': quickAdd,

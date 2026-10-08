@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from ..core.ai_limits import provider_admission, request_deadline, breaker
 from ..core.config import settings
-from ..core.economy_config import SHIELD_COST_BUILD_MY_DAY
+from ..core.economy_config import SHIELD_COST_BUILD_MY_DAY, SHIELD_COST_REPLAN
 from ..core.logging import logger
 from ..models.ai_usage import AIRequest, AIUsagePeriod, AIUsageRecord, RateLimitWindow
 from ..models.flow_progression import FlowProfile
@@ -195,6 +195,7 @@ def _refund(db: Session, user_id: str, charge_source: str, today: date, units: i
     elif charge_source == "pro":
         _refund_period(db, user_id, "day", today)
         _refund_period(db, user_id, "month", today)
+        _refund_period(db, user_id, "replan_day", today)
 
 
 # ---- lifecycle -------------------------------------------------------------------------------------------------
@@ -369,6 +370,129 @@ def release_slot(db: Session, request_id: str, user_id: str, *, ok: bool, code: 
         db.commit()
     else:
         _release(db, request_id, user_id, "none", "failed", code or "failed")
+
+
+def reserve_replan(db: Session, *, user_id: str, fingerprint: str, idempotency_key: Optional[str] = None) -> Optional[Ticket]:
+    """Atomic reservation for one AI Replan:
+    - AI Replan = 1 Shield for non-Pro users.
+    - Rules-only replan = 0 Shields (rules never call this).
+    - Pro users use fair-use daily allowance (source: 'pro', units: 1).
+    - Preserves atomic reservation on FlowProfile.shields_available.
+    - Idempotency & concurrent slot reservation (409 if another AI request is in progress).
+    - If user cannot afford the 1 Shield, returns None (no provider call).
+    - Commits; no transaction remains open during the provider call.
+    """
+    expire_stale(db, user_id)
+    usage = AIEconomyService.get_or_create_usage(db, user_id)
+    profile = AIEconomyService.get_or_create_profile(db, user_id)
+    is_pro = effective_is_pro(usage)
+    now = _utcnow()
+    key = idempotency_key or f"replan:{uuid.uuid4().hex}"
+
+    existing = db.query(AIRequest).filter(
+        AIRequest.user_id == user_id, AIRequest.idempotency_key == key).first()
+    reuse_id: Optional[str] = None
+    if existing is not None:
+        if existing.status in ("succeeded", "reserved") and existing.request_sha256 != fingerprint:
+            raise GatewayError(422, "idempotency_key_reused",
+                               "This request key was already used for a different request.")
+        if existing.status == "reserved":
+            raise GatewayError(409, "request_in_progress", "This request is already being processed.",
+                               {"Retry-After": "3"})
+        if existing.status == "succeeded":
+            return None
+        reuse_id = existing.id
+
+    from . import replan_ai
+    cap = replan_ai.PRO_REPLAN_AI_PER_DAY if is_pro else replan_ai.FREE_REPLAN_AI_PER_DAY
+    if not consume_period(db, user_id, "replan_day", cap):
+        db.commit()
+        return None
+
+    if is_pro:
+        source = "pro"
+        units = 1
+    else:
+        cost = SHIELD_COST_REPLAN
+        if profile.shields_available < cost:
+            _refund_period(db, user_id, "replan_day", now.date())
+            db.commit()
+            logger.info("ai_gateway.replan_unaffordable user=%s shields=%s needed=%s",
+                        user_id, profile.shields_available, cost)
+            return None
+
+        res = db.execute(
+            update(FlowProfile)
+            .where(FlowProfile.user_id == user_id, FlowProfile.shields_available >= cost)
+            .values(shields_available=FlowProfile.shields_available - cost)
+        )
+        if res.rowcount != 1:
+            _refund_period(db, user_id, "replan_day", now.date())
+            db.commit()
+            return None
+        source = "shield"
+        units = cost
+
+    deadline = now + timedelta(seconds=settings.AI_REQUEST_DEADLINE_SECONDS + settings.AI_RESERVATION_MARGIN_SECONDS)
+    try:
+        if reuse_id:
+            flipped = db.execute(
+                update(AIRequest).where(AIRequest.id == reuse_id, AIRequest.status.in_(("failed", "expired")))
+                .values(status="reserved", charge_source=source, charge_units=units, request_sha256=fingerprint,
+                        deadline_at=deadline, error_code=None, finished_at=None, response_json=None,
+                        latency_ms=None, created_at=now)
+            ).rowcount
+            if flipped != 1:
+                raise IntegrityError("claim", {}, Exception("concurrent retry"))
+            req_id = reuse_id
+        else:
+            req = AIRequest(user_id=user_id, idempotency_key=key, kind="replan", status="reserved",
+                            charge_source=source, charge_units=units, request_sha256=fingerprint, created_at=now,
+                            deadline_at=deadline)
+            db.add(req)
+            db.flush()
+            req_id = req.id
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        _refund(db, user_id, source, now.date(), units)
+        db.commit()
+        raise GatewayError(409, "another_request_in_flight",
+                           "Another AI request is already in progress. Please wait for it to finish.",
+                           {"Retry-After": "3"})
+
+    logger.info("ai_gateway.reserve_replan request=%s user=%s source=%s units=%s",
+                req_id, user_id, source, units)
+    return Ticket(request_id=req_id, user_id=user_id, charge_source=source,
+                  idempotency_key=key, started_at=time.perf_counter(), charge_units=units)
+
+
+def finish_replan(db: Session, ticket: Ticket, *, ok: bool, code: Optional[str] = None) -> None:
+    """Finish the AI Replan slot:
+    - If ok=True, charge stands (status='succeeded', FlowProfile.shields_used_count incremented).
+    - If ok=False, exact refund of the 1 Shield (or pro cap) and status='failed'.
+    Commits.
+    """
+    if ok:
+        now = _utcnow()
+        latency = round((time.perf_counter() - ticket.started_at) * 1000)
+        won = db.execute(
+            update(AIRequest).where(AIRequest.id == ticket.request_id, AIRequest.status == "reserved")
+            .values(status="succeeded", finished_at=now, latency_ms=latency)
+        ).rowcount == 1
+        if won:
+            values: Dict[str, Any] = {"total_ai_uses": AIUsageRecord.total_ai_uses + 1, "last_ai_use_at": now}
+            if ticket.charge_source == "shield":
+                values["shield_uses_consumed"] = AIUsageRecord.shield_uses_consumed + 1
+                db.execute(update(FlowProfile).where(FlowProfile.user_id == ticket.user_id)
+                           .values(shields_used_count=FlowProfile.shields_used_count + ticket.charge_units))
+            db.execute(update(AIUsageRecord).where(AIUsageRecord.user_id == ticket.user_id).values(**values))
+            logger.info("ai_gateway.replan_succeed request=%s user=%s source=%s units=%s latency_ms=%s",
+                        ticket.request_id, ticket.user_id, ticket.charge_source, ticket.charge_units, latency)
+        db.commit()
+    else:
+        fail(db, ticket, code=code or "no_understanding")
+
 
 
 def admit_replan_burst(db: Session, user_id: str) -> None:

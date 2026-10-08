@@ -14,6 +14,7 @@ import 'cookie_policy_screen.dart';
 import 'privacy_policy_screen.dart';
 import 'refund_policy_screen.dart';
 import 'terms_of_service_screen.dart';
+import '../../utils/friendly_error.dart';
 
 /// Central Legal, Compliance & GDPR Rights Hub
 class LegalHubScreen extends StatefulWidget {
@@ -211,7 +212,7 @@ class _LegalHubScreenState extends State<LegalHubScreen> {
                           } catch (e) {
                             setSheetState(() => isSubmitting = false);
                             if (ctx.mounted) {
-                              ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('Submission notice: $e')));
+                              ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(friendlyActionError(e, fallback: "We couldn't send that just now. Please try again."))));
                             }
                           }
                         },
@@ -280,7 +281,7 @@ class _LegalHubScreenState extends State<LegalHubScreen> {
           setState(() => _isDeactivating = false);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Deactivation note: $e'),
+              content: Text(friendlyActionError(e, fallback: "We couldn't deactivate your account just now. Please try again.")),
               backgroundColor: FlowColors.error,
             ),
           );
@@ -331,7 +332,7 @@ class _LegalHubScreenState extends State<LegalHubScreen> {
         setState(() => _isExporting = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Export notice: $e'),
+            content: Text(friendlyActionError(e, fallback: "We couldn't prepare your export just now. Please try again.")),
             backgroundColor: FlowColors.error,
           ),
         );
@@ -392,7 +393,7 @@ class _LegalHubScreenState extends State<LegalHubScreen> {
           setState(() => _isDeleting = false);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Account deletion notice: $e'),
+              content: Text(friendlyActionError(e, fallback: "We couldn't delete your account just now. Please try again.")),
               backgroundColor: FlowColors.error,
             ),
           );

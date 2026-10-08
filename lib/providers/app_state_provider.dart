@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../engines/task_state.dart';
+import '../utils/single_flight.dart';
 import '../models/task_item.dart';
 import '../models/task_reflection.dart';
 import '../services/reflection_store.dart';
@@ -31,6 +32,7 @@ import '../services/noya_busy.dart';
 import '../services/day_path_anchor_store.dart';
 import '../engines/day_path_order.dart';
 import '../services/plan_confirm_exception.dart';
+import '../services/smart_reminder_service.dart';
 import '../utils/mock_data.dart';
 
 /// Explicit Today Network Status (kept separate from content/task lifecycle state)
@@ -46,6 +48,9 @@ enum TodayNetworkState {
 
 /// Central App State Provider coordinating UI data and the backend single source of truth.
 class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
+  /// Rapid repeated taps on the same AI/action button become ONE request.
+  final SingleFlight _flight = SingleFlight();
+
   // Local Deterministic Engines (Used for initial mock / demo state)
   final ReadinessEngine _readinessEngine = const ReadinessEngine();
   final SchedulingEngine _schedulingEngine = const SchedulingEngine();
@@ -80,7 +85,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, DayScheduleResponse> _dayScheduleCache = {};
   Map<String, DayScheduleResponse> get dayScheduleCache => _dayScheduleCache;
   bool _isLoadingCalendarDay = false;
-  DateTime _selectedCalendarDate = DateTime.now();
+  DateTime _selectedCalendarDate = _dayOnly(_clockNow());
   int _calendarDayRequestId = 0;
 
   /// Tasks the user deleted here whose DELETE is not yet confirmed and re-read. Any day the server sends in the
@@ -150,6 +155,46 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// The time without creating the FlowClock singleton (whose minute timer belongs to the screens that use it).
   static DateTime _clockNow() => FlowClock.currentTime();
 
+  static DateTime _dayOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+  /// The local date the app last acted on. The ONE thing that decides "the day changed": midnight in the
+  /// foreground (clock tick) and waking up the next morning (resume) both go through [_rollOverIfNewDay].
+  DateTime _lastKnownToday = _dayOnly(_clockNow());
+
+  /// The local date changed since the app last looked: tomorrow's tasks are today's now. Moves the viewed Calendar
+  /// day along (only if it was the old today: a day the user navigated to stays), drops everything cached under the
+  /// old date, and re-reads Today and the day from the server (the server owns the new day's plan).
+  /// Returns true when the date had changed.
+  bool _rollOverIfNewDay() {
+    final today = _dayOnly(_clockNow());
+    if (today == _lastKnownToday) return false;
+    final previous = _lastKnownToday;
+    _lastKnownToday = today;
+    if (_dayOnly(_selectedCalendarDate) == previous) _selectedCalendarDate = today;
+    _dayScheduleCache.clear();
+    _todaySnapshot = null; // yesterday's payload (its "tomorrow" section, its timeline) is not today's
+    _lastBackendSyncAt = null;
+    _recalculateSchedule();
+    notifyListeners();
+    if (!_isDemoMode && isAuthenticated && _onboardingComplete) {
+      unawaited(loadCalendarDay(_selectedCalendarDate, silent: true));
+      unawaited(refreshTodayData(silent: true));
+    } else if (_selectedDateSchedule != null) {
+      unawaited(loadCalendarDay(_selectedCalendarDate, silent: true));
+    }
+    SmartReminderService.instance.onDateRollover(today, _tasks);
+    return true;
+  }
+
+  /// A Today payload fetched before today began, for a different date: last night's, served from the offline cache.
+  /// (A live answer is fetched now, so it is never "before today began" and is always accepted.)
+  bool _isYesterdaysToday(TodayResponseModel m) {
+    if (m.date.isEmpty) return false;
+    final today = _dayOnly(_clockNow());
+    final ymd = '${today.year.toString().padLeft(4, '0')}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    return m.date != ymd && m.lastUpdatedAt.isBefore(today);
+  }
+
   /// The Calendar is showing days: follow the minute clock from now on (once).
   void _ensureClockSubscription() {
     if (_clockSubscribed) return;
@@ -198,18 +243,17 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// snapshot taken before the app left. Silent: a cached day stays on screen while the fresh one loads.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed || _isDemoMode || !isAuthenticated || !_onboardingComplete) return;
+    if (state != AppLifecycleState.resumed) return;
+    if (_rollOverIfNewDay()) {
+      _lastResumeRefresh = _clockNow();
+      _lastClockTickAt = _clockNow();
+      return;
+    }
+    if (_isDemoMode || !isAuthenticated || !_onboardingComplete) return;
     final now = _clockNow();
     final last = _lastResumeRefresh;
     if (last != null && now.difference(last) < const Duration(seconds: 20)) return;
     _lastResumeRefresh = now;
-    // The app slept past midnight while showing "today": show the new today, not yesterday.
-    final lastSeen = _lastClockTickAt ?? _lastCalendarFetchAt;
-    if (lastSeen != null) {
-      final seenDay = DateTime(lastSeen.year, lastSeen.month, lastSeen.day);
-      final today = DateTime(now.year, now.month, now.day);
-      if (_selectedCalendarDate == seenDay && seenDay != today) _selectedCalendarDate = today;
-    }
     _lastClockTickAt = _clockNow();
     unawaited(loadCalendarDay(_selectedCalendarDate, silent: true));
     unawaited(refreshTodayData());
@@ -222,6 +266,8 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     final now = FlowClock().now;
     final previous = _lastClockTickAt ?? now;
     _lastClockTickAt = now;
+    SmartReminderService.instance.checkDueReminders(now);
+    if (_rollOverIfNewDay()) return; // a new day re-reads everything; no stop-boundary logic for the old one
     final day = _selectedDateSchedule;
     if (_isDemoMode || !isAuthenticated || day == null || _calendarRefreshInFlight) return;
     final today = DateTime(now.year, now.month, now.day);
@@ -241,9 +287,12 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (_selectedDateSchedule != null) await loadCalendarDay(_selectedCalendarDate, silent: true);
       return;
     }
+    // The task list too: the server may have moved the task (a skip, a collateral move), and the app's own copy is what
+    // later projections of the day are drawn from. Reads are numbered and unconfirmed edits laid back on top.
     await Future.wait<void>([
       refreshTodayData(),
       loadCalendarDay(_selectedCalendarDate, silent: true),
+      loadUserTasks(),
     ]);
   }
 
@@ -404,6 +453,8 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     _loadOnboardingState();
     _reflectionsReady = _loadReflections();
     _routeStatesReady = _loadRouteStates();
+    SmartReminderService.instance.taskListProvider = () => _tasks;
+    SmartReminderService.instance.syncTasks(_tasks);
     _anchorStore.load().then((_) {
       final day = _selectedDateSchedule;
       if (day != null) _recordAnchors(day.date, day);
@@ -639,7 +690,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Fallback: derive reasons from task data only (no fabricated readiness claims)
     final reasons = <String>[];
     if (rec.isPriority) reasons.add('High priority');
-    if (rec.deadline.isNotEmpty) reasons.add(rec.deadline);
+    if (rec.deadlineLabel.isNotEmpty) reasons.add(rec.deadlineLabel);
     return reasons;
   }
 
@@ -672,6 +723,12 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     final day = DateFormat('yyyy-MM-dd').format(date);
     return {for (final id in _skippedTaskIds) if (_skipDates[id] == day) id};
   }
+
+  /// Every still-skipped task and the day it was skipped on (History files an explicit skip under that day).
+  Map<String, DateTime> get skippedOnByTask => {
+        for (final id in _skippedTaskIds)
+          if (DateTime.tryParse(_skipDates[id] ?? '') != null) id: DateTime.parse(_skipDates[id]!),
+      };
 
   /// Tasks the user has completed in this session that the server may not have confirmed yet.
   Set<String> get locallyCompletedTaskIds => {for (final t in _tasks) if (t.isCompleted) t.id};
@@ -730,7 +787,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     // 2. If backend recommendation exists, is not completed locally, and is not deferred:
     final backendTask = _todaySnapshot?.currentRecommendation?.task;
     final isBackendTaskCompletedLocally = backendTask != null &&
-        _tasks.any((t) => (t.id == backendTask.id || t.title.toLowerCase() == backendTask.title.toLowerCase()) && t.isCompleted);
+        _tasks.any((t) => t.id == backendTask.id && t.isCompleted); // by id: another day's same-named task is another task
     if (backendTask != null && !backendTask.isCompleted && !isBackendTaskCompletedLocally && !_deferredTaskIds.contains(backendTask.id) && isTaskForToday(backendTask) && !isMissedSlot(backendTask)) {
       return backendTask;
     }
@@ -807,6 +864,17 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     unawaited(recordOverride(chosenTaskId: cleanId).then((_) => _afterTaskMutation()));
   }
 
+  /// The day a skip marks the task's stop on: the day the task is on (a skip made on tomorrow's task belongs to
+  /// tomorrow, not today). A slot that is already in the past is shown on today (it carries over), so that skip is today's.
+  DateTime _skipDayOf(String taskId) {
+    final today = _dayOnly(_clockNow());
+    final task = _tasks.where((t) => t.id == taskId).firstOrNull;
+    final at = task?.scheduledStart ?? task?.plannedDate;
+    if (at == null) return today;
+    final day = _dayOnly(at);
+    return day.isBefore(today) ? today : day;
+  }
+
   /// Explicitly skips/defers ONE task, from any screen. The server keeps its slot as "skipped" history (its stop
   /// stays there on the day path) and moves the task to its next good window; works without a Today
   /// recommendation. Returns the server's message (null offline / in demo).
@@ -818,7 +886,8 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       cleanId = byTitle.id;
     }
     _skippedTaskIds.add(cleanId);
-    _skipDates[cleanId] = DateFormat('yyyy-MM-dd').format(_clockNow());
+    SmartReminderService.instance.onTaskSkipped(cleanId);
+    _skipDates[cleanId] = DateFormat('yyyy-MM-dd').format(_skipDayOf(cleanId));
     _deferredTaskIds.add(cleanId);
     if (_preferredActiveTaskId == cleanId) {
       _preferredActiveTaskId = null;
@@ -897,7 +966,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final updated = task.copyWith(
       deadline: deadlineStr,
-      deadlineAt: task.deadlineAt ?? normalizedDate,
+      deadlineAt: task.deadlineAt ?? normalizedDate, // local only: the save below never sends it
       scheduledStart: newScheduledStart,
       clearScheduledStart: newScheduledStart == null,
       scheduledEnd: newScheduledEnd,
@@ -911,6 +980,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
 
     _tasks[index] = updated;
+    SmartReminderService.instance.onTaskRescheduled(updated);
     _forgetAnchor(taskId); // an explicit new time/day: the stop takes its new place
 
     // Moved to another day: it leaves the day on screen now, not after the server answers. A read already in flight
@@ -1201,7 +1271,13 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       final task = _tasks[index];
       final willComplete = !task.isCompleted;
       _tasks[index] = task.copyWith(isCompleted: willComplete, completedAt: willComplete ? DateTime.now() : null);
-      if (!willComplete) _pendingCompletions.remove(task.id); // taken back: no unconfirmed completion to protect
+      if (!willComplete) {
+        _pendingCompletions.remove(task.id); // taken back: no unconfirmed completion to protect
+        _completedAfterDeviationTaskIds.remove(task.id); // no longer done, so no longer "done late"
+        SmartReminderService.instance.onTaskUpdated(_tasks[index], task);
+      } else {
+        SmartReminderService.instance.onTaskCompleted(task.id);
+      }
 
       if (willComplete) {
         if (_preferredActiveTaskId == task.id || _preferredActiveTaskId == taskId) {
@@ -1210,6 +1286,14 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         // If this task was skipped or deferred, mark it as completed after deviation (recovery)
         final wasSkipped = _skippedTaskIds.contains(task.id);
         final wasDeferred = _deferredTaskIds.contains(task.id);
+        // A slot that ended before this completion was MISSED (derived from the clock, never stored): finishing it
+        // now is a recovery too, so its stop rejoins the road marked as done late rather than as done on plan.
+        final slotEnd = task.scheduledEnd ?? task.scheduledStart?.add(Duration(minutes: task.durationMinutes));
+        final wasMissed = !task.isCommitment && slotHasEnded(slotEnd, _clockNow());
+        if (wasMissed && !wasSkipped && !wasDeferred) {
+          _completedAfterDeviationTaskIds.add(task.id);
+          _saveRouteStates();
+        }
         if (wasSkipped || wasDeferred) {
           _completedAfterDeviationTaskIds.add(task.id);
           _skippedTaskIds.remove(task.id);
@@ -1343,6 +1427,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
 
     _tasks.insert(0, newTask);
+    SmartReminderService.instance.onTaskAdded(newTask);
     _dayScheduleCache.clear();
     _recalculateReadiness();
     _recalculateSchedule();
@@ -1365,6 +1450,10 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (idx != -1) {
           final wasCompleted = _tasks[idx].isCompleted;
           _tasks[idx] = persisted.copyWith(isCompleted: wasCompleted);
+          if (persisted.id != tempId) {
+            SmartReminderService.instance.cancelReminder(tempId);
+            SmartReminderService.instance.onTaskAdded(_tasks[idx]);
+          }
           if (wasCompleted) {
             unawaited(_sendCompleteToBackend(_tasks[idx]));
           }
@@ -1403,6 +1492,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (index != -1) {
       final previous = _tasks[index];
       _tasks[index] = task;
+      SmartReminderService.instance.onTaskUpdated(task, previous);
       if (previous.scheduledStart != task.scheduledStart || previous.plannedDate != task.plannedDate) {
         _forgetAnchor(task.id); // the user edited its time/day
       }
@@ -1425,7 +1515,10 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
           // A rejected save is reverted and reported, never silently kept.
           debugPrint('Error saving task ${task.id}: $e');
           final i = _tasks.indexWhere((t) => t.id == task.id);
-          if (i != -1) _tasks[i] = previous;
+          if (i != -1) {
+            _tasks[i] = previous;
+            SmartReminderService.instance.onTaskUpdated(previous, task);
+          }
           _lastSyncError = "Couldn't save changes to \u201c${task.title}\u201d. They were reverted.";
           _dayScheduleCache.clear();
           _unsyncedTaskIds.remove(task.id);
@@ -1451,6 +1544,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     final index = _tasks.indexWhere((t) => t.id == taskId);
     final removed = index == -1 ? null : _tasks[index];
     if (index != -1) _tasks.removeAt(index);
+    SmartReminderService.instance.onTaskDeleted(taskId);
     _forgetAnchor(taskId);
     _unsyncedTaskIds.remove(taskId);
     _dayScheduleCache.clear();
@@ -1509,6 +1603,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     if (!serverOk && removed != null && !_tasks.any((t) => t.id == taskId)) {
       _tasks.insert(index.clamp(0, _tasks.length), removed);
+      SmartReminderService.instance.onTaskAdded(removed);
       _lastSyncError = "Couldn't delete \u201c${removed.title}\u201d. It was put back.";
       _deletedTaskIds.removeAll(deleted);
       _dayScheduleCache.clear();
@@ -1660,6 +1755,19 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     required DateTime date,
     required String message,
     Map<String, dynamic>? quickAdd,
+    String? idempotencyKey,
+  }) {
+    final dateKey = DateFormat('yyyy-MM-dd').format(date);
+    // The same request while it is still running shares one call (one model call, one possible Shield charge).
+    return _flight.run('replan-$dateKey-$message-${quickAdd ?? ''}', () => _replanDay(
+          date: date, message: message, quickAdd: quickAdd, idempotencyKey: idempotencyKey));
+  }
+
+  Future<ReplanResponse> _replanDay({
+    required DateTime date,
+    required String message,
+    Map<String, dynamic>? quickAdd,
+    String? idempotencyKey,
   }) {
     // Noya shows "thinking" from the moment the work starts until it settles (success, error or timeout).
     return busy.track(() async {
@@ -1673,6 +1781,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         currentLocalTime: now,
         timezone: timezone,
         quickAdd: quickAdd,
+        idempotencyKey: idempotencyKey,
       );
     }, label: 'Rearranging your day');
   }
@@ -1691,8 +1800,10 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Atomically applies a confirmed PlanDiff to the database.
   /// Refreshes Calendar date schedule, User Tasks, and Today page (including Up Next).
-  Future<ApplyReplanResponse> applyReplan(PlanDiff diff) =>
-      busy.track(() => _applyReplan(diff), label: 'Updating your plan');
+  Future<ApplyReplanResponse> applyReplan(PlanDiff diff) => _flight.run(
+        'apply-replan',
+        () => busy.track(() => _applyReplan(diff), label: 'Updating your plan'),
+      );
 
   Future<ApplyReplanResponse> _applyReplan(PlanDiff diff) async {
     final tzName = await _localTimezone();
@@ -1703,6 +1814,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       _dayScheduleCache.clear();
       await loadCalendarDay(_selectedCalendarDate, silent: true);
       _recalculateSchedule();
+      SmartReminderService.instance.onReplanApplied(_tasks);
       notifyListeners();
       return ApplyReplanResponse(
         success: true,
@@ -1770,6 +1882,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         // 4. Recalculate local schedule and readiness
         _recalculateSchedule();
         _recalculateReadiness();
+        SmartReminderService.instance.onReplanApplied(_tasks);
         notifyListeners();
       }
       return res;
@@ -1918,6 +2031,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void setActiveFocusTask(TaskItem? task) {
     _activeFocusTask = task;
+    SmartReminderService.instance.activeFocusTaskId = task?.id;
     if (task != null) {
       _isBreakActive = false;
     }
@@ -1977,10 +2091,13 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     final energy = feeling >= 4 ? 'Energized' : (feeling == 3 ? 'Steady' : 'Drained');
     final at = completedAt ?? DateTime.now();
 
+    // A duration is only a duration when something measured it (the Focus timer). Screens that have no timer pass the
+    // planned length, which would make every estimate look perfect: store "unknown" (0) instead.
+    final measuredMinutes = durationMeasured ? actualMinutes : 0;
     final log = FeedbackLog(
       taskId: taskId,
       completedAt: at,
-      actualMinutes: actualMinutes,
+      actualMinutes: measuredMinutes,
       perceivedFocusScore: focus,
       energyFeeling: energy,
       energyScore: energyScore,
@@ -2017,7 +2134,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       difficulty: difficultyScore ?? 3,
       distraction: distractionScore ?? 1,
       completedAt: at,
-      actualMinutes: actualMinutes,
+      actualMinutes: measuredMinutes,
       plannedMinutes: reflected?.durationMinutes,
       plannedStart: reflected?.scheduledStart,
       durationFeedback: durationFeedback,
@@ -2150,7 +2267,10 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Local state is changed only AFTER the server confirms, using the rows the server stored.
   /// On failure this throws [PlanConfirmException]: nothing was saved, the preview must stay open,
   /// and a retry with the same [planId] is safe. Demo/offline-guest mode keeps the local-only path.
-  Future<void> confirmCandidates(List<TaskItem> candidates, {String? planId}) async {
+  Future<void> confirmCandidates(List<TaskItem> candidates, {String? planId}) =>
+      _flight.run('confirm-${planId ?? 'plan'}', () => _confirmCandidates(candidates, planId: planId));
+
+  Future<void> _confirmCandidates(List<TaskItem> candidates, {String? planId}) async {
     if (candidates.isEmpty) return;
 
     if (_isDemoMode || _currentUser == null) {
@@ -2242,6 +2362,10 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (t.plannedDate != null) 'planned_date': DateFormat('yyyy-MM-dd').format(t.plannedDate!),
       'client_ref': t.id,
       if (t.candidateId != null) 'candidate_id': t.candidateId,
+      if (t.routineOverrideId != null && t.routineOverrideDate != null) ...{
+        'routine_override_id': t.routineOverrideId,
+        'routine_override_date': t.routineOverrideDate,
+      },
       if (t.dependsOn.isNotEmpty) 'depends_on': t.dependsOn,
       if (t.prioritySource == 'explicit' || t.prioritySource == 'inferred') 'priority_source': t.prioritySource,
       if (t.durationSource != null) 'duration_source': t.durationSource,
@@ -2369,14 +2493,15 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// [authoritative] true (after a write such as Replan Apply): never fall back to a cached snapshot, because
   /// that would show the pre-write schedule as if it were current. On failure the stale snapshot is dropped and
   /// Today is rebuilt from the already-adopted local tasks.
-  Future<void> refreshTodayData({bool authoritative = false}) async {
+  Future<void> refreshTodayData({bool authoritative = false, bool silent = false}) async {
+    if (!_isDemoMode && isAuthenticated) _ensureClockSubscription(); // midnight reaches Today even if Calendar was never opened
     // Only the newest Today read is applied, and its schedule only if no later Calendar read wrote one (see
     // _scheduleWriteSeq): an older answer arriving last can never put a stale, differently-shaped list back.
     final requestId = ++_todayRequestId;
     final scheduleTicket = ++_scheduleWriteSeq;
     // A refresh with Today already on screen is silent: the content stays put instead of flashing a skeleton
     // on every resume / edit / pull-to-refresh. Only the very first load shows the loading state.
-    if (_todaySnapshot == null) {
+    if (_todaySnapshot == null && !silent) {
       _isLoading = true;
       _todayNetworkState = TodayNetworkState.loading;
       _errorMessage = null;
@@ -2386,6 +2511,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     try {
       final today = await todayService.getTodayExperience(allowCachedFallback: !authoritative);
       if (requestId != _todayRequestId) return; // a newer Today read owns the state
+      if (_isYesterdaysToday(today)) throw const ApiException('Cached Today is from an earlier day');
       _todaySnapshot = today;
       _lastUpdatedAt = today.lastUpdatedAt;
       _lastBackendSyncAt = DateTime.now();
@@ -2417,8 +2543,9 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         return;
       }
       // Check for cached offline data
-      final cached = await todayService.getCachedToday();
+      var cached = await todayService.getCachedToday();
       if (requestId != _todayRequestId) return;
+      if (cached != null && _isYesterdaysToday(cached)) cached = null; // never show last night's plan as today's
       if (cached != null) {
         _todaySnapshot = cached;
         _lastUpdatedAt = cached.lastUpdatedAt;
@@ -2563,6 +2690,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (requestId < _tasksAppliedId) return;
       _tasksAppliedId = requestId;
       _tasks = _withPendingTaskEdits(remoteTasks).where((t) => !_deletedTaskIds.contains(t.id)).toList();
+      SmartReminderService.instance.syncTasks(_tasks);
       _recalculateReadiness();
       _recalculateSchedule();
       notifyListeners();

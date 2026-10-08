@@ -160,22 +160,17 @@ class MockAISubscriptionApiService extends ApiService {
     if (endpoint == '/api/v1/subscription/plans') {
       return [
         {
-          'id': 'monthly',
-          'name': 'Monthly',
-          'display_price': '₹— / month',
+          'plan_id': 'flowstate_pro_monthly',
+          'title': 'Monthly',
           'billing_period': 'monthly',
+          'price_display': '₹89 / month',
+          'monthly_price_inr': 89,
+          'daily_price_display': '₹2.97/day',
+          'billing_disclosure': '₹89 billed monthly',
+          'purchasable': false,
           'is_best_value': false,
-          'savings_text': null,
-          'pricing_note': 'Pricing coming soon',
-        },
-        {
-          'id': 'yearly',
-          'name': 'Yearly',
-          'display_price': '₹— / year',
-          'billing_period': 'yearly',
-          'is_best_value': true,
-          'savings_text': null,
-          'pricing_note': 'Pricing coming soon',
+          'status': 'pricing_set',
+          'features': <String>[],
         },
       ];
     }
@@ -556,7 +551,7 @@ void main() {
       expect(find.text('Flowstate, without limits.'), findsOneWidget);
     });
 
-    testWidgets('10. Pro screen renders Monthly and Yearly option cards without fake prices', (tester) async {
+    testWidgets('10. Pro screen leads with the daily price and states the monthly billing next to it', (tester) async {
       await tester.pumpWidget(createTestApp(
         child: const ProSubscriptionScreen(),
       ));
@@ -564,11 +559,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Monthly'), findsOneWidget);
-      expect(find.text('Yearly'), findsOneWidget);
-      expect(find.text('Best value'), findsOneWidget);
-      expect(find.text('₹— / month'), findsOneWidget);
-      expect(find.text('₹— / year'), findsOneWidget);
-      expect(find.textContaining('₹199'), findsNothing);
+      expect(find.byKey(const Key('pro_daily_price')), findsOneWidget);
+      expect(find.text('₹2.97/day'), findsOneWidget);
+      expect(find.text('₹89 billed monthly'), findsOneWidget);
+      // one plan only: no yearly card, no placeholder prices, no invented discounts
+      expect(find.text('Yearly'), findsNothing);
+      expect(find.textContaining('₹—'), findsNothing);
+      expect(find.textContaining('Pricing coming soon'), findsNothing);
       expect(find.textContaining('% off'), findsNothing);
     });
 
@@ -1357,7 +1354,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(api.aiPlanCallCount, 0);
-      expect(find.text('No Shields were used.'), findsOneWidget);
+      expect(find.text('No Shields were used. Your existing tasks are safe.'), findsOneWidget);
       expect(find.text(ambiguous), findsOneWidget);
       expect(find.text('Noya is resting'), findsOneWidget);
       expect(api.shieldsCount, 2);
@@ -1424,7 +1421,7 @@ void main() {
       await tester.tap(find.byKey(const Key('use_shields_button')));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('AI planning failed'), findsOneWidget);
+      expect(find.textContaining('Something went wrong'), findsOneWidget);
       expect(find.text(ambiguous), findsOneWidget);
       expect(find.text('Noya is resting'), findsOneWidget);
       expect(find.textContaining('Exception'), findsNothing);

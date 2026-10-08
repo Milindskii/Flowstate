@@ -28,8 +28,13 @@ class FlowCompanion {
     this.cosmeticState = '{}',
   });
 
+  /// Level 100 is Super Noya: there is no next level (the server sends xp_to_next_level 0).
+  static const int maxLevel = 100;
+  bool get isMaxLevel => level >= maxLevel;
+
   /// Fraction of XP toward next level (0.0 to 1.0)
   double get progressFraction {
+    if (isMaxLevel) return 1.0;
     final totalLevelBand = companionXp + xpToNextLevel;
     if (totalLevelBand <= 0) return 0.0;
     final frac = companionXp / totalLevelBand;
@@ -76,7 +81,7 @@ class FlowCompanion {
       level: json['level'] as int? ?? 1,
       stage: json['stage'] as String? ?? 'Baby',
       companionXp: json['companion_xp'] as int? ?? 0,
-      xpToNextLevel: json['xp_to_next_level'] as int? ?? 60,
+      xpToNextLevel: json['xp_to_next_level'] as int? ?? (((json['level'] as int?) ?? 1) >= maxLevel ? 0 : 60),
       isEvolutionReady: json['is_evolution_ready'] as bool? ?? false,
       isActive: json['is_active'] as bool? ?? true,
       cosmeticState: json['cosmetic_state'] as String? ?? '{}',

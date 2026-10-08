@@ -7,6 +7,7 @@ import '../components/noya_motion_view.dart';
 import '../models/history_days.dart';
 import '../models/task_reflection.dart';
 import '../providers/app_state_provider.dart';
+import '../providers/flow_provider.dart';
 import '../services/flow_clock.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
@@ -69,9 +70,16 @@ class _InsightsHistoryScreenState extends State<InsightsHistoryScreen> {
   Widget build(BuildContext context) {
     final state = Provider.of<AppStateProvider>(context);
     final accent = Theme.of(context).colorScheme.primary;
-    final allDays = HistoryDay.from(tasks: state.tasks, reflections: state.reflections);
     final now = FlowClock().now;
     final today = DateTime(now.year, now.month, now.day);
+    // Same clock, bedtime and skips as Calendar, so a task Calendar draws as missed/skipped is not done here either.
+    final allDays = HistoryDay.from(
+      tasks: state.tasks,
+      reflections: state.reflections,
+      now: now,
+      bedtimeHours: state.personalData.bedtimeHour,
+      skippedOn: state.skippedOnByTask,
+    );
 
     final days = allDays.where((d) {
       if (_filter == HistoryFilter.all) return true;
@@ -82,7 +90,14 @@ class _InsightsHistoryScreenState extends State<InsightsHistoryScreen> {
     }).toList();
 
     final totalTasks = allDays.fold<int>(0, (sum, d) => sum + d.entries.length);
-    final totalMinutes = allDays.fold<int>(0, (sum, d) => sum + d.totalMinutes);
+    final activeDays = allDays.where((d) => d.entries.isNotEmpty).length;
+    final hasUnfinished = days.any((d) => d.unfinished.isNotEmpty);
+    // Focus Time is time in real Focus sessions (the server-timed total), never the length of the tasks that were
+    // finished. No sessions (or no data yet) reads as unavailable, not as a made-up number.
+    var focusMinutes = 0;
+    try {
+      focusMinutes = Provider.of<FlowProvider>(context).overview.totalFocusMinutes;
+    } catch (_) {}
 
     return Scaffold(
       backgroundColor: FlowColors.background(context),
@@ -170,7 +185,7 @@ class _InsightsHistoryScreenState extends State<InsightsHistoryScreen> {
                                   Expanded(
                                     child: _MetricTile(
                                       label: 'Focus Time',
-                                      value: _minutes(totalMinutes),
+                                      value: focusMinutes > 0 ? _minutes(focusMinutes) : '—',
                                       unit: 'total',
                                     ),
                                   ),
@@ -178,12 +193,20 @@ class _InsightsHistoryScreenState extends State<InsightsHistoryScreen> {
                                   Expanded(
                                     child: _MetricTile(
                                       label: 'Active Days',
-                                      value: '${allDays.length}',
-                                      unit: allDays.length == 1 ? 'day' : 'days',
+                                      value: '$activeDays',
+                                      unit: activeDays == 1 ? 'day' : 'days',
                                     ),
                                   ),
                                 ],
                               ),
+                              if (focusMinutes == 0) ...[
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Focus Time counts time in Focus sessions, so it stays empty until you use one.',
+                                  key: const Key('history_focus_empty_note'),
+                                  style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -217,7 +240,7 @@ class _InsightsHistoryScreenState extends State<InsightsHistoryScreen> {
                         const SizedBox(height: 14),
 
                         Text(
-                          '${days.length} ${days.length == 1 ? 'day' : 'days'} with finished work. Tap a day to open it.',
+                          '${days.length} ${days.length == 1 ? 'day' : 'days'}${hasUnfinished ? '' : ' with finished work'}. Tap a day to open it.',
                           style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
                         ),
                         const SizedBox(height: 8),
@@ -318,6 +341,7 @@ String _dayTitle(DateTime date, DateTime today) {
   final diff = today.difference(date).inDays;
   if (diff == 0) return 'Today';
   if (diff == 1) return 'Yesterday';
+  if (diff == -1) return 'Tomorrow'; // work planned for tomorrow and already done
   return DateFormat(date.year == today.year ? 'EEEE, MMM d' : 'EEE, MMM d, yyyy').format(date);
 }
 
@@ -343,7 +367,9 @@ class _DayRow extends StatelessWidget {
     final feeling = day.averageFeeling;
     final summary = [
       '$count finished',
-      _minutes(day.totalMinutes),
+      if (day.missedCount > 0) '${day.missedCount} not done',
+      if (day.skippedCount > 0) '${day.skippedCount} skipped',
+      if (day.totalMinutes > 0) _minutes(day.totalMinutes),
       if (feeling != null) 'felt ${TaskReflection.feelingLabel(feeling.round()).toLowerCase()}',
     ].join(' · ');
     final duration = FlowMotion.responsiveDuration(context, FlowMotion.standardDuration);
@@ -571,10 +597,60 @@ class _DayDetails extends StatelessWidget {
                         ),
                         Text(
                           [
-                            '${e.minutes} min',
+                            if (e.minutes > 0) '${e.minutes} min',
                             if (e.category != null) e.category!,
+                            if (e.timing == HistoryTiming.early) 'done early · ${DateFormat('MMM d').format(e.completedAt)}',
+                            if (e.timing == HistoryTiming.late) 'done late · ${DateFormat('MMM d').format(e.completedAt)}',
                             if (e.reflection != null) 'felt ${TaskReflection.feelingLabel(e.reflection!.feeling).toLowerCase()}',
                           ].join(' · '),
+                          style: FlowTypography.bodySmall(color: muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          for (final m in day.unfinished)
+            Padding(
+              key: Key('history_unfinished_${m.taskId}_${m.outcome.name}'),
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 72,
+                    child: Text(
+                      m.plannedStart == null ? '' : time.format(m.plannedStart!),
+                      style: FlowTypography.bodySmall(color: muted).copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          m.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: FlowTypography.bodyMedium(color: FlowColors.textPrimaryOf(context)).copyWith(fontWeight: FontWeight.w600),
+                        ),
+                        Text.rich(
+                          TextSpan(children: [
+                            TextSpan(
+                              text: m.label,
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: m.outcome == HistoryOutcome.skipped ? FlowColors.warningOf(context) : FlowColors.errorOf(context),
+                              ),
+                            ),
+                            TextSpan(
+                              text: [
+                                if (m.plannedMinutes > 0) '${m.plannedMinutes} min planned',
+                                if (m.category != null) m.category!,
+                              ].map((s) => ' · $s').join(),
+                            ),
+                          ]),
                           style: FlowTypography.bodySmall(color: muted),
                         ),
                       ],
