@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/flow_overview.dart';
 import '../models/flow_companion.dart';
+import '../models/shield_wallet.dart';
 import 'api_service.dart';
 
 /// Single source of truth client for the Flow progression layer.
@@ -206,6 +207,51 @@ class FlowService {
       species: species,
       name: name ?? info.defaultName,
     );
+  }
+
+  /// The server's Shield wallet: balance, prices, ad offer and pack.
+  Future<ShieldWallet> getShieldWallet() async {
+    final res = await _api.get('/api/v1/shields');
+    if (res is Map<String, dynamic>) return ShieldWallet.fromJson(res);
+    throw const ApiException('Invalid Shield wallet response');
+  }
+
+  /// Restore a broken streak. [idempotencyKey] is reused by a retry of the SAME confirmation, so a retry can never
+  /// charge twice; [expectedCost] is the price the user saw (the server refuses a stale one); [restoreMethod] is 'shield' or 'ads'.
+  Future<Map<String, dynamic>> restoreStreak({
+    required String idempotencyKey,
+    required int expectedCost,
+    String restoreMethod = 'shield',
+  }) async {
+    final res = await _api.post('/api/v1/flow/streak/restore', body: {
+      'idempotency_key': idempotencyKey,
+      'expected_cost': expectedCost,
+      'restore_method': restoreMethod,
+    });
+    if (res is Map<String, dynamic>) return res;
+    throw const ApiException('Invalid streak restore response');
+  }
+
+  /// Register one rewarded ad before it is shown (nothing is granted here).
+  Future<Map<String, dynamic>> startAdSession() async {
+    final res = await _api.post('/api/v1/shields/ads/sessions');
+    if (res is Map<String, dynamic>) return res;
+    throw const ApiException('Invalid ad session response');
+  }
+
+  /// The ad session as the server sees it ("verified" only after Google's signed callback).
+  Future<Map<String, dynamic>> adSessionStatus(String sessionId) async {
+    final res = await _api.get('/api/v1/shields/ads/sessions/$sessionId');
+    if (res is Map<String, dynamic>) return res;
+    throw const ApiException('Invalid ad session response');
+  }
+
+  /// Hand a Google Play purchase token to the server, which verifies it with Google before granting anything.
+  Future<Map<String, dynamic>> verifyShieldPack({required String purchaseToken, required String productId}) async {
+    final res = await _api.post('/api/v1/shields/purchases/verify',
+        body: {'purchase_token': purchaseToken, 'product_id': productId});
+    if (res is Map<String, dynamic>) return res;
+    throw const ApiException('Invalid purchase verification response');
   }
 
   /// User-confirmed streak shield recovery call.

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -8,6 +10,7 @@ import '../components/noya_companion_view.dart';
 import '../components/noya_failure_state.dart';
 import '../components/noya_motion_view.dart';
 import '../components/noya_shield_gate.dart';
+import '../components/shield_popups.dart';
 import '../components/noya_notice.dart';
 import '../components/routine_confirm_sheet.dart';
 import '../components/task_date_time_pickers.dart';
@@ -34,6 +37,7 @@ import 'package:supabase_flutter/supabase_flutter.dart' hide AuthUser;
 import '../services/auth_service.dart';
 import 'auth_screen.dart';
 import 'flow_screen.dart';
+import 'pro_subscription_screen.dart';
 import '../utils/friendly_error.dart';
 
 enum _BrainDumpViewMode { input, preview, edit }
@@ -180,8 +184,26 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       final status = await aiService.getUsageStatus();
       if (mounted && status != null) {
         setState(() => _usageStatus = status);
+        _publishShieldBalance(status);
       }
     } catch (_) {}
+  }
+
+  /// Every Shield pill in the app shows the balance the server just reported here (never a local count).
+  void _publishShieldBalance(AIUsageStatus? status) {
+    if (status == null || !mounted) return;
+    try {
+      Provider.of<FlowProvider>(context, listen: false).applyServerShieldBalance(status.shieldsAvailable);
+    } catch (_) {}
+  }
+
+  bool get _hasFlowLayer {
+    try {
+      Provider.of<FlowProvider>(context, listen: false);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   @override
@@ -220,6 +242,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
   Future<void> _buildPlan() async {
     final rawText = _ctrl.text.trim();
     if (_overBy > 0) return; // the button is disabled too; the counter says how much to trim
+    if (_viewMode != _BrainDumpViewMode.input) return; // a late second tap on a plan that already landed: never a second plan
     if (rawText.isEmpty || _isLoading) {
       if (rawText.isEmpty) {
         setState(() =>
@@ -297,31 +320,22 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         return;
       }
 
-      // The Shield decision is made here, BEFORE any AI request: no free allowance left means either a confirmed
-      // Shield payment or no AI call at all. The server re-checks everything; this only avoids a pointless call.
+      // The Shield decision is made here, BEFORE any AI request. The price is on screen above the button
+      // ("AI planning · 1 Shield"), so pressing it is the consent: no second sheet. The server re-checks everything.
       final usageStatus = await aiService.getUsageStatus();
       if (usageStatus == null) {
-        // The server could not be asked: nothing is assumed about the allowance and nothing is charged.
+        // The server could not be asked: nothing is assumed about the balance and nothing is charged.
         await aiService.reportFailure(requestId, 'client_error', 'usage status unavailable');
         _showAiFailure('offline');
         return;
       }
       if (mounted) setState(() => _usageStatus = usageStatus);
+      _publishShieldBalance(usageStatus);
       bool consumeShield = false;
 
       if (!usageStatus.isPro && !usageStatus.freeUseAvailable) {
         if (!usageStatus.canAffordShieldPlan) {
           _showAiFailure('insufficient_shields');
-          return;
-        }
-        if (!mounted) return;
-        final confirmedShield = await showShieldConfirmationSheet(
-          context,
-          shieldsAvailable: usageStatus.shieldsAvailable,
-          shieldCost: usageStatus.shieldCost,
-        );
-        if (!confirmedShield) {
-          _showAiFailure('shield_declined');
           return;
         }
         consumeShield = true;
@@ -343,6 +357,8 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
         _showAiFailure('scheduling_failed');
         return;
       }
+
+      _afterPlanCharged(result);
 
       // Routines found in the dump are applied only after the user confirms each one. Cancel saves nothing.
       final savedRoutines = await _confirmRoutines(result.routineProposals, provider);
@@ -393,6 +409,20 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
           requestId, 'unknown', e.runtimeType.toString());
       _showAiFailure('unknown');
     }
+  }
+
+  /// The plan came back: show the balance the server now reports and, when a Shield paid for it, say so once and small.
+  void _afterPlanCharged(AIPlanResult result) {
+    final usage = result.usage;
+    if (usage != null && mounted) setState(() => _usageStatus = usage);
+    _publishShieldBalance(usage);
+    if (!result.shieldConsumed) return;
+    final cost = usage?.shieldCost ?? AIUsageStatus.defaultShieldCost;
+    NoyaNoticeCenter.instance.success('$cost Shield${cost == 1 ? '' : 's'} used.', title: 'Plan ready');
+    try {
+      // the Flow Hub shows the same balance: bring it up to date now instead of at its next open
+      unawaited(Provider.of<FlowProvider>(context, listen: false).loadOverview());
+    } catch (_) {}
   }
 
   /// Asks the user about each detected routine. Returns how many were saved.
@@ -459,12 +489,31 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     ));
   }
 
-  /// "Earn a Shield": the Flow Hub is where streaks, quests and the free refill live. The sheet closes; the text
-  /// stays in the editor for when the user returns.
-  void _earnShield() {
-    final navigator = Navigator.of(context);
-    navigator.pop();
-    navigator.push(MaterialPageRoute(builder: (_) => const FlowScreen()));
+  /// "Earn a Shield": Noya's Shield popup (rewarded ads, the pack, or the Flow Hub where streaks, quests and the free
+  /// refill live). Everything opens ON TOP of this sheet, so the dump is still here afterwards, and the balance is read
+  /// again from the server.
+  Future<void> _earnShield() async {
+    if (!_hasFlowLayer) return _visitThenRecheck(const FlowScreen());
+    await ShieldWalletPopup.show(context, onFlowHub: () => _visitThenRecheck(const FlowScreen()));
+    if (mounted) await _recheckShields();
+  }
+
+  /// "Get Pro": the Pro page only shows the plans; nothing is bought or unlocked from here.
+  Future<void> _getPro() => _visitThenRecheck(const ProSubscriptionScreen());
+
+  Future<void> _visitThenRecheck(Widget page) async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+    if (!mounted) return;
+    await _recheckShields();
+  }
+
+  Future<void> _recheckShields() async {
+    await _fetchUsageStatus();
+    final status = _usageStatus;
+    if (!mounted || status == null) return;
+    if (_aiFailureCode == 'insufficient_shields' && (status.isPro || status.canAffordShieldPlan)) {
+      setState(() => _aiFailureCode = null); // a Shield arrived (or Pro): Noya is awake again
+    }
   }
 
   void _useBasicPlanner() {
@@ -843,16 +892,10 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     if (!mounted) return;
     Navigator.of(context).pop();
 
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(
+    // The app-wide Noya feedback channel (deduplicated, compact), not a one-off snack bar.
+    NoyaNoticeCenter.instance.success(
         '${finalizedTasks.length} task${finalizedTasks.length == 1 ? '' : 's'} added to your day',
-        style:
-            FlowTypography.bodySmall(color: FlowColors.textPrimaryOf(context)),
-      ),
-      backgroundColor: FlowColors.surfaceElevated(context),
-      duration: const Duration(seconds: 2),
-      behavior: SnackBarBehavior.floating,
-    ));
+        title: 'Plan created!');
   }
 
   Widget _buildConfirmErrorBanner() {
@@ -938,6 +981,43 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     );
   }
 
+  /// What Noya says while napping. Running out of Shields and a technical failure are DIFFERENT stories and never
+  /// share words: only the first one may say "out of Shields", only the second says nothing was charged.
+  String _napLine(String code, String name) {
+    final isPro = _usageStatus?.isPro ?? false;
+    final safe = isPro ? 'Your tasks are safe.' : 'Your tasks are safe and your Shield was not charged.';
+    switch (code) {
+      case 'auth_required':
+        return 'Sign in to let $name organize your day with AI.';
+      case 'insufficient_shields':
+        return "You're out of Shields.";
+      case 'quota_exhausted':
+        return "AI planning isn't available right now. $name can still build a basic plan.";
+      case 'privacy_declined':
+        return isPro ? 'Nothing was sent.' : 'Nothing was sent and no Shield was used.';
+      case 'empty':
+        return isPro
+            ? "$name couldn't find any tasks in that."
+            : "$name couldn't find any tasks in that. No Shield was used.";
+      case 'scheduling_failed':
+        return isPro
+            ? "$name couldn't fit these into your day."
+            : "$name couldn't fit these into your day. No Shield was used.";
+      case 'rate_limited':
+        return "That's a lot of planning in a short time. Please try again in a little while.";
+      case 'pro_cap_day':
+        return "You've reached today's AI planning limit. It resets tomorrow.";
+      case 'pro_cap_month':
+        return "You've reached this month's AI planning limit.";
+      case 'offline':
+        return isPro
+            ? "$name couldn't reach Flowstate. Check your connection."
+            : "$name couldn't reach Flowstate. Check your connection. No Shield was used.";
+      default:
+        return 'AI is temporarily unavailable. $safe';
+    }
+  }
+
   Widget _buildNoyaCompanionHeader() {
     FlowProvider? flowProvider;
     try {
@@ -970,10 +1050,11 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       noyaState = NoyaState.encouraging;
     } else if (_aiFailureCode != null && _viewMode == _BrainDumpViewMode.input) {
       phase = 'asleep';
+      // The card under the header says WHY (out of Shields / AI unavailable / ...); the header only says Noya rests.
       noyaTitle = '$name is resting';
       noyaMessage = _aiFailureCode == 'auth_required'
           ? 'Sign in to let $name organize your day with AI.'
-          : '$name is taking a little nap right now.';
+          : 'Your text is safe.';
       noyaState = NoyaState.sleepy;
     } else if (_viewMode == _BrainDumpViewMode.preview) {
       phase = 'ready';
@@ -989,10 +1070,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       // AI could not run (no Shields, declined, provider trouble): Noya rests, the text stays, nothing is lost.
       phase = 'rest';
       noyaTitle = '$name is resting';
-      noyaMessage = _aiFailureCode == 'insufficient_shields' ||
-              _aiFailureCode == 'quota_exhausted'
-          ? "AI planning isn't available right now. $name can still build a basic plan."
-          : "$name couldn't plan this one with AI. Your text is safe.";
+      noyaMessage = 'Your text is safe.';
       noyaState = NoyaState.sleepy;
     } else {
       phase = 'input';
@@ -1067,13 +1145,33 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     );
   }
 
+  /// The cost of Noya's AI planning, said plainly BEFORE the button is pressed: one label, one sentence, the balance.
   Widget _buildAiAndShieldsBanner() {
     final status = _usageStatus;
     final isPro = status?.isPro ?? false;
-    final freeAvailable = status?.freeUseAvailable ?? true;
+    final freeAvailable = status?.freeUseAvailable ?? false;
     final shields = status?.shieldsAvailable ?? 0;
+    final cost = status?.shieldCost ?? AIUsageStatus.defaultShieldCost;
+    final shieldWord = cost == 1 ? 'Shield' : 'Shields';
+
+    final String label;
+    final String body;
+    if (status == null) {
+      label = '✨ AI planning';
+      body = 'Checking your Shields…';
+    } else if (isPro) {
+      label = '✨ AI planning · Pro';
+      body = 'Noya will turn your brain dump into a plan. No Shields needed with Pro.';
+    } else if (freeAvailable) {
+      label = '✨ AI planning · included';
+      body = 'Noya will turn your brain dump into a plan. This one needs no Shield.';
+    } else {
+      label = '✨ AI planning · $cost $shieldWord';
+      body = 'Use $cost $shieldWord and Noya will turn your brain dump into a plan.';
+    }
 
     return Container(
+      key: const Key('ai_cost_banner'),
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
@@ -1091,137 +1189,54 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
             runSpacing: 6,
             children: [
               Text(
-                '✨ AI planning',
+                label,
+                key: const Key('ai_cost_label'),
                 style: FlowTypography.labelMedium(color: FlowColors.accentCyan)
-                    .copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+                    .copyWith(fontWeight: FontWeight.w700),
               ),
               if (isPro)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: FlowColors.accentMint.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.bolt_rounded,
-                          size: 13, color: FlowColors.accentMint),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Pro Unlimited',
-                        style: FlowTypography.labelSmall(
-                                color: FlowColors.accentMint)
-                            .copyWith(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                )
-              else
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
-                  children: [
-                    // Shields badge
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: FlowColors.accentCyan.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                            color:
-                                FlowColors.accentCyan.withValues(alpha: 0.3)),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.shield_outlined,
-                              size: 13, color: FlowColors.accentCyan),
-                          const SizedBox(width: 4),
-                          Text(
-                            status != null
-                                ? '$shields Shield${shields == 1 ? '' : 's'}'
-                                : '... Shields',
-                            style: FlowTypography.labelSmall(
-                                    color: FlowColors.accentCyan)
-                                .copyWith(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    // Free planning badge
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: (freeAvailable
-                                ? FlowColors.accentMint
-                                : FlowColors.textMutedOf(context))
-                            .withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        status != null
-                            ? (freeAvailable
-                                ? '1 free plan available'
-                                : 'Free plan used')
-                            : 'Checking...',
-                        style: FlowTypography.labelSmall(
-                          color: freeAvailable
-                              ? FlowColors.accentMint
-                              : FlowColors.textMutedOf(context),
-                        ).copyWith(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                _bannerBadge(Icons.bolt_rounded, 'Pro', FlowColors.accentMint)
+              else if (status != null)
+                _bannerBadge(Icons.shield_outlined, '$shields ${shields == 1 ? 'Shield' : 'Shields'} left',
+                    FlowColors.accentCyan),
             ],
           ),
           const SizedBox(height: 6),
           Text(
-            'Flowstate understands messy brain dumps and turns them into separate tasks, then finds where they fit in your day. You remain in complete control to edit or reschedule.',
-            style: FlowTypography.bodySmall(
-                    color: FlowColors.textSecondaryOf(context))
-                .copyWith(
-              fontSize: 11,
-              height: 1.35,
-            ),
+            body,
+            key: const Key('ai_cost_body'),
+            style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context))
+                .copyWith(fontSize: 12, height: 1.35),
           ),
-          if (status != null && !isPro && !freeAvailable) ...[
+          if (status != null && !isPro && !freeAvailable && !status.canAffordShieldPlan) ...[
             const SizedBox(height: 6),
-            Row(
-              children: [
-                const Icon(Icons.info_outline_rounded,
-                    size: 12, color: FlowColors.accentCyan),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    status.canAffordShieldPlan
-                        ? 'Free plan used. Next AI plan uses ${status.shieldCost} Shields, and Noya asks first.'
-                        : 'Free plan used. An AI plan needs ${status.shieldCost} Shields; you have $shields.',
-                    style: FlowTypography.labelSmall(
-                            color: FlowColors.textMutedOf(context))
-                        .copyWith(
-                      fontSize: 10.5,
-                    ),
-                  ),
-                ),
-              ],
+            Text(
+              "You're out of Shields. You can earn one in Flow Hub, or plan it yourself.",
+              key: const Key('ai_cost_empty_hint'),
+              style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(fontSize: 10.5),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _bannerBadge(IconData icon, String text, Color color) {
+    return Container(
+      key: const Key('ai_shield_badge'),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 4),
+          Text(text,
+              style: FlowTypography.labelSmall(color: color).copyWith(fontWeight: FontWeight.w600, fontSize: 11)),
         ],
       ),
     );
@@ -1327,32 +1342,31 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
   }
 
   Widget _buildAiFailureCard() {
-    final isAuth = _aiFailureCode == 'auth_required';
-    
-    String title = "Noya's taking a little nap";
-    String body = 'Something went wrong while planning your day. Your existing tasks are safe.';
-    bool hideRetry = false;
-    
-    if (isAuth) {
-      title = 'Sign in to use AI planning';
-      body = 'Sign in to let Noya organize your day with AI. Your text is safe.';
-    } else if (_aiFailureCode == 'shield_declined') {
-      body = 'No Shields were used. Your existing tasks are safe.';
-    } else if (_aiFailureCode == 'insufficient_shields') {
+    final code = _aiFailureCode;
+    final isAuth = code == 'auth_required';
+
+    if (code == 'insufficient_shields') {
       final status = _usageStatus;
       if (status != null) {
-        // Noya explains what needs Shields, the balance, the next free Shield and how to earn one. Manual planning
-        // stays one tap away: Shields only ever pay for AI.
+        // Noya is napping because the Shields ran out: balance, next free Shield, how to earn one, Pro, and the manual
+        // planner one tap away. (A provider failure is a different card below and never says this.)
         return NoyaShieldGate(
           status: status,
-          action: 'An AI plan',
           onEarn: _earnShield,
-          onLater: () => setState(() => _aiFailureCode = null),
+          onPro: _getPro,
           onManual: _useBasicPlanner,
         );
       }
+    }
+
+    String title = "Noya's taking a little nap";
+    String body = _napLine(code ?? '', 'Noya');
+    if (isAuth) {
+      title = 'Sign in to use AI planning';
+      body = 'Sign in to let Noya organize your day with AI. Your text is safe.';
+    } else if (code == 'insufficient_shields') {
+      // the balance could not be read, so nothing is claimed about it
       body = "Noya couldn't check your Shields just now. You can still plan it yourself.";
-      hideRetry = false;
     }
 
     return NoyaFailureState(
@@ -1360,7 +1374,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       compact: true,
       title: title,
       body: body,
-      onRetry: hideRetry ? null : (isAuth ? _signInForAi : _retryWithAi),
+      onRetry: isAuth ? _signInForAi : _retryWithAi,
       retryLabel: isAuth ? 'Sign in' : 'Try again',
       retryKey: isAuth
           ? const Key('sign_in_for_ai_button')
@@ -1794,7 +1808,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
                 TaskType.deepWork,
                 TaskType.study,
                 TaskType.physical,
-                TaskType.admin,
+                TaskType.personal,
                 TaskType.meeting,
                 TaskType.creative,
               ].map((t) {

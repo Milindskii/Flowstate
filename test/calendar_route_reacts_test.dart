@@ -104,6 +104,76 @@ void main() {
     });
   });
 
+  group('auto-skip: the open stops between two done stops', () {
+    testWidgets('A done, B open, C done: B is auto-skipped at once and stays at its own slot', (tester) async {
+      final provider = await pump(tester);
+      final bSlot = provider.tasks.firstWhere((t) => t.id == 'B').scheduledStart;
+      provider.toggleTaskCompletion('A');
+      await tester.pumpAndSettle();
+      expect(provider.autoSkippedTaskIdsOn(_day), isEmpty, reason: 'nothing is closed in yet');
+
+      provider.toggleTaskCompletion('C');
+      await tester.pump();
+      expect(route(tester).stopById('sched-B').role, StopRouteRole.skipped, reason: 'shown before the server answers');
+      await tester.pumpAndSettle();
+      expect(provider.autoSkippedTaskIdsOn(_day), {'B'});
+      // its own state: not an explicit skip, not deferred, not moved
+      expect(provider.skippedTaskIds, isNot(contains('B')));
+      expect(provider.deferredTaskIds, isNot(contains('B')));
+      expect(provider.tasks.firstWhere((t) => t.id == 'B').scheduledStart, bSlot);
+      expect(route(tester).stopById('sched-B').role, StopRouteRole.skipped);
+      expect(route(tester).stopById('sched-D').role, isNot(StopRouteRole.skipped), reason: 'D is after C: untouched');
+    });
+
+    testWidgets('A done, B and C open, D done: B and C are both auto-skipped and both keep their places',
+        (tester) async {
+      final provider = await pump(tester);
+      final centers = {for (final s in route(tester).stops) s.id: s.center};
+      provider.toggleTaskCompletion('A');
+      await tester.pumpAndSettle();
+      provider.toggleTaskCompletion('D');
+      await tester.pumpAndSettle();
+      expect(provider.autoSkippedTaskIdsOn(_day), {'B', 'C'});
+      expect(provider.skippedTaskIds, isEmpty, reason: 'not explicit skips');
+      final g = route(tester);
+      for (final id in ['sched-B', 'sched-C']) {
+        expect(g.stopById(id).role, StopRouteRole.skipped);
+        expect(g.stopById(id).center, centers[id], reason: 'the stop never moves');
+        expect(g.distanceToRoute(g.stopById(id).center), greaterThan(DayRouteGeometry.nodeRadius + 10),
+            reason: 'the road bends around every skipped stop of the run');
+      }
+      expect(g.distanceToRoute(g.stopById('sched-D').center), lessThan(0.5), reason: 'the road reaches D again');
+
+      provider.toggleTaskCompletion('D'); // un-completing D frees the whole run
+      await tester.pumpAndSettle();
+      expect(provider.autoSkippedTaskIdsOn(_day), isEmpty);
+      expect(route(tester).stopById('sched-B').role, isNot(StopRouteRole.skipped));
+      expect(route(tester).stopById('sched-C').role, isNot(StopRouteRole.skipped));
+    });
+
+    testWidgets('a completion the server rejects puts the auto-skipped stop back too', (tester) async {
+      final provider = await pump(tester);
+      provider.toggleTaskCompletion('A');
+      await tester.pumpAndSettle();
+      world.failNextComplete = true;
+      provider.toggleTaskCompletion('C');
+      await tester.pumpAndSettle();
+      expect(provider.autoSkippedTaskIdsOn(_day), isEmpty);
+      expect(route(tester).stopById('sched-B').role, isNot(StopRouteRole.skipped));
+    });
+
+    testWidgets('a stop whose time already passed stays missed, it is not auto-skipped', (tester) async {
+      FlowClock.debugNowOverride = () => DateTime(_day.year, _day.month, _day.day, 11, 30); // A and B have ended
+      final provider = await pump(tester);
+      provider.toggleTaskCompletion('A');
+      await tester.pumpAndSettle();
+      provider.toggleTaskCompletion('C');
+      await tester.pumpAndSettle();
+      expect(provider.autoSkippedTaskIdsOn(_day), isEmpty);
+      expect(provider.skippedTaskIds, isEmpty);
+    });
+  });
+
   group('skip', () {
     testWidgets('the node stays, the skipped stop is on the road, and the task list agrees with the server',
         (tester) async {

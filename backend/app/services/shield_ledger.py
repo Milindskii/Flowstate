@@ -143,3 +143,13 @@ def grant_capped(db: Session, user_id: str, units: int) -> int:
         ))
     after = db.execute(select(FlowProfile.shields_available).where(FlowProfile.user_id == user_id)).scalar_one()
     return max(0, after - before)
+
+
+def grant_paid(db: Session, user_id: str, units: int) -> int:
+    """Credit `units` PAID Shields (a verified store purchase), in one UPDATE. Not capped at MAX_FREE_SHIELDS: the cap
+    limits free grants, never what the user bought. The caller owns the transaction and writes the ledger row."""
+    if units <= 0:
+        return 0
+    res = db.execute(update(FlowProfile).where(FlowProfile.user_id == user_id)
+                     .values(shields_available=FlowProfile.shields_available + units))
+    return units if res.rowcount == 1 else 0

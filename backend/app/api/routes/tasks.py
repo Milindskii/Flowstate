@@ -10,7 +10,7 @@ from ...core.security import get_current_user
 from ...core.logging import logger
 from ...core.timezone import resolve_user_timezone
 from ...models.user import User
-from ...models.task import TaskStatus, TaskType
+from ...models.task import Task, TaskStatus, TaskType
 from ...models.task_performance import TaskPerformance
 from ...schemas.task import (
     TaskCreate,
@@ -198,7 +198,7 @@ def update_task_partial(
     db: Session = Depends(get_db),
 ):
     """Partially updates task fields. Returns 404 if not found or unauthorized."""
-    return task_service.update_task(db, task_id, current_user, task_update)
+    return _update_and_restore(db, task_id, current_user, task_update)
 
 @router.put("/{task_id}", response_model=TaskResponse)
 def update_task_put(
@@ -208,7 +208,19 @@ def update_task_put(
     db: Session = Depends(get_db),
 ):
     """Updates task fields (supports HTTP PUT). Returns 404 if not found or unauthorized."""
-    return task_service.update_task(db, task_id, current_user, task_update)
+    return _update_and_restore(db, task_id, current_user, task_update)
+
+
+def _update_and_restore(db: Session, task_id: str, user: User, task_update: TaskUpdate):
+    """An un-completion (completed -> open) re-opens an auto-skipped neighbour it no longer closes in."""
+    from .today import restore_auto_skipped
+
+    before = db.query(Task.status).filter(Task.id == task_id, Task.user_id == user.id).scalar()
+    task = task_service.update_task(db, task_id, user, task_update)
+    if before == TaskStatus.completed and task.status != TaskStatus.completed:
+        restore_auto_skipped(db, user, task)
+        db.refresh(task)
+    return task
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_task(
@@ -246,8 +258,16 @@ def complete_task(
     """
     Marks task as completed (status: completed, completed_at: now).
     Enforces legal state transitions (fails if cancelled/archived).
+
+    Open stops it closes in are auto-skipped: A done, B and C open, finishing D records B and C as auto-skipped at
+    their own slots (they are not moved). Open stops that are not between two done stops stay open.
     """
-    return task_service.complete_task(db, task_id, current_user.id, complete_in)
+    from .today import skip_bypassed_tasks
+
+    task = task_service.complete_task(db, task_id, current_user.id, complete_in)
+    skip_bypassed_tasks(db, current_user, task)
+    db.refresh(task)
+    return task
 
 @router.post("/{task_id}/feedback", response_model=FeedbackResponse, status_code=status.HTTP_201_CREATED)
 def record_task_feedback(

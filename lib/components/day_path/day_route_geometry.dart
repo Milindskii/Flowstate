@@ -32,6 +32,10 @@ enum RouteSegmentState {
 
   /// The road into a stop that was done after being skipped (orange): same line, different colour.
   recovered,
+
+  /// A stretch of the main road the traveller did NOT walk (the route's head had moved on to another stop, so a
+  /// [RecoveryBranch] carries the journey from there instead). Never drawn; it only keeps the sample grid whole.
+  hidden,
 }
 
 /// Where a stop's label may be drawn: a horizontal span beside the node, inside the row, that neither the road (bed
@@ -75,6 +79,10 @@ class StopGeometry {
   /// The road-free span its label uses (computed once the road and branches are known).
   final LabelSlot? label;
 
+  /// True when Noya's focus avatar fits beside the node, on the side away from the label, without touching the road,
+  /// a branch or the screen edge. When it does not, Noya is simply not drawn there (nothing ever overlaps).
+  final bool companionFits;
+
   const StopGeometry({
     required this.id,
     required this.index,
@@ -86,9 +94,10 @@ class StopGeometry {
     required this.walked,
     this.detached = false,
     this.label,
+    this.companionFits = false,
   });
 
-  StopGeometry copyWith({bool? walked, bool? detached, LabelSlot? label}) => StopGeometry(
+  StopGeometry copyWith({bool? walked, bool? detached, LabelSlot? label, bool? companionFits}) => StopGeometry(
         id: id,
         index: index,
         center: center,
@@ -99,10 +108,12 @@ class StopGeometry {
         walked: walked ?? this.walked,
         detached: detached ?? this.detached,
         label: label ?? this.label,
+        companionFits: companionFits ?? this.companionFits,
       );
 }
 
-/// The way back to a recovered stop: from the stop where the traveller actually WAS (their latest real position) to
+/// A branch of the one road that runs from where the traveller REALLY is: the way back to a recovered stop, or the way
+/// on from the journey head (a recovered stop) to the next stop. For the way back: from the stop where the traveller actually WAS (their latest real position) to
 /// the recovered stop, which keeps its place on the timeline. It exists only for a stop completed after it was
 /// skipped or missed and not reached from the stop before it; it is never drawn from the chronological predecessor.
 class RecoveryBranch {
@@ -112,7 +123,22 @@ class RecoveryBranch {
   /// The branch as a polyline, from [fromId]'s node to [toId]'s node.
   final List<Offset> points;
 
-  const RecoveryBranch({required this.fromId, required this.toId, required this.points});
+  /// Its colour: orange for the way back ([RouteSegmentState.recovered]); a way ON from the journey head is green when
+  /// the stop it reaches is done or running and blue when it is still ahead.
+  final RouteSegmentState state;
+
+  /// Where this branch crosses the main road: a stop on the far side of the road from its lane, and the reach of the
+  /// turn out of it. It crosses there once, level and straight across, like a junction; nowhere else does it touch
+  /// the road.
+  final List<(Offset stop, double reach)> junctions;
+
+  const RecoveryBranch({
+    required this.fromId,
+    required this.toId,
+    required this.points,
+    this.state = RouteSegmentState.recovered,
+    this.junctions = const [],
+  });
 }
 
 /// The single source of truth for the Day Path route.
@@ -202,7 +228,7 @@ class DayRouteGeometry {
     for (var i = 0; i < branches.length; i++) {
       final a = branches[i];
       final b = other.branches[i];
-      if (a.fromId != b.fromId || a.toId != b.toId || a.points.length != b.points.length) return false;
+      if (a.fromId != b.fromId || a.toId != b.toId || a.state != b.state || a.points.length != b.points.length) return false;
     }
     return true;
   }
@@ -242,15 +268,15 @@ class DayRouteGeometry {
 
   static StopRouteRole roleOf(ScheduleItem item) {
     if (item.isCompleted) return item.isCompletedAfterDeviation ? StopRouteRole.recovered : StopRouteRole.onRoute;
-    if (item.isSkipped || item.deviation == 'skipped' || item.deviation == 'deferred') return StopRouteRole.skipped;
+    if (item.isSkipped || item.deviation == 'skipped' || item.deviation == 'deferred' || item.deviation == 'auto_skipped') {
+      return StopRouteRole.skipped;
+    }
     if (item.isFailed) return StopRouteRole.failed;
     // Time alone moves the route past a task whose slot ended unfinished. Commitments are protected: their time
     // passing is not a miss, so the route keeps running through them.
     if (item.isMissed && !item.isCommitment) return StopRouteRole.bypassed;
     return StopRouteRole.onRoute;
   }
-
-  static double _smooth(double u) => u * u * (3 - 2 * u);
 
   /// Roles whose node the road does not run through.
   static bool isDeviation(StopRouteRole role) =>
@@ -303,11 +329,25 @@ class DayRouteGeometry {
     return out;
   }
 
-  /// How far a recovery branch swings out from the road between its two ends.
-  static const double branchBulge = 26;
+  /// The finished stops' indices in the order the traveller really finished them, or null when any finished stop has no
+  /// completion time (the order is then unknown and no journey head is inferred).
+  static List<int>? timedCompletionOrder(List<ScheduleItem> items, Map<String, DateTime>? completedAt) {
+    if (completedAt == null) return null;
+    final done = <int>[for (var i = 0; i < items.length; i++) if (items[i].isCompleted) i];
+    if (done.isEmpty || !done.every((i) => completedAt[items[i].id] != null)) return null;
+    return done
+      ..sort((a, b) {
+        final byTime = completedAt[items[a].id]!.compareTo(completedAt[items[b].id]!);
+        return byTime != 0 ? byTime : a.compareTo(b);
+      });
+  }
+
+  /// How far a branch's bow clears the road and the stops it passes, and the step between nested bows: a node's box
+  /// plus the branch's bed, with air, so a bow never touches a stop or another bow.
+  static const double laneGap = nodeBoxHalf + nearHalfWidth + 10;
 
   /// How far (centre to centre) the road passes from a bypassed node: node radius + road half-width + air.
-  static const double detourDistance = nodeRadius + nearHalfWidth + 5;
+  static const double detourDistance = nodeRadius + nearHalfWidth + 11;
 
   /// The road's x beside a bypassed stop: away from its label, or to the other side when that would leave the screen.
   static double _detourX(StopGeometry s, double width) {
@@ -405,12 +445,158 @@ class DayRouteGeometry {
     return LabelSlot(left: span.$1, right: span.$2, onLeft: onLeft);
   }
 
+  /// A branch is drawn like a line on a transit map: a rounded corner out of its top stop into a straight vertical lane,
+  /// down the lane, and a rounded corner into its bottom stop. Lanes stay exactly one step apart along their whole
+  /// length.
+  ///
+  /// One corner at [end] (the branch's [top] or bottom stop) into the lane at [laneX], [r] tall. [tilt] says how it
+  /// leaves the stop: 0 is level (straight out, away from the road), positive tips it toward the lane's run, negative
+  /// the other way. Returned in top-to-bottom order.
+  static List<Offset> _corner(Offset end, double laneX, double r, double tilt, {required bool top}) {
+    final (p0, c, p2) = top
+        ? (end, Offset(laneX, end.dy + r * tilt), Offset(laneX, end.dy + r))
+        : (Offset(laneX, end.dy - r), Offset(laneX, end.dy - r * tilt), end);
+    // about one point per road sample step along the curve, like the main road
+    final n = math.max(12, (((c - p0).distance + (p2 - c).distance) / (sampleStep * 0.75)).ceil());
+    return [
+      for (var k = 0; k <= n; k++)
+        () {
+          final t = k / n;
+          final u = 1 - t;
+          return p0 * (u * u) + c * (2 * u * t) + p2 * (t * t);
+        }(),
+    ];
+  }
+
+  /// How much room [pts] leave (negative: by how much they overlap) to the [lines] (bed against bed) and to the stop
+  /// [nodes] (node against bed). Points within a node's reach of [own] (the stop they leave) are not counted.
+  static double _slack(List<Offset> pts, Offset own, List<List<Offset>> lines, List<Offset> nodes) {
+    var best = double.infinity;
+    for (final p in pts) {
+      if ((p - own).distance < nodeRadius + nearHalfWidth * 2) continue;
+      for (final line in lines) {
+        for (var i = 0; i + 1 < line.length; i++) {
+          final a = line[i];
+          final b = line[i + 1];
+          if (math.min(a.dy, b.dy) - p.dy > best + nearHalfWidth * 2 ||
+              p.dy - math.max(a.dy, b.dy) > best + nearHalfWidth * 2) {
+            continue; // too far above / below to matter
+          }
+          final ab = b - a;
+          final len2 = ab.dx * ab.dx + ab.dy * ab.dy;
+          final t = len2 == 0 ? 0.0 : (((p - a).dx * ab.dx + (p - a).dy * ab.dy) / len2).clamp(0.0, 1.0);
+          best = math.min(best, (p - (a + ab * t)).distance - nearHalfWidth * 2);
+        }
+      }
+      for (final c in nodes) {
+        best = math.min(best, (p - c).distance - nodeRadius - nearHalfWidth);
+      }
+    }
+    return best;
+  }
+
+  /// True when a branch's [pts] keep clear (bed against bed, with air) of the [road] runs, of every stop node but its own
+  /// [ends], and of the [others] branches (each with its own ends): checked both ways, away from the stops each line
+  /// leaves (within a node and a lane of them, branches meet stops by design).
+  ///
+  /// [junctions]: ends on the far side of the road from the branch's lane, each with the reach of its turn. Within that
+  /// turn the branch crosses the road (once, level, as a junction), so the road is not counted there.
+  static bool _branchClear(List<Offset> pts, List<Offset> ends, List<List<Offset>> road, List<Offset> nodes,
+      List<(List<Offset>, List<Offset>)> others, {List<(Offset, double)> junctions = const []}) {
+    const reachOfEnd = nodeRadius + laneGap;
+    const bedPair = nearHalfWidth * 2 - 0.5;
+    bool near(Offset p, List<Offset> es) => es.any((e) => (p - e).distance < reachOfEnd);
+    double dist(Offset p, List<Offset> line) {
+      var best = double.infinity;
+      for (var i = 0; i + 1 < line.length; i++) {
+        final a = line[i];
+        final b = line[i + 1];
+        final ab = b - a;
+        final len2 = ab.dx * ab.dx + ab.dy * ab.dy;
+        final t = len2 == 0 ? 0.0 : (((p - a).dx * ab.dx + (p - a).dy * ab.dy) / len2).clamp(0.0, 1.0);
+        best = math.min(best, (p - (a + ab * t)).distance);
+      }
+      return best;
+    }
+
+    for (final p in pts) {
+      if (near(p, ends)) continue;
+      final atJunction = junctions.any((j) => (p - j.$1).distance < j.$2);
+      for (final run in road) {
+        if (!atJunction && dist(p, run) < bedPair) return false;
+      }
+      for (final c in nodes) {
+        if (!ends.contains(c) && (p - c).distance < nodeRadius + nearHalfWidth - 0.5) return false;
+      }
+      for (final (line, oEnds) in others) {
+        if (!near(p, oEnds) && dist(p, line) < bedPair) return false;
+      }
+    }
+    for (final (line, oEnds) in others) {
+      for (final p in line) {
+        if (near(p, oEnds) || near(p, ends)) continue;
+        if (dist(p, pts) < bedPair) return false;
+      }
+    }
+    return true;
+  }
+
+  /// Size of Noya's focus avatar beside a node, and its gap from the node's box (see the day path row).
+  static const double companionSize = 44;
+  static const double companionGap = 30;
+
+  /// Where Noya's avatar sits beside a node centred at [c]: on the side away from the label.
+  static Rect companionBox(Offset c, {required bool labelOnLeft}) {
+    final left = labelOnLeft ? c.dx + companionGap : c.dx - companionGap - companionSize;
+    return Rect.fromLTWH(left, c.dy - companionSize / 2, companionSize, companionSize);
+  }
+
+  /// True when [box] is on screen and no polyline's bed (plus a little air) enters it.
+  static bool boxClear(Rect box, List<List<Offset>> polylines, double width) {
+    if (box.left < 0 || box.right > width) return false;
+    final r = box.inflate(nearHalfWidth + 2);
+    for (final line in polylines) {
+      for (var k = 0; k + 1 < line.length; k++) {
+        final a = line[k];
+        final b = line[k + 1];
+        // sample the segment finely enough that a bed cannot slip between two checks
+        final n = math.max(1, ((b - a).distance / 2).ceil());
+        for (var j = 0; j <= n; j++) {
+          if (r.contains(Offset.lerp(a, b, j / n)!)) return false;
+        }
+      }
+    }
+    return true;
+  }
+
   /// The colour of the road arriving at [s].
   static RouteSegmentState _stateInto(StopGeometry s, {required bool isFinish}) {
     if (isFinish) return RouteSegmentState.traveled; // the finish only exists once the day is done
     if (s.role == StopRouteRole.recovered && !s.detached) return RouteSegmentState.recovered;
     return s.walked ? RouteSegmentState.traveled : RouteSegmentState.ahead;
   }
+
+  /// The drawn stretches of the road: runs of consecutive samples joined by non-hidden stretches (the stretch from
+  /// sample i to i + 1 takes the state of sample i + 1).
+  static List<List<Offset>> _visibleRuns(List<double> xs, List<double> ys, List<RouteSegmentState> states) {
+    final runs = <List<Offset>>[];
+    List<Offset>? cur;
+    for (var i = 1; i < ys.length; i++) {
+      if (states[i] == RouteSegmentState.hidden) {
+        cur = null;
+        continue;
+      }
+      if (cur == null) {
+        cur = [Offset(xs[i - 1], ys[i - 1])];
+        runs.add(cur);
+      }
+      cur.add(Offset(xs[i], ys[i]));
+    }
+    return runs;
+  }
+
+  /// The drawn stretches for the painter, with its own (possibly morphing) x values.
+  List<List<Offset>> visibleRuns(List<double> xs) => _visibleRuns(xs, sampleYs, sampleStates);
 
   /// [finish] adds the end of the road after the last stop: the day's Trophy sits there, on the same route.
   static DayRouteGeometry compute(List<ScheduleItem> items, String? nowItemId, double width,
@@ -434,7 +620,8 @@ class DayRouteGeometry {
       if (i < points - 1) fromTop += spacings[i];
     }
 
-    final amp = math.min(width * 0.18, 72.0);
+    // a gentler swing on narrow phones leaves room beside the road for branches and labels
+    final amp = math.min(width * 0.15, 64.0);
     StopGeometry place(int i, String id, StopRouteRole role, bool walked) {
       // depth is measured over the task stops only: adding the finish after the last one moves no stop
       final depth = (n > 1 ? i / (n - 1) : i.toDouble()).clamp(0.0, 1.0);
@@ -485,6 +672,38 @@ class DayRouteGeometry {
     final waypoints = <Offset>[
       for (final s in route) isBypassed(s) ? Offset(_detourX(s, width), s.center.dy) : s.center,
     ];
+
+    // The journey head is the stop the traveller finished LAST (by completion time). Recovering an old stop moves it
+    // there, so the road ahead must start from it, not from the stop that comes before the next one on the timeline:
+    //   * a stop finished right after the head, when the head is not the stop just above it, is reached FROM the head;
+    //   * if the head is behind the furthest finished stop, the next stop on the timeline is reached from the head too.
+    // Either way the main road's stretch into that stop is not walked (hidden) and a branch carries the journey from
+    // the head. Derived from the states every time, so undoing a recovery brings the plain road back.
+    final forwardTo = <int, int>{}; // route index reached -> index of the head it is reached from
+    final order = timedCompletionOrder(items, completedAt);
+    if (order != null) {
+      for (var pos = 1; pos < order.length; pos++) {
+        final x = order[pos];
+        final p = order[pos - 1];
+        final above = order.indexOf(x - 1); // the stop just above x, if it was finished BEFORE x
+        if (!stops[x].detached && p < x - 1 && above >= 0 && above < pos) forwardTo[x] = p;
+      }
+      final head = order.last;
+      final furthest = order.reduce(math.max);
+      if (head < furthest && furthest + 1 < route.length) forwardTo[furthest + 1] = head;
+    }
+    // One smooth curve through the waypoints (x as a function of y, Catmull-Rom tangents): the road flows from point to
+    // point instead of straightening up at every stop, so a detour reads as one gentle bend, not an S-kink.
+    final tangents = <double>[
+      for (var k = 0; k < waypoints.length; k++)
+        if (waypoints.length < 2)
+          0.0
+        else
+          (waypoints[math.min(k + 1, waypoints.length - 1)].dx - waypoints[math.max(k - 1, 0)].dx) /
+              (waypoints[math.min(k + 1, waypoints.length - 1)].dy - waypoints[math.max(k - 1, 0)].dy) *
+              ((k == 0 || k == waypoints.length - 1) ? 0.5 : 1.0)
+    ];
+    const edge = nearHalfWidth + 4;
     double routeX(double y) {
       if (y <= waypoints.first.dy) return waypoints.first.dx;
       if (y >= waypoints.last.dy) return waypoints.last.dx;
@@ -492,8 +711,15 @@ class DayRouteGeometry {
         final a = waypoints[k];
         final b = waypoints[k + 1];
         if (y >= a.dy && y <= b.dy) {
-          final u = (y - a.dy) / (b.dy - a.dy);
-          return a.dx + (b.dx - a.dx) * _smooth(u);
+          final h = b.dy - a.dy;
+          final u = (y - a.dy) / h;
+          final u2 = u * u;
+          final u3 = u2 * u;
+          final x = (2 * u3 - 3 * u2 + 1) * a.dx +
+              (u3 - 2 * u2 + u) * h * tangents[k] +
+              (-2 * u3 + 3 * u2) * b.dx +
+              (u3 - u2) * h * tangents[k + 1];
+          return x.clamp(edge, width - edge);
         }
       }
       return waypoints.last.dx;
@@ -504,8 +730,8 @@ class DayRouteGeometry {
     final yEnd = route.last.center.dy;
     final sampleYs = <double>[];
     final sampleXs = <double>[];
-    final states = <RouteSegmentState>[];
-    // The state of the stretch that ARRIVES at a sample: the one whose far end is the first point at or below it.
+    // The stretch that ARRIVES at a sample: the one whose far end is the first point at or below it.
+    final arriving = <int>[];
     var k = 0;
     void addSample(double y) {
       while (k + 1 < route.length && y > route[k].center.dy + 1e-9) {
@@ -513,48 +739,311 @@ class DayRouteGeometry {
       }
       sampleYs.add(y);
       sampleXs.add(routeX(y));
-      states.add(_stateInto(route[k], isFinish: end != null && identical(route[k], end)));
+      arriving.add(k);
     }
+
+    // A stretch the journey left by a way-on branch is hidden (the branch carries the journey there instead).
+    List<RouteSegmentState> statesFor(Map<int, int> forward) => [
+          for (final a in arriving)
+            forward.containsKey(a)
+                ? RouteSegmentState.hidden
+                : _stateInto(route[a], isFinish: end != null && identical(route[a], end)),
+        ];
 
     for (var y = yStart; y <= yEnd; y += sampleStep) {
       addSample(y);
     }
     if (yEnd - sampleYs.last > 0.01) addSample(yEnd);
 
-    // Recovery branches: from the traveller's real previous position to each detached recovered stop. The branch
-    // leaves the road at the origin stop and arrives at the recovered node (which stays at its timeline slot),
-    // swinging out to the side the node is on so it never runs along the road it left.
-    final branches = <RecoveryBranch>[];
-    origins.forEach((r, originIndex) {
-      if (originIndex == null || !stops[r].detached) return;
-      final from = stops[originIndex];
-      final to = stops[r];
-      final yFrom = from.center.dy;
-      final yTo = to.center.dy;
-      final steps = math.max(2, ((yTo - yFrom).abs() / sampleStep).ceil());
-      final startOff = from.center.dx - routeX(yFrom);
-      final endOff = to.center.dx - routeX(yTo);
-      final side = endOff == 0 ? 1.0 : endOff.sign;
-      const margin = nearHalfWidth + 4;
-      final pts = <Offset>[];
-      for (var k = 0; k <= steps; k++) {
-        final u = k / steps;
-        final y = yFrom + (yTo - yFrom) * u;
-        final off = startOff + (endOff - startOff) * _smooth(u) + side * branchBulge * math.sin(math.pi * u);
-        pts.add(Offset((routeX(y) + off).clamp(margin, width - margin), y));
+    // Branches are laid out against the road as it is drawn for [forward] (the way-on stretches it hides). A branch
+    // that cannot be placed without touching the road, a stop or another branch is not drawn at all (nothing ever
+    // overlaps): a way back leaves the recovered stop's ring to tell the story, and a dropped way on is reported in
+    // [dropped] so the plain road stretch comes back in its place.
+    List<RecoveryBranch> buildBranches(Map<int, int> forward, List<RouteSegmentState> st, Set<int> dropped) {
+      // Branches: the way BACK to each detached recovered stop (orange, from where the traveller really was) and the way
+      // ON from the journey head. Each is ONE smooth bow from its start node to its end node, swung out beside the main
+      // road so it clears every stop and stretch of road between its ends. All bows sit on one side and are nested like
+      // lanes: two branches that share a stretch of the day never share a lane, the ways back take the inner lanes, so
+      // no line crosses or runs on top of another.
+      final specs = <(Offset from, Offset to, String fromId, String toId, RouteSegmentState state)>[];
+      final forwardTargetOf = <int?>[];
+      origins.forEach((r, originIndex) {
+        if (originIndex == null || !stops[r].detached) return;
+        final from = stops[originIndex];
+        final to = stops[r];
+        specs.add((from.center, to.center, from.id, to.id, RouteSegmentState.recovered));
+        forwardTargetOf.add(null);
+      });
+      forward.forEach((target, headIndex) {
+        final from = stops[headIndex];
+        final to = route[target];
+        final isFinish = end != null && identical(to, end);
+        specs.add((from.center, waypoints[target], from.id, to.id,
+            isFinish || to.walked ? RouteSegmentState.traveled : RouteSegmentState.ahead));
+        forwardTargetOf.add(target);
+      });
+
+      // The preferred side: the one the detached stops sit on (away from the road's detours), else the roomier one.
+      var lean = 0.0;
+      for (final s in stops) {
+        if (s.detached) lean += s.center.dx - routeX(s.center.dy);
       }
-      pts[0] = from.center;
-      pts[pts.length - 1] = to.center;
-      branches.add(RecoveryBranch(fromId: from.id, toId: to.id, points: pts));
-    });
+      if (lean.abs() < 1e-6) {
+        for (final sp in specs) {
+          lean += (width / 2) - routeX((sp.$1.dy + sp.$2.dy) / 2);
+        }
+      }
+      final preferred = lean < 0 ? -1.0 : 1.0;
+
+      // Think of each branch as a chord between two points of the day. Two chords whose ends interleave (a starts, b
+      // starts, a ends, b ends) cannot both lie on one side of the road without crossing, so they go on opposite sides
+      // (a two-colouring). Chords on the same side are then nested or apart, never crossing.
+      final count = specs.length;
+      double topOf(int i) => math.min(specs[i].$1.dy, specs[i].$2.dy);
+      double bottomOf(int i) => math.max(specs[i].$1.dy, specs[i].$2.dy);
+      const eps = 0.5;
+      bool interleave(int i, int j) {
+        final (a0, a1, b0, b1) = (topOf(i), bottomOf(i), topOf(j), bottomOf(j));
+        return (a0 + eps < b0 && b0 + eps < a1 && a1 + eps < b1) || (b0 + eps < a0 && a0 + eps < b1 && b1 + eps < a1);
+      }
+
+      // Each chord would rather lie on the side its end stops sit on (a stop the road bends around is off to one side):
+      // going the other way would cut across the road beside the stop.
+      double prefOf(int i) {
+        var off = 0.0;
+        for (final e in [specs[i].$1, specs[i].$2]) {
+          final d = e.dx - routeX(e.dy);
+          if (d.abs() > 1) off += d;
+        }
+        return off.abs() < 1e-6 ? preferred : off.sign;
+      }
+
+      final sideOf = List<double?>.filled(count, null);
+      for (var i = 0; i < count; i++) {
+        if (sideOf[i] != null) continue;
+        sideOf[i] = 1.0;
+        final group = [i];
+        final queue = [i];
+        while (queue.isNotEmpty) {
+          final c = queue.removeLast();
+          for (var j = 0; j < count; j++) {
+            if (j == c || !interleave(c, j)) continue;
+            if (sideOf[j] == null) {
+              sideOf[j] = -sideOf[c]!;
+              group.add(j);
+              queue.add(j);
+            }
+          }
+        }
+        // the group's two possible colourings are mirror images: keep the one most of its chords prefer
+        var vote = 0.0;
+        for (final g in group) {
+          vote += prefOf(g) * sideOf[g]!;
+        }
+        if (vote < 0 || (vote == 0 && sideOf[i] != preferred)) {
+          for (final g in group) {
+            sideOf[g] = -sideOf[g]!;
+          }
+        }
+      }
+
+      // Lanes: a chord sits one lane outside every same-side chord it contains (sharing an end counts as containing). Its
+      // lane hugs the road locally: just past the road and the stops over its own stretch, and one step outside the
+      // lanes of the chords it contains. A side that runs out of room first narrows its steps (never below two beds side
+      // by side with air); a chord that still does not fit moves to the other side when nothing there crosses it.
+      bool contains(int outer, int inner) =>
+          outer != inner &&
+          topOf(inner) >= topOf(outer) - eps &&
+          bottomOf(inner) <= bottomOf(outer) + eps &&
+          (bottomOf(inner) - topOf(inner) < bottomOf(outer) - topOf(outer) - eps || inner < outer);
+      final bySize = [for (var i = 0; i < count; i++) i]
+        ..sort((x, y) => (bottomOf(x) - topOf(x)).compareTo(bottomOf(y) - topOf(y)));
+      double localReach(int i, double side) {
+        final from = specs[i].$1;
+        final to = specs[i].$2;
+        var reach = side < 0 ? math.min(from.dx, to.dx) : math.max(from.dx, to.dx);
+        for (var y = topOf(i) + nodeRadius; y <= bottomOf(i) - nodeRadius; y += sampleStep) {
+          final x = routeX(y);
+          reach = side < 0 ? math.min(reach, x) : math.max(reach, x);
+        }
+        for (final st in route) {
+          if (st.center.dy > topOf(i) + 1 && st.center.dy < bottomOf(i) - 1) {
+            reach = side < 0 ? math.min(reach, st.center.dx) : math.max(reach, st.center.dx);
+          }
+        }
+        return reach;
+      }
+
+      const minGap = nearHalfWidth * 2 + 12;
+      bool fits(double x) => x >= edge - 0.01 && x <= width - edge + 0.01;
+      (List<int>, List<double>) lanesFor(List<double?> sides) {
+        final lane = List<int>.filled(count, 0);
+        for (final i in bySize) {
+          for (final j in bySize) {
+            if (sides[j] == sides[i] && contains(i, j)) lane[i] = math.max(lane[i], lane[j] + 1);
+          }
+        }
+        final xs = List<double>.filled(count, 0);
+        for (final side in {for (final x in sides) x!}) {
+          for (final gap in const [laneGap, minGap]) {
+            var ok = true;
+            for (final i in bySize) {
+              if (sides[i] != side) continue;
+              var x = localReach(i, side) + side * gap;
+              for (final c in bySize) {
+                if (sides[c] == side && contains(i, c)) x = side < 0 ? math.min(x, xs[c] - gap) : math.max(x, xs[c] + gap);
+              }
+              xs[i] = x;
+              ok = ok && fits(x);
+            }
+            if (ok) break;
+          }
+        }
+        return (lane, xs);
+      }
+
+      var (laneOf, laneXs) = lanesFor(sideOf);
+      for (final i in bySize) {
+        if (fits(laneXs[i])) continue;
+        final other = -sideOf[i]!;
+        final free = [for (var j = 0; j < count; j++) if (j != i && sideOf[j] == other && interleave(i, j)) j].isEmpty;
+        if (!free) continue;
+        final trial = [...sideOf]..[i] = other;
+        final (tLane, tXs) = lanesFor(trial);
+        int misfits(List<double> xs) => [for (final x in xs) if (!fits(x)) x].length;
+        if (misfits(tXs) < misfits(laneXs)) {
+          sideOf[i] = other;
+          laneOf = tLane;
+          laneXs = tXs;
+        }
+      }
+
+      // Inner lanes first, so every outer branch is laid out knowing the ones inside it. Each corner starts from its
+      // designed shape (lone ends leave nearly level; ends several branches share fan out: inner tipped in, outer
+      // tipped out); only if that would touch the road, a placed branch or a stop are other angles and radii tried, and
+      // the one with the most room is kept.
+      final placed = List<RecoveryBranch?>.filled(count, null);
+      final junctionsOf = List<List<(Offset, double)>>.filled(count, const []);
+      final roadRuns = _visibleRuns(sampleXs, sampleYs, st);
+      const clearance = nearHalfWidth * 2 + 8;
+      final placing = [for (var i = 0; i < count; i++) i]..sort((x, y) => laneOf[x] != laneOf[y] ? laneOf[x] - laneOf[y] : x - y);
+      for (final b in placing) {
+        final (from, to, fromId, toId, state) = specs[b];
+        final side = sideOf[b]!;
+        final laneX = laneXs[b].clamp(edge, width - edge).toDouble();
+        final topEnd = from.dy <= to.dy ? from : to;
+        final bottomEnd = from.dy <= to.dy ? to : from;
+        final span = bottomEnd.dy - topEnd.dy;
+        // an outer lane turns in only past the ends of the chords it contains (a shared stop is fine: the fan parts them)
+        var maxTop = span / 2;
+        var maxBottom = span / 2;
+        for (var o = 0; o < count; o++) {
+          if (sideOf[o] != side || laneOf[o] >= laneOf[b]) continue;
+          for (final e in [specs[o].$1, specs[o].$2]) {
+            if (e == from || e == to || e.dy <= topEnd.dy || e.dy >= bottomEnd.dy) continue;
+            if (e.dy - topEnd.dy <= bottomEnd.dy - e.dy) {
+              maxTop = math.min(maxTop, e.dy - topEnd.dy - clearance);
+            } else {
+              maxBottom = math.min(maxBottom, bottomEnd.dy - e.dy - clearance);
+            }
+          }
+        }
+        double designedTilt(Offset e) {
+          final sharing = [
+            for (var o = 0; o < count; o++)
+              if (sideOf[o] == side && (specs[o].$1 == e || specs[o].$2 == e)) o
+          ]..sort((x, y) => laneOf[x].compareTo(laneOf[y]));
+          if (sharing.length < 2) return 0.2;
+          return 0.6 - 1.2 * sharing.indexOf(b) / (sharing.length - 1);
+        }
+
+        bool acrossRoad(Offset e) {
+          final off = e.dx - routeX(e.dy);
+          return off.abs() > 1 && off.sign != side;
+        }
+
+        final obstacles = <List<Offset>>[...roadRuns, for (final p in placed) if (p != null) p.points];
+        final nodes = <Offset>[
+          for (final st in route)
+            if (st.center != from && st.center != to) st.center,
+        ];
+        List<Offset> bestCorner(Offset e, double cap, {required bool top}) {
+          final lateral = (laneX - e.dx).abs();
+          const minR = sampleStep * 2;
+          double rFor(double scale) => (lateral * scale).clamp(minR, math.max(minR, cap)).toDouble();
+          // a stop on the far side of the road from the lane: the branch crosses the road there, once, as a junction:
+          // level and straight across, then the turn into its lane
+          if (acrossRoad(e)) return _corner(e, laneX, rFor(1), 0, top: top);
+          final designed = _corner(e, laneX, rFor(1), designedTilt(e), top: top);
+          if (_slack(designed, e, obstacles, nodes) >= 0) return designed;
+          var best = designed;
+          var bestSlack = _slack(designed, e, obstacles, nodes);
+          for (final scale in const [0.6, 0.8, 1.0, 1.3, 1.7]) {
+            for (final t in const [-0.6, -0.3, 0.0, 0.3, 0.6, 0.9]) {
+              final c = _corner(e, laneX, rFor(scale), t, top: top);
+              final sl = _slack(c, e, obstacles, nodes);
+              if (sl > bestSlack + 0.25) {
+                best = c;
+                bestSlack = sl;
+              }
+            }
+          }
+          return best;
+        }
+
+        final topCorner = bestCorner(topEnd, maxTop, top: true);
+        final bottomCorner = bestCorner(bottomEnd, maxBottom, top: false);
+        final pts = <Offset>[
+          ...topCorner,
+          for (var y = topCorner.last.dy + sampleStep; y < bottomCorner.first.dy; y += sampleStep) Offset(laneX, y),
+          ...bottomCorner,
+        ];
+        final ordered = topEnd == from ? pts : pts.reversed.toList();
+        ordered[0] = from;
+        ordered[ordered.length - 1] = to;
+        junctionsOf[b] = [
+          for (final e in [topEnd, bottomEnd])
+            if (acrossRoad(e)) (e, (laneX - e.dx).abs() + nodeRadius),
+        ];
+        placed[b] = RecoveryBranch(
+            fromId: fromId, toId: toId, state: state, points: ordered, junctions: junctionsOf[b]);
+      }
+      final kept = <int>[];
+      final allNodes = [for (final s in route) s.center];
+      for (final b in placing) {
+        final br = placed[b]!;
+        final ends = [specs[b].$1, specs[b].$2];
+        final others = [for (final o in kept) (placed[o]!.points, [specs[o].$1, specs[o].$2])];
+        if (_branchClear(br.points, ends, roadRuns, allNodes, others, junctions: junctionsOf[b])) {
+          kept.add(b);
+        } else if (forwardTargetOf[b] != null) {
+          dropped.add(forwardTargetOf[b]!);
+        }
+      }
+      kept.sort();
+      return [for (final b in kept) placed[b]!];
+    }
+
+    var forwardDrawn = Map<int, int>.of(forwardTo);
+    late List<RouteSegmentState> states;
+    late List<RecoveryBranch> branches;
+    while (true) {
+      states = statesFor(forwardDrawn);
+      final dropped = <int>{};
+      branches = buildBranches(forwardDrawn, states, dropped);
+      if (dropped.isEmpty) break;
+      forwardDrawn = {for (final e in forwardDrawn.entries) if (!dropped.contains(e.key)) e.key: e.value};
+    }
 
     // Labels: placed like a map, AFTER the road and its branches are known, so text never sits on either.
     final polylines = <List<Offset>>[
-      [for (var i = 0; i < sampleYs.length; i++) Offset(sampleXs[i], sampleYs[i])],
+      ..._visibleRuns(sampleXs, sampleYs, states),
       for (final b in branches) b.points,
     ];
     for (var i = 0; i < stops.length; i++) {
-      stops[i] = stops[i].copyWith(label: labelSlotFor(stops[i], polylines, width));
+      final label = labelSlotFor(stops[i], polylines, width);
+      stops[i] = stops[i].copyWith(
+          label: label, companionFits: boxClear(companionBox(stops[i].center, labelOnLeft: label.onLeft), polylines, width));
     }
     final finishWithLabel = end?.copyWith(label: labelSlotFor(end, polylines, width));
 

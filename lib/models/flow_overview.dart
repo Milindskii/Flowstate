@@ -3,6 +3,7 @@ import 'flow_profile.dart';
 import 'flow_challenge.dart';
 import 'flow_daily_quest.dart';
 import 'flow_achievement.dart';
+import 'shield_wallet.dart';
 
 /// Weekly grind progress snapshot returned in the overview payload.
 class FlowWeeklyProgress {
@@ -86,6 +87,9 @@ class FlowOverview {
   final String? activeSessionId;
   final String? notification;
 
+  /// Whether a broken streak can be restored now, and its price (server-decided; see Noya's restore popup).
+  final StreakRecovery streakRecovery;
+
   const FlowOverview({
     required this.companion,
     required this.profile,
@@ -107,6 +111,7 @@ class FlowOverview {
     this.rhythmAcknowledgement = 'Start your first flow to build your rhythm with Noya. 🦊',
     this.activeSessionId,
     this.notification,
+    this.streakRecovery = StreakRecovery.none,
   });
 
   /// The same overview with [p] as its profile (every other field kept).
@@ -131,6 +136,7 @@ class FlowOverview {
         rhythmAcknowledgement: rhythmAcknowledgement,
         activeSessionId: activeSessionId,
         notification: notification,
+        streakRecovery: streakRecovery,
       );
 
   static FlowOverview defaultInitial({String userId = 'user-default'}) {
@@ -347,6 +353,9 @@ class FlowOverview {
           'Start your first flow to build your rhythm with Noya. 🦊',
       activeSessionId: json['active_session_id'] as String?,
       notification: json['notification'] as String?,
+      streakRecovery: json['streak_recovery'] is Map<String, dynamic>
+          ? StreakRecovery.fromJson(json['streak_recovery'] as Map<String, dynamic>)
+          : StreakRecovery.none,
     );
   }
 
@@ -376,6 +385,7 @@ class FlowOverview {
       },
       if (activeSessionId != null) 'active_session_id': activeSessionId,
       if (notification != null) 'notification': notification,
+      'streak_recovery': streakRecovery.toJson(),
     };
   }
 
@@ -400,6 +410,7 @@ class FlowOverview {
     String? rhythmAcknowledgement,
     String? activeSessionId,
     String? notification,
+    StreakRecovery? streakRecovery,
   }) {
     return FlowOverview(
       companion: companion ?? this.companion,
@@ -422,6 +433,7 @@ class FlowOverview {
       rhythmAcknowledgement: rhythmAcknowledgement ?? this.rhythmAcknowledgement,
       activeSessionId: activeSessionId ?? this.activeSessionId,
       notification: notification ?? this.notification,
+      streakRecovery: streakRecovery ?? this.streakRecovery,
     );
   }
 }

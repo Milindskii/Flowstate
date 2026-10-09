@@ -24,7 +24,7 @@ import 'package:flowstate/services/timezone_service.dart';
 
 import 'support/date_picker_helpers.dart';
 
-/// A signed-in account with ZERO Shields and its free AI plan spent. Shields pay for AI only: every ordinary
+/// A signed-in account with ZERO Shields. Shields pay for AI only: every ordinary
 /// planner action below must work, must never touch an AI endpoint, and the one genuinely AI action must explain
 /// itself (Noya) instead of dead-ending.
 class _ZeroShieldApi extends ApiService {
@@ -42,7 +42,7 @@ class _ZeroShieldApi extends ApiService {
       'free_uses_consumed': 1,
       'free_uses_remaining': 0,
       'shields_available': 0,
-      'shield_cost': 2,
+      'shield_cost': 1,
       'shield_cost_replan': 1,
       'can_afford_shield_plan': false,
       'can_use_ai': false,
@@ -275,25 +275,21 @@ void main() {
       await openAndAsk(tester);
 
       expect(find.byKey(const Key('noya_shield_gate')), findsOneWidget);
+      expect(find.text('Noya is taking a nap 💤'), findsOneWidget);
       expect(find.text("You're out of Shields."), findsOneWidget);
-      expect(find.text('An AI plan needs 2 Shields. You have 0.'), findsOneWidget);
+      expect(find.text('You have 0 Shields · AI planning uses 1.'), findsOneWidget);
       expect(find.text('Your next free Shield is available in 2d 14h.'), findsOneWidget);
       expect(find.byKey(const Key('shield_gate_ways')), findsOneWidget);
       expect(find.byKey(const Key('shield_gate_earn')), findsOneWidget);
-      expect(find.byKey(const Key('shield_gate_later')), findsOneWidget);
+      expect(find.byKey(const Key('shield_gate_pro')), findsOneWidget);
+      expect(find.byKey(const Key('use_basic_planner_button')), findsOneWidget);
       expect(api.aiCalls, isEmpty, reason: 'nothing was sent to the AI and nothing was charged');
       expect(find.byKey(const Key('ai_failure_card')), findsNothing, reason: 'not the generic dead-end');
     });
 
-    testWidgets('"Maybe later" keeps the text; "Plan it myself" is the manual way on, with zero Shields', (tester) async {
+    testWidgets('"Plan it myself" is the manual way on, with zero Shields, and the dump is kept', (tester) async {
       await openAndAsk(tester);
-      await tester.tap(find.byKey(const Key('shield_gate_later')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('noya_shield_gate')), findsNothing);
       expect(find.textContaining('finish the report'), findsOneWidget, reason: 'the dump is still there');
-
-      await tester.tap(find.byKey(const Key('brain_dump_build_button')));
-      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('use_basic_planner_button')));
       await tester.pumpAndSettle();
       expect(find.text('YOUR PLAN'), findsOneWidget);

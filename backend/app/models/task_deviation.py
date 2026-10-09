@@ -22,7 +22,7 @@ class TaskDeviation(Base):
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     task_id = Column(String, ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True)
     deviation_date = Column(Date, nullable=False)
-    kind = Column(String(20), nullable=False)  # "skipped" | "deferred"
+    kind = Column(String(20), nullable=False)  # "skipped" | "deferred" | "missed" | "auto_skipped"
     original_start = Column(UTCDateTime, nullable=True)
     original_end = Column(UTCDateTime, nullable=True)
     moved_to_date = Column(Date, nullable=True)

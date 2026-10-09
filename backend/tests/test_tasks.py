@@ -131,7 +131,7 @@ async def test_ai_task_parse_endpoint(auth_headers):
         assert len(candidates) == 3
         assert candidates[0]["estimated_minutes"] == 90
         assert candidates[0]["task_type"] == "deep_work"
-        assert candidates[1]["task_type"] == "admin"
+        assert candidates[1]["task_type"] == "personal"
         assert candidates[2]["task_type"] == "physical"
 
 @pytest.mark.asyncio

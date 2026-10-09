@@ -996,8 +996,8 @@ class SchedulingEngine:
     def _resolve_tag_text(task_type: str) -> str:
         if task_type in ("deep_work", "study", "creative"):
             return "DEEP WORK"
-        elif task_type in ("admin", "shallow_work"):
-            return "ADMIN"
+        elif task_type in ("admin", "shallow_work", "personal"):
+            return "PERSONAL"
         elif task_type == "physical":
             return "PHYSICAL"
         elif task_type == "meeting":

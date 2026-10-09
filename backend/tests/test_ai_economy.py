@@ -1,4 +1,6 @@
 import pytest
+
+pytestmark = pytest.mark.usefixtures("one_free_plan")  # these exercise the free-allowance mechanism
 import uuid
 import json
 from unittest.mock import patch, MagicMock
@@ -100,7 +102,7 @@ async def test_second_ai_use_requires_shield():
             json={"raw_text": "Task two", "consume_shield": False},
         )
         assert res2.status_code == 402
-        assert "requires 2 Flow Shields" in res2.json()["detail"]
+        assert "1 Shield" in res2.json()["detail"]
         assert res2.json()["failure_code"] == "quota_exhausted"
 
 # ── Test 3: Shield count decreases exactly once ──────────────────────────
@@ -129,9 +131,9 @@ async def test_shield_count_decreases_exactly_once():
             assert plan_res.status_code == 200
             assert plan_res.json()["shield_consumed"] is True
 
-        # Check shields: decreased by exactly the Build My Day price (2)
+        # Check shields: decreased by exactly the Build My Day price (1)
         st_res2 = await ac.get("/api/v1/ai/status", headers=headers)
-        assert st_res2.json()["shields_available"] == initial_shields - 2
+        assert st_res2.json()["shields_available"] == initial_shields - 1
 
 # ── Test 4: Failed Gemini request does not permanently consume Shield ────
 @pytest.mark.asyncio
@@ -156,7 +158,7 @@ async def test_failed_gemini_request_does_not_consume_shield():
                 json={"raw_text": "Task two", "consume_shield": True},
             )
             assert fail_res.status_code == 502
-            assert "Your free plans and shields were not charged" in fail_res.json()["detail"]
+            assert "Your Shield was not charged" in fail_res.json()["detail"]
 
         # Verify shields were NOT decremented
         st2 = await ac.get("/api/v1/ai/status", headers=headers)

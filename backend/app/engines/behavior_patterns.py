@@ -40,7 +40,7 @@ _STOP = frozenset({"the", "a", "an", "my", "to", "for", "of", "and", "at", "go",
 
 @dataclass(frozen=True)
 class TaskFact:
-    """One task occurrence on one local day. ``outcome``: completed | missed | skipped | deferred | open."""
+    """One task occurrence on one local day. ``outcome``: completed | missed | skipped | auto_skipped | deferred | open."""
     title: str
     category: str
     day: date

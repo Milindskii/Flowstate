@@ -105,7 +105,7 @@ enum TaskType {
       case 'creative':
         return TaskType.creative;
       case 'admin':
-        return TaskType.admin;
+        return TaskType.personal;
       case 'physical':
         return TaskType.physical;
       case 'meeting':
@@ -150,12 +150,12 @@ enum TaskType {
         return 'Creative';
       case TaskType.admin:
         return 'Admin';
+      case TaskType.personal:
+        return 'Personal';
       case TaskType.physical:
         return 'Physical';
       case TaskType.meeting:
         return 'Meeting';
-      case TaskType.personal:
-        return 'Personal';
     }
   }
 }
@@ -244,7 +244,8 @@ class TaskItem {
   final int durationMinutes;
   final TaskDifficulty difficulty;
   final String deadline; // e.g. "Due Tomorrow", "Friday", "Today"
-  final String category; // "College", "Work", "Personal", "Fitness", "Study"
+  final String _category;
+  String get category => _category.trim().toLowerCase() == 'admin' ? 'Personal' : _category;
   final bool isCompleted;
   final String? scheduledTime; // e.g. "9:30 AM"
   final bool isPriority;
@@ -308,9 +309,9 @@ class TaskItem {
     required this.title,
     this.description,
     required this.durationMinutes,
-    required this.difficulty,
-    required this.deadline,
-    required this.category,
+    this.difficulty = TaskDifficulty.medium,
+    this.deadline = 'Today',
+    String category = 'General',
     this.isCompleted = false,
     this.scheduledTime,
     this.isPriority = false,
@@ -348,7 +349,7 @@ class TaskItem {
     this.preferredWindowStart,
     this.preferredWindowEnd,
     this.unscheduledReason,
-  });
+  }) : _category = category;
 
   /// The day this task belongs to (local calendar date): its planned day, else the day of its slot. Never the day it
   /// was completed or created. The same ownership the server uses (planned date first, the slot only for older rows),
@@ -540,7 +541,9 @@ class TaskItem {
       durationMinutes: (json['estimated_minutes'] ?? json['duration_minutes'] as num?)?.toInt() ?? 45,
       difficulty: diff,
       deadline: deadlineStr,
-      category: json['category'] as String? ?? 'General',
+      category: (json['category'] as String?)?.trim().toLowerCase() == 'admin'
+          ? 'Personal'
+          : (json['category'] as String? ?? 'General'),
       isCompleted: isDone,
       scheduledTime: schedTimeStr,
       isPriority: isHighPri,

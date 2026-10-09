@@ -127,7 +127,11 @@ def test_no_endpoint_can_set_or_reset_a_balance_and_no_debug_routes_exist():
     paths = app.openapi()["paths"]
     mutating = {p for p, ops in paths.items() if set(ops) & {"post", "put", "patch", "delete"}}
     shield_routes = sorted(p for p in mutating if "shield" in p.lower())
-    assert shield_routes == ["/api/v1/flow/shields/use"], "the only Shield route spends one, it never sets a balance"
+    assert shield_routes == ["/api/v1/ai/shield-welcome/seen", "/api/v1/flow/shields/use",
+                             "/api/v1/shields/ads/sessions", "/api/v1/shields/purchases/verify"], (
+        "the only Shield routes are: spend one, dismiss the welcome card, register an ad showing (pays only from "
+        "Google's signed callback) and submit a store token (pays only once Google Play verifies it); none can set "
+        "or add a balance (tests/test_shield_rewards.py)")
     # the one legitimate "reset" is the user's own personalization history (privacy), which never touches the economy
     allowed = {"/api/v1/personalization/reset"}
     for p in paths:

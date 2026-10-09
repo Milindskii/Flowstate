@@ -14,6 +14,7 @@ import 'auth_screen.dart';
 import 'legal/legal_hub_screen.dart';
 import '../models/ai_plan_models.dart';
 import '../services/ai_plan_service.dart';
+import '../components/shield_popups.dart';
 import 'pro_subscription_screen.dart';
 
 /// Screen 10: Profile & Settings Screen with Accent and Theme Mode Selector
@@ -107,6 +108,12 @@ class ProfileSettingsTab extends StatelessWidget {
 
               // Go Pro Section
               const _GoProProfileSection(),
+              const SizedBox(height: 24),
+
+              // Flow Shields Section
+              _buildSectionTitle('Flow Shields', textPrimary),
+              const SizedBox(height: 12),
+              const _ProfileShieldsSection(),
               const SizedBox(height: 24),
 
               // Appearance: theme and accent share one card
@@ -1067,3 +1074,91 @@ class _GoProProfileSectionState extends State<_GoProProfileSection> {
     );
   }
 }
+
+class _ProfileShieldsSection extends StatelessWidget {
+  const _ProfileShieldsSection();
+
+  @override
+  Widget build(BuildContext context) {
+    FlowProvider? flow;
+    try {
+      flow = Provider.of<FlowProvider>(context);
+    } catch (_) {}
+
+    final cardBg = FlowColors.surface(context);
+    final borderColor = FlowColors.border(context);
+    final textPrimary = FlowColors.textPrimaryOf(context);
+    final textSecondary = FlowColors.textSecondaryOf(context);
+    final balance = flow?.shieldBalance ?? 0;
+
+    return Container(
+      key: const Key('profile_shields_section'),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: FlowRadii.cardRadius,
+        border: Border.all(color: borderColor, width: 1.0),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: FlowColors.accentCyan.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.shield_outlined,
+                  color: FlowColors.accentCyan,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$balance ${balance == 1 ? 'Shield' : 'Shields'} Available',
+                      style: FlowTypography.titleSmall(color: textPrimary).copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Powers AI Replan and streak protection',
+                      style: FlowTypography.bodySmall(color: textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: ElevatedButton.icon(
+              key: const Key('profile_get_shields_button'),
+              onPressed: () {
+                FlowHaptics.lightTap();
+                ShieldWalletPopup.show(context);
+              },
+              icon: const Icon(Icons.add_moderator_outlined, size: 18),
+              label: const Text('Get More Shields', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: FlowColors.accentCyan,
+                foregroundColor: FlowColors.textInverse,
+                shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
+                elevation: 0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+

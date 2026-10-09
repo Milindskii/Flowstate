@@ -230,9 +230,9 @@ void main() {
       expect(find.text('Focusing with you'), findsOneWidget);
     });
 
-    test('8. CompanionAnimalInfo provides rich details, perks, and lore for all 4 animals', () {
+    test('8. CompanionAnimalInfo provides rich details, perks, and lore for all 5 animals', () {
       const animals = CompanionAnimalInfo.all;
-      expect(animals.length, 4);
+      expect(animals.length, 5);
 
       final fox = CompanionAnimalInfo.fromSpecies('fox');
       expect(fox.emoji, '🦊');

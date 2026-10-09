@@ -11,6 +11,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
+
 from app.services.ai_service import AIService, GeminiFailure
 
 OK_BODY = {"candidates": [{"content": {"parts": [{"text": '{"tasks": []}'}]}}], "usageMetadata": {}}

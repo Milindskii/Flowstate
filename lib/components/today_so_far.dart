@@ -6,20 +6,21 @@ import '../models/schedule_item.dart';
 import '../models/task_item.dart';
 import '../models/task_reflection.dart';
 import '../providers/app_state_provider.dart';
-import '../services/flow_clock.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
 import 'flow_day_path.dart';
 
-/// "Today so far": the day's finished moments as calm history (most recent first) — what was
-/// done, when, and how it felt, each marked with a quiet check. Tapping a moment
-/// opens its history. Renders nothing until something is finished today.
-class TodaySoFar extends StatelessWidget {
-  const TodaySoFar({super.key});
+/// "Completed today · N": the day's finished tasks, hidden from the active list and folded behind one button.
+/// Expanding it shows each finished moment (most recent first) — what was done, when, and how it felt — and tapping a
+/// moment opens its history. Renders nothing until something is finished today; a new day starts with nothing here,
+/// while History keeps every finished task.
+class TodaySoFar extends StatefulWidget {
+  /// Start expanded (the default is collapsed: finished work stays out of the way until asked for).
+  final bool initiallyExpanded;
 
-  static bool _isToday(DateTime d, DateTime now) => d.year == now.year && d.month == now.month && d.day == now.day;
+  const TodaySoFar({super.key, this.initiallyExpanded = false});
 
   static ScheduleItem momentItem(TaskItem t) {
     final start = t.scheduledStart;
@@ -38,42 +39,83 @@ class TodaySoFar extends StatelessWidget {
   }
 
   @override
+  State<TodaySoFar> createState() => _TodaySoFarState();
+}
+
+class _TodaySoFarState extends State<TodaySoFar> {
+  late bool _expanded = widget.initiallyExpanded;
+
+  @override
   Widget build(BuildContext context) {
     final state = Provider.of<AppStateProvider>(context);
-    final now = FlowClock().now;
-
-    final done = state.tasks.where((t) {
-      if (!t.isCompleted) return false;
-      final when = state.reflectionFor(t.id)?.completedAt ?? t.completedAt ?? t.scheduledStart;
-      return when != null && _isToday(when, now);
-    }).toList()
-      ..sort((a, b) {
-        DateTime at(TaskItem t) => state.reflectionFor(t.id)?.completedAt ?? t.completedAt ?? t.scheduledStart!;
-        return at(b).compareTo(at(a));
-      });
+    final done = state.todayCompletion.completedToday;
     if (done.isEmpty) return const SizedBox.shrink();
+    final muted = FlowColors.textSecondaryOf(context);
 
     return Column(
       key: const Key('today_so_far'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Today so far',
-          style: FlowTypography.labelMedium(color: FlowColors.textSecondaryOf(context)).copyWith(fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 8),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              for (final t in done)
-                _Moment(
-                  key: Key('today_moment_${t.id}'),
-                  task: t,
-                  reflection: state.reflectionFor(t.id),
+        Semantics(
+          button: true,
+          expanded: _expanded,
+          label: 'Completed today, ${done.length}. ${_expanded ? 'Hide' : 'Show'} completed tasks',
+          excludeSemantics: true,
+          child: InkWell(
+            key: const Key('completed_today_toggle'),
+            borderRadius: FlowRadii.pillRadius,
+            onTap: () {
+              FlowHaptics.selection();
+              setState(() => _expanded = !_expanded);
+            },
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 40),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.check_circle_outline_rounded, size: 16, color: FlowColors.successOf(context)),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Completed today · ${done.length}',
+                      style: FlowTypography.labelMedium(color: muted).copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(width: 2),
+                    AnimatedRotation(
+                      turns: _expanded ? 0.5 : 0,
+                      duration: const Duration(milliseconds: 200),
+                      child: Icon(Icons.expand_more_rounded, size: 18, color: muted),
+                    ),
+                  ],
                 ),
-            ],
+              ),
+            ),
           ),
+        ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: !_expanded
+              ? const SizedBox(width: double.infinity)
+              : Padding(
+                  key: const Key('completed_today_list'),
+                  padding: const EdgeInsets.only(top: 6),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final t in done)
+                          _Moment(
+                            key: Key('today_moment_${t.id}'),
+                            task: t,
+                            reflection: state.reflectionFor(t.id),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
         ),
       ],
     );

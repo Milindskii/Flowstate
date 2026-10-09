@@ -232,7 +232,7 @@ class _RoutineRow extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
               child: Row(
                 children: [
-                  Text(stopEmojiFor(title: r.title), style: const TextStyle(fontSize: 20)),
+                  Icon(stopIconFor(title: r.title), size: 22, color: Theme.of(context).colorScheme.primary),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(

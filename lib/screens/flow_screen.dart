@@ -6,7 +6,7 @@ import '../components/companion/companion_graphic.dart';
 import '../components/companion/flow_companion_view.dart';
 import '../components/flow_ambient_background.dart';
 import '../components/noya_companion_view.dart';
-import '../components/shield_recovery_dialog.dart';
+import '../components/shield_popups.dart';
 import '../components/noya_shield_gate.dart' show formatShieldWait;
 import '../models/flow_challenge.dart';
 import '../models/flow_achievement.dart';
@@ -313,7 +313,10 @@ class _FlowScreenState extends State<FlowScreen> {
                       ),
                     ),
                     GestureDetector(
-                      onTap: () => ShieldRecoveryDialog.show(context),
+                      onTap: () {
+                        FlowHaptics.lightTap();
+                        ShieldWalletPopup.show(context);
+                      },
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
@@ -344,6 +347,35 @@ class _FlowScreenState extends State<FlowScreen> {
                                 style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)),
                               ),
                             ],
+                          ],
+                        ),
+                      ),
+                    ),
+                    InkWell(
+                      key: const Key('flow_get_more_shields_button'),
+                      borderRadius: BorderRadius.circular(FlowRadii.pill),
+                      onTap: () {
+                        FlowHaptics.lightTap();
+                        ShieldWalletPopup.show(context);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: FlowColors.accentCyan.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(FlowRadii.pill),
+                          border: Border.all(color: FlowColors.accentCyan.withValues(alpha: 0.35)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.add_moderator_outlined, color: FlowColors.accentCyan, size: 15),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Get More',
+                              style: FlowTypography.labelMedium(color: FlowColors.accentCyan).copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -1661,25 +1693,28 @@ class _ComingSoonCompanionCardState extends State<_ComingSoonCompanionCard> with
               ),
               const SizedBox(height: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: FlowColors.surfaceContainer(context),
                   borderRadius: BorderRadius.circular(FlowRadii.pill),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.auto_awesome_rounded, size: 11, color: muted),
-                    const SizedBox(width: 4),
-                    Text(
-                      'COMING SOON',
-                      style: FlowTypography.labelSmall(color: muted).copyWith(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 10.5,
-                        letterSpacing: 0.4,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.auto_awesome_rounded, size: 11, color: muted),
+                      const SizedBox(width: 4),
+                      Text(
+                        'COMING SOON',
+                        style: FlowTypography.labelSmall(color: muted).copyWith(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 10,
+                          letterSpacing: 0.3,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ],

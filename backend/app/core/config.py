@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     # Google Gemini AI settings (loaded strictly from environment / .env)
     GEMINI_API_KEY: str = ""
     GEMINI_PROJECT_ID: str = ""
-    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+    GEMINI_MODEL: str = "gemini-3.1-flash-lite"
     # Replan: language-model understanding for messages the deterministic rules cannot read (metered, never writes)
     REPLAN_AI_ENABLED: bool = True
     REPLAN_BURST_PER_MINUTE: int = 20  # Replan dry runs per user per minute, AI or not (shared DB counter)
@@ -78,9 +78,23 @@ class Settings(BaseSettings):
     AI_BREAKER_WINDOW_SECONDS: float = 30.0
     AI_BREAKER_OPEN_SECONDS: float = 30.0
     GEMINI_MAX_ATTEMPTS: int = 2                # models tried per call (primary + one fallback)
-    GEMINI_REQUEST_TIMEOUT_SECONDS: float = 12.0
+    GEMINI_REQUEST_TIMEOUT_SECONDS: float = 12.0  # per call outside a gateway deadline; inside one, the deadline rules
     GEMINI_BACKOFF_BASE_SECONDS: float = 0.5    # jittered exponential backoff between transient failures
     GEMINI_MAX_OUTPUT_TOKENS: int = 8192
+
+    # --- Earning Shields: rewarded ads + paid pack (see services/shield_rewards.py) -----------------------------
+    # Rewarded ads pay ONLY through AdMob server-side verification. Off until an ad unit is configured in AdMob with the
+    # SSV callback URL https://<api-host>/api/v1/shields/ads/ssv.
+    SHIELD_ADS_ENABLED: bool = False
+    ADMOB_REWARDED_AD_UNIT_ID: str = ""          # "ca-app-pub-xxx/yyy" handed to the app
+    ADMOB_SSV_AD_UNIT: str = ""                  # the numeric ad unit id Google puts in the SSV callback (checked if set)
+    ADMOB_SSV_KEYS_URL: str = "https://www.gstatic.com/admob/reward/verifier-keys.json"
+    SHIELD_ADS_PER_REWARD: int = 0               # 0 = economy_config.ADS_PER_SHIELD_REWARD
+    SHIELD_ADS_DAILY_LIMIT: int = 0              # 0 = economy_config.ADS_DAILY_LIMIT
+    # Paid Shield pack: off until Google Play Developer API credentials are configured.
+    SHIELD_PACK_ENABLED: bool = False
+    GOOGLE_PLAY_PACKAGE_NAME: str = ""
+    GOOGLE_PLAY_SERVICE_ACCOUNT_FILE: str = ""   # path to the service-account JSON with Android Publisher access
 
     @field_validator("DATABASE_URL")
     @classmethod

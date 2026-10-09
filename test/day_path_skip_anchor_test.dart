@@ -233,8 +233,8 @@ void main() {
       expect(home['sched-B']!.dy, greaterThan(home['sched-A']!.dy));
       expect(home['sched-B']!.dy, lessThan(home['sched-C']!.dy));
 
-      // B skipped: the server moved it to +6h and kept its original slot as history
-      body = dayJson([_a(), _b(6), _c(), _d()], [_json('dev-1', 'B', 'Task B', 2, deviation: 'skipped')]);
+      // B skipped: the server moved it to TOMORROW and kept its original slot as history
+      body = dayJson([_a(), _c(), _d()], [_json('dev-1', 'B', 'Task B', 2, deviation: 'skipped')]);
       await provider.loadCalendarDay(provider.selectedCalendarDate);
       await tester.pumpAndSettle();
       expect(stopCount(), 4, reason: 'B was not removed');
@@ -243,6 +243,14 @@ void main() {
         expect(center(id), home[id], reason: '$id stayed exactly where it was');
       }
       expect(find.byKey(const Key('path_skipped_sched-B')), findsOneWidget, reason: 'B keeps its skipped state');
+
+      // Tapping the skipped node opens the task detail sheet:
+      await tester.tap(find.byKey(const Key('path_node_sched-B')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('calendar_stop_sheet')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('calendar_stop_sheet_close')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('calendar_stop_sheet')), findsNothing);
 
       // restart: a fresh reload shows the same thing (the state lives on the server, not in memory)
       await provider.loadCalendarDay(provider.selectedCalendarDate);

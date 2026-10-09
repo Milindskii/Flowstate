@@ -101,7 +101,10 @@ class _TaskInboxTabState extends State<TaskInboxTab> {
     // Chronological by persisted planned day + slot (compareTaskOrder), never by list/insert order.
     final allTasks = (state.selectedCategory == 'All'
         ? state.tasks.toList()
-        : state.tasks.where((t) => t.category == state.selectedCategory).toList())
+        : state.tasks.where((t) {
+            final cat = t.category.toLowerCase() == 'admin' ? 'personal' : t.category.toLowerCase();
+            return cat == state.selectedCategory.toLowerCase();
+          }).toList())
       ..sort(compareTaskOrder);
     // One chronological list: priority is shown on each card but never reorders scheduled tasks.
     final later = allTasks.where((t) => !t.isCompleted).toList();
@@ -234,10 +237,12 @@ class _TaskInboxTabState extends State<TaskInboxTab> {
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
-                  children: const ['All', 'Study', 'Deep Work', 'Admin', 'Fitness', 'Personal'].map((cat) {
+                  children: const ['All', 'Study', 'Deep Work', 'Fitness', 'Personal'].map((cat) {
+                    final isSel = state.selectedCategory == cat ||
+                        (cat == 'Personal' && state.selectedCategory.toLowerCase() == 'admin');
                     return CategoryChip(
                       label: cat,
-                      isSelected: state.selectedCategory == cat,
+                      isSelected: isSel,
                       onTap: () => state.setSelectedCategory(cat),
                     );
                   }).toList(),

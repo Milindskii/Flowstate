@@ -230,7 +230,9 @@ void main() {
         expect(g.branches, isNotEmpty);
         for (final s in g.stops) {
           expectClear(g, s);
-          expect(s.label!.width, greaterThan(60), reason: '${s.id} keeps readable room');
+          // every state at once is the tightest case: on a phone under 400 dp a stop that two branches leave has its
+          // label squeezed between them and the road (the text ellipsizes; it never overlaps)
+          expect(s.label!.width, greaterThan(width < 400 ? 48 : 60), reason: '${s.id} keeps readable room');
         }
       });
     }

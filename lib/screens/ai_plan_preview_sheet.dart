@@ -456,7 +456,8 @@ class _AIPlanPreviewSheet extends StatelessWidget {
       case 'fitness':
         return 'Physical';
       case 'admin':
-        return 'Admin';
+      case 'personal':
+        return 'Personal';
       default:
         return _capitalize(type);
     }

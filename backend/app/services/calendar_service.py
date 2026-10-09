@@ -99,6 +99,9 @@ MIN_DELAY_MINUTES = 1
 MAX_DELAY_MINUTES = 720
 
 # Why a task changed in an applied replan (learning signal + skip history). Anything else is "collateral".
+# How a history node names itself. "auto_skipped" (a middle stop closed in by two done stops) is its own state,
+# apart from an explicit "skipped" and from "missed".
+_DEVIATION_LABELS = {"skipped": "Skipped", "deferred": "Deferred", "missed": "Missed", "auto_skipped": "Auto-skipped"}
 REPLAN_INTENTS = frozenset({"skipped", "deferred", "rescheduled", "delayed", "preference_shift"})
 
 
@@ -111,8 +114,9 @@ _CANT_SPLIT = re.compile(
 
 
 def _gateway_refusal(refusal) -> HTTPException:
-    """An ai_gateway.GatewayError (409 in flight / 429 burst) as a user-safe HTTP error with Retry-After."""
-    return HTTPException(status_code=refusal.http_status, detail={"code": refusal.code, "message": refusal.message},
+    """An ai_gateway.GatewayError (409 in flight / 429 burst / 403 shields) as a user-safe HTTP error with Retry-After."""
+    return HTTPException(status_code=refusal.http_status,
+                         detail={"code": refusal.code, "message": refusal.message, "failure_code": refusal.code},
                          headers=refusal.headers or None)
 
 
@@ -469,13 +473,14 @@ class CalendarService:
             it = planning_service.task_row_to_plan_item(t, tz=tz)
             end = dev.original_end or dev.original_start + timedelta(minutes=t.estimated_minutes)
             missed = dev.kind == "missed"
+            label = _DEVIATION_LABELS.get(dev.kind, dev.kind.capitalize())
             item = self._render(it, dev.original_start, end, tz, locked=False, missed=missed, state=dev.kind, reason=dev.kind,
-                                explanation=("Missed at its original time" if missed else f"{dev.kind.capitalize()} today") + (
+                                explanation=("Missed at its original time" if missed else f"{label} today") + (
                                     f"; planned for {dev.moved_to_date.isoformat()}." if dev.moved_to_date else "."))
             keeps_identity = str(t.id) not in on_day and str(t.id) not in named
             named.add(str(t.id))
             item.id = f"sched-{t.id}" if keeps_identity else f"dev-{dev.id}"
-            item.tag_text, item.deviation, item.is_skipped = dev.kind.upper(), dev.kind, not missed
+            item.tag_text, item.deviation, item.is_skipped = label.upper(), dev.kind, not missed
             items.append(item)
         return sorted(items, key=lambda x: x.start_time)
 
@@ -913,10 +918,13 @@ class CalendarService:
             title = qa.title.strip()
             if not title:
                 raise _invalid_request("quick_add", "empty_title", "Give the task a name first.")
+            is_pref = bool(qa.is_preferred)
+            constraint_type = qa.constraint_type or ("fixed_start" if qa.start_time else "preferred_start")
             operations = [ReplanOperation(
                 op="add_task", title=title, duration_minutes=qa.duration_minutes, priority="urgent",
                 task_type="deep_work", target_time=qa.start_time,
-                constraint_type="fixed_start" if qa.start_time else "preferred_start")]
+                is_preferred=is_pref,
+                constraint_type=constraint_type)]
         else:
             plan_entities = [i for i in items if not i.is_new and i.status in ("todo", "postponed")]
 
@@ -1362,11 +1370,14 @@ class CalendarService:
                         temporal = replace(temporal, latest_end=desired)
                     else:
                         temporal = replace(temporal, preferred_start=desired)
+                yield_to_fixed = True
+                if request.quick_add is not None and op.constraint_type == "fixed_start" and not op.is_preferred:
+                    yield_to_fixed = False
                 items.append(PlanItem(
                     id=new_id, title=op.title or "New task", estimated_minutes=minutes, status="todo",
                     priority=op.priority or "urgent", task_type=op.task_type or "deep_work",
                     start=start, end=end, time_locked=locked, temporal=temporal, is_new=True,
-                    yield_to_fixed=True))
+                    yield_to_fixed=yield_to_fixed))
 
         # "I didn't act on X" only when X really went unhandled: a clause that names a task another operation
         # already resolved was satisfied, so it is not reported.

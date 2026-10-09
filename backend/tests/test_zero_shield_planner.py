@@ -106,7 +106,7 @@ async def test_the_genuine_ai_action_is_refused_cleanly_and_free_of_charge():
     gemini.assert_not_called()                      # no model call, nothing charged
     assert _shields(uid) == 0
     # what the app needs to explain it: the price, the balance, when the next free Shield lands
-    assert status["shields_available"] == 0 and status["shield_cost"] == 2 and status["can_afford_shield_plan"] is False
+    assert status["shields_available"] == 0 and status["shield_cost"] == 1 and status["can_afford_shield_plan"] is False
     assert status["next_shield_refill_at"] and status["server_now"]
 
 
@@ -121,4 +121,4 @@ async def test_accounts_never_share_shields_or_cooldowns():
         fb = (await ac.get("/api/v1/flow", headers=hb)).json()["profile"]
     assert (sa["shields_available"], fa["shields_available"]) == (0, 0)
     assert (sb["shields_available"], fb["shields_available"]) == (2, 2)
-    assert sb["free_use_available"] is True and sa["free_use_available"] is False
+    assert sb["free_use_available"] is False and sa["free_use_available"] is False  # no free trial: Shields pay for AI

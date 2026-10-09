@@ -284,6 +284,9 @@ class ExtractedTaskItem {
       case 'fitness':
         tType = TaskType.physical;
         break;
+      case 'personal':
+        tType = TaskType.personal;
+        break;
       case 'admin':
       case 'errand':
         tType = TaskType.admin;
@@ -376,7 +379,9 @@ class ExtractedTaskItem {
       taskType: tType,
       category: tType == TaskType.study
           ? 'Study'
-          : (tType == TaskType.physical ? 'Fitness' : (tType == TaskType.admin ? 'Admin' : 'Work')),
+          : (tType == TaskType.physical
+              ? 'Fitness'
+              : (tType == TaskType.admin || tType == TaskType.personal ? 'Personal' : 'Work')),
       source: TaskSource.aiParsed,
       confidence: confidence,
       missingFields: isDurationExplicit ? const [] : const ['duration'],
@@ -433,8 +438,8 @@ class AIUsageStatus {
   final bool requiresShield;
   final int hourlyRequestsRemaining;
 
-  /// Shields one AI plan costs once the free use is gone. Owned by the server (`shield_cost`); the app only
-  /// displays it, so a price change never needs an app release.
+  /// Shields one AI plan costs. Owned by the server (`shield_cost`); the app only displays it, so a price change
+  /// never needs an app release. "Shields pay for Noya's AI planning" is the whole rule: there is no free-plan side track.
   final int shieldCost;
   final int shieldCostReplan;
 
@@ -442,6 +447,9 @@ class AIUsageStatus {
   /// The app only counts down to it: eligibility and the grant are the server's.
   final int shieldMax;
   final DateTime? nextShieldRefillAt;
+
+  /// True until the one-time "2 Shields added" welcome has been shown (server state: once per account, not per device).
+  final bool shieldWelcomePending;
 
   /// How long until the next free Shield, measured from the server's own clock at the moment this was read, so a
   /// wrong device clock cannot shorten (or lengthen) it. Null when no cooldown is running.
@@ -481,21 +489,23 @@ class AIUsageStatus {
     this.shieldCostReplan = defaultReplanShieldCost,
     this.maxInputWords = kDefaultBrainDumpMaxWords,
     this.shieldMax = 3,
+    this.shieldWelcomePending = false,
     this.nextShieldRefillAt,
     this.untilNextShield,
     this.readAt,
   });
 
-  static const int defaultShieldCost = 2;
+  static const int defaultShieldCost = 1;
   static const int defaultReplanShieldCost = 1;
 
   factory AIUsageStatus.fromJson(Map<String, dynamic> json) {
     final freeRemaining = json['free_uses_remaining'] as int?;
-    final freeTotal = json['free_uses_total'] as int? ?? 1;
+    final freeTotal = json['free_uses_total'] as int? ?? 0;
     final canPlanFree = json['can_plan_free'] as bool?;
 
+    // No free trial plan exists any more: an answer that does not say otherwise means Shields pay.
     final freeAvailable = json['free_use_available'] as bool? ??
-        (canPlanFree ?? (freeRemaining != null ? freeRemaining > 0 : true));
+        (canPlanFree ?? (freeRemaining != null ? freeRemaining > 0 : false));
 
     final freeConsumed = json['free_uses_consumed'] as int? ??
         (freeRemaining != null ? (freeTotal - freeRemaining) : 0);
@@ -517,6 +527,7 @@ class AIUsageStatus {
       shieldCostReplan: json['shield_cost_replan'] as int? ?? defaultReplanShieldCost,
       maxInputWords: json['max_input_words'] as int? ?? kDefaultBrainDumpMaxWords,
       shieldMax: json['shield_max'] as int? ?? 3,
+      shieldWelcomePending: json['shield_welcome_pending'] as bool? ?? false,
       nextShieldRefillAt: nextRefill,
       untilNextShield: (nextRefill != null && serverNow != null) ? nextRefill.difference(serverNow) : null,
       readAt: DateTime.now(),
@@ -536,6 +547,9 @@ class AIPlanResult {
   /// Routines found in the dump. NONE is saved until the user confirms it.
   final List<RoutineProposal> routineProposals;
 
+  /// True when this plan was paid with a Shield (server fact, from `shield_consumed`).
+  final bool shieldConsumed;
+
   const AIPlanResult({
     required this.tasks,
     this.ambiguities = const [],
@@ -545,6 +559,7 @@ class AIPlanResult {
     this.schedulingError,
     this.conflicts = const [],
     this.routineProposals = const [],
+    this.shieldConsumed = false,
   });
 
   factory AIPlanResult.fromJson(Map<String, dynamic> json) {
@@ -573,6 +588,7 @@ class AIPlanResult {
       needsConfirmation: needsConfirmation,
       usage: usageStatus,
       timezoneUsed: json['timezone_used'] as String?,
+      shieldConsumed: json['shield_consumed'] as bool? ?? false,
       schedulingError: json['scheduling_error'] as String?,
       conflicts: (json['conflicts'] as List<dynamic>?)?.whereType<Map<String, dynamic>>().toList() ?? const [],
       routineProposals: (json['routine_proposals'] as List<dynamic>?)

@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flowstate/components/noya_reminder_overlay.dart';
+import 'package:flowstate/main.dart';
+import 'package:flowstate/providers/theme_provider.dart';
 import 'package:flowstate/models/task_item.dart';
 import 'package:flowstate/providers/app_state_provider.dart';
 import 'package:flowstate/services/flow_clock.dart';
@@ -194,6 +198,47 @@ void main() {
       expect(find.text('Time for Gym'), findsOneWidget);
       expect(find.text('Ready to start?'), findsOneWidget);
       expect(find.text('Start'), findsOneWidget);
+    });
+
+    testWidgets('7b. overlay mounted in the real app shell (above the Navigator) renders and dismisses',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      reminderService.setForegroundForTesting(true);
+      final task = createTask(
+        id: 'task-gym',
+        title: 'Gym',
+        scheduledStart: at(16, 0),
+      );
+      reminderService.taskListProvider = () => [task];
+      await reminderService.onTaskAdded(task);
+
+      // FlowstateApp mounts NoyaReminderOverlay in MaterialApp.builder, i.e. as a
+      // sibling of the Navigator, so it has no Overlay ancestor.
+      await tester.pumpWidget(ChangeNotifierProvider(
+        create: (_) => ThemeProvider(),
+        child: const FlowstateApp(home: Scaffold(body: SizedBox.shrink())),
+      ));
+
+      clockTime = at(16, 0);
+      reminderService.checkDueReminders(clockTime);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('noya_reminder_overlay')), findsOneWidget);
+
+      // Dismiss stays reachable by its accessible label.
+      final semantics = tester.ensureSemantics();
+      expect(find.bySemanticsLabel('Dismiss'), findsOneWidget);
+      semantics.dispose();
+
+      await tester.tap(find.byKey(const Key('noya_reminder_dismiss_button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(tester.takeException(), isNull);
+      expect(reminderService.currentInAppReminder.value, isNull);
+      expect(find.byKey(const Key('noya_reminder_overlay')), findsNothing);
     });
 
     test('8. app background/closed uses system notification', () async {

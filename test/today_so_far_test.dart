@@ -54,7 +54,11 @@ void main() {
 
     await tester.pumpWidget(_host(state));
     expect(find.byKey(const Key('today_so_far')), findsOneWidget);
-    expect(find.text('Today so far'), findsOneWidget);
+    // Completed tasks are folded away by default: one button with today's count.
+    expect(find.text('Completed today · 2'), findsOneWidget);
+    expect(find.byKey(const Key('today_moment_gym')), findsNothing);
+    await tester.tap(find.byKey(const Key('completed_today_toggle')));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('today_moment_open')), findsNothing);
 
     final gym = find.byKey(const Key('today_moment_gym'));
@@ -85,6 +89,38 @@ void main() {
     final state = AppStateProvider()
       ..setTasksForTesting([_t('gym', 'A long finished task title that wraps', done: true, completedAt: DateTime(now.year, now.month, now.day, 8))]);
     await tester.pumpWidget(_host(state, theme: FlowTheme.darkTheme(), width: 320));
+    await tester.tap(find.byKey(const Key('completed_today_toggle')));
+    await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('expand and collapse: the list shows only while expanded', (tester) async {
+    final now = FlowClock().now;
+    final state = AppStateProvider()
+      ..setTasksForTesting([_t('gym', 'Gym', done: true, completedAt: DateTime(now.year, now.month, now.day, 8))]);
+    await tester.pumpWidget(_host(state));
+    expect(find.byKey(const Key('completed_today_list')), findsNothing);
+    await tester.tap(find.byKey(const Key('completed_today_toggle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('completed_today_list')), findsOneWidget);
+    expect(find.byKey(const Key('today_moment_gym')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('completed_today_toggle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('completed_today_list')), findsNothing);
+    expect(find.text('Completed today · 1'), findsOneWidget);
+  });
+
+  testWidgets("yesterday's finished tasks are not 'completed today'", (tester) async {
+    final now = FlowClock().now;
+    final yesterday = DateTime(now.year, now.month, now.day - 1, 9);
+    final state = AppStateProvider()
+      ..setTasksForTesting([
+        TaskItem(
+          id: 'old', title: 'Yesterday', durationMinutes: 30, difficulty: TaskDifficulty.light, deadline: '',
+          category: 'Work', isCompleted: true, completedAt: yesterday, scheduledStart: yesterday),
+      ]);
+    await tester.pumpWidget(_host(state));
+    expect(find.byKey(const Key('today_so_far')), findsNothing);
+    expect(state.tasks, hasLength(1), reason: 'nothing is deleted: History still reads it');
   });
 }

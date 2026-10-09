@@ -78,7 +78,9 @@ def iso(dt: datetime) -> str:
 
 
 async def post_plan(ac, headers, now_local: datetime, tz: Optional[str] = "Asia/Kolkata", text: str = "plan my day", **extra):
-    body = {"raw_text": text, "idempotency_key": uuid.uuid4().hex, "current_local_time": iso(now_local), **extra}
+    # The app always sends consume_shield=True now (the Shield price is shown before Build My Day is pressed).
+    body = {"raw_text": text, "idempotency_key": uuid.uuid4().hex, "current_local_time": iso(now_local),
+            "consume_shield": True, **extra}
     if tz is not None:
         body["timezone"] = tz
     return await ac.post("/api/v1/ai/plan", headers=headers, json=body)

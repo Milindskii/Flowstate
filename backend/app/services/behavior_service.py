@@ -60,6 +60,9 @@ def load_facts(db: Session, user_id: str, tz: ZoneInfo, now: datetime) -> Tuple[
         .all()
     )
     by_id: Dict[str, Task] = {str(t.id): t for t in rows}
+    # An auto-skipped task keeps its slot, so finishing it there afterwards is told by its own (completed) row.
+    devs = [d for d in devs if not (d.kind == "auto_skipped" and d.task_id and str(d.task_id) in by_id
+                                    and _status(by_id[str(d.task_id)]) == "completed")]
     deviated_days = {(str(d.task_id), d.deviation_date) for d in devs if d.task_id}
 
     facts: List[TaskFact] = []
@@ -96,7 +99,7 @@ def load_facts(db: Session, user_id: str, tz: ZoneInfo, now: datetime) -> Tuple[
             continue
         facts.append(TaskFact(
             title=t.title, category=t.category or "General", day=d.deviation_date,
-            outcome="deferred" if d.kind == "deferred" else ("missed" if d.kind == "missed" else "skipped"),
+            outcome=d.kind if d.kind in ("deferred", "missed", "auto_skipped") else "skipped",
             start_local=_local(d.original_start, tz), planned_minutes=t.estimated_minutes))
 
     perf = (

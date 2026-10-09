@@ -31,7 +31,7 @@ class AIUsageRecord(Base):
 
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
 
-    free_uses_total = Column(Integer, default=1, nullable=False)
+    free_uses_total = Column(Integer, default=0, nullable=False)  # no free trial plan: Shields pay for AI planning
     free_uses_consumed = Column(Integer, default=0, nullable=False)
     shield_uses_consumed = Column(Integer, default=0, nullable=False)
     total_ai_uses = Column(Integer, default=0, nullable=False)

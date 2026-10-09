@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+
+pytestmark = pytest.mark.usefixtures("one_free_plan")  # these exercise the free-allowance mechanism
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
@@ -556,19 +558,21 @@ async def test_rate_limit_is_per_user_and_pro_gets_a_higher_ceiling(monkeypatch)
 # ---- Pro vs Free entitlement ------------------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_free_user_flow_trial_then_shield_then_blocked(high_rate_limit):
+async def test_new_user_flow_two_shields_pay_for_two_plans_then_blocked(high_rate_limit, monkeypatch):
+    import app.services.ai_economy_service as economy
+    monkeypatch.setattr(economy, "FREE_BMD_PLANS", 0)  # the real product rule: no free trial plan
     uid, headers = make_user()
     async with client() as ac:
         with patch.object(AIService, "extract_structured_plan_with_gemini", return_value=_ok()):
-            r1 = await _post(ac, headers)
-            r2 = await _post(ac, headers)  # no consent to spend a shield
-            r3 = await _post(ac, headers, consume_shield=True)  # a new user's 2 Shields pay for exactly one plan
+            r1 = await _post(ac, headers)  # the app always sends consent; without it nothing is charged
+            r2 = await _post(ac, headers, consume_shield=True)
+            r3 = await _post(ac, headers, consume_shield=True)
             r4 = await _post(ac, headers, consume_shield=True)
-    assert (r1.status_code, r1.json()["free_consumed"]) == (200, True)
-    assert r2.status_code == 402 and r2.json()["failure_code"] == "quota_exhausted"
+    assert r1.status_code == 402 and r1.json()["failure_code"] == "quota_exhausted"
+    assert (r2.status_code, r2.json()["shield_consumed"], r2.json()["free_consumed"]) == (200, True, False)
     assert r3.status_code == 200 and r3.json()["shield_consumed"] is True
     assert r4.status_code == 403 and r4.json()["failure_code"] == "insufficient_shields"
-    assert _shields(uid) == 0 and _usage(uid)[:2] == (1, 1)
+    assert _shields(uid) == 0 and _usage(uid)[:2] == (0, 2)
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../components/noya_motion_view.dart';
+import '../components/shield_popups.dart';
+import '../components/shield_welcome_card.dart';
 import '../components/today_so_far.dart';
 import '../components/break_session_card.dart';
 import '../components/noya_companion_view.dart';
@@ -49,7 +51,10 @@ class TodayDashboardTab extends StatefulWidget {
 }
 
 class _TodayDashboardTabState extends State<TodayDashboardTab> {
+  final GlobalKey<ShieldWelcomeCardState> _welcomeKey = GlobalKey<ShieldWelcomeCardState>();
   bool _showFullDay = false;
+  FlowProvider? _flow;
+  bool _streakPromptShown = false;
 
   @override
   void initState() {
@@ -61,7 +66,28 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
         final flowProvider = Provider.of<FlowProvider>(context, listen: false);
         appState.onTaskCompletedForFlow = flowProvider.recordTaskCompletionLocally;
         appState.onFlowNeedsRefresh = flowProvider.loadOverview;
+        _flow = flowProvider..addListener(_maybePromptStreakRestore);
+        // The Shield pill and the streak restore offer read the server's overview: fetch it once when signed in.
+        if (appState.isAuthenticated && !flowProvider.hasServerShieldBalance) flowProvider.loadOverview();
+        _maybePromptStreakRestore();
       } catch (_) {}
+    });
+  }
+
+  @override
+  void dispose() {
+    _flow?.removeListener(_maybePromptStreakRestore);
+    super.dispose();
+  }
+
+  /// When the server reports a restorable streak, Noya offers the restore once (per day and streak).
+  void _maybePromptStreakRestore() {
+    final flow = _flow;
+    if (_streakPromptShown || flow == null || !mounted || !flow.streakRecovery.eligible) return;
+    if (ModalRoute.of(context)?.isCurrent != true) return; // never on top of another sheet or dialog
+    _streakPromptShown = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) StreakRestorePopup.maybeShow(context);
     });
   }
 
@@ -103,7 +129,8 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
     final recommended = state.recommendedTask;
     final bool isCurrentRunning =
         recommended != null && state.activeFocusTask?.id == recommended.id;
-    final bool hasAnyTasks = state.tasks.isNotEmpty ||
+    // TODAY's tasks only: a new day with nothing planned yet is an empty day, even when yesterday was all done.
+    final bool hasAnyTasks = !state.todayCompletion.isEmptyDay ||
         (state.todaySnapshot != null &&
             (state.todaySnapshot!.upcomingTimeline.isNotEmpty ||
                 state.todaySnapshot!.currentRecommendation != null));
@@ -430,8 +457,16 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
             ],
           ),
         ),
-        // Header action: Noya's companion pill only. Profile lives in the bottom navigation, so no second avatar here.
-        _buildFlowHeaderPill(context),
+        // Header actions: Noya's companion pill and the server's Shield balance. Profile lives in the bottom
+        // navigation, so no second avatar here.
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            _buildFlowHeaderPill(context),
+            const SizedBox(height: 6),
+            const ShieldBalancePill(),
+          ],
+        ),
       ],
     );
   }
@@ -608,10 +643,14 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
               ),
               const SizedBox(height: 18),
 
+              // One-time "2 Shields added" welcome; its arrow points at the button right below it.
+              ShieldWelcomeCard(key: _welcomeKey),
+
               // Primary CTA: [ Build my day ]
               FramerMotionPressScale(
                 onTap: () {
                   FlowHaptics.lightTap();
+                  _welcomeKey.currentState?.dismiss();
                   showBrainDumpSheet(context);
                 },
                 child: SizedBox(
@@ -621,6 +660,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                     key: const Key('hero_build_my_day_button'),
                     onPressed: () {
                       FlowHaptics.lightTap();
+                      _welcomeKey.currentState?.dismiss();
                       showBrainDumpSheet(context);
                     },
                     style: ElevatedButton.styleFrom(
@@ -827,8 +867,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
     AppStateProvider state,
     Color accent,
   ) {
-    final completedCount = state.todaySnapshot?.completedCount ??
-        state.tasks.where((t) => t.isCompleted).length;
+    final completedCount = state.todayCompletion.completedToday.length;
     final now = DateTime.now();
 
     final bedtimeHour = state.personalData.bedtimeHour; // e.g. 23.0 (11:00 PM)
@@ -853,39 +892,34 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
     final String subtitle;
     final String primaryButtonLabel;
     final VoidCallback primaryButtonAction;
-    final String? secondaryButtonLabel;
-    final VoidCallback? secondaryButtonAction;
+    final String secondaryButtonLabel;
+    final VoidCallback secondaryButtonAction;
 
+    // Every task of today is done: Noya curls up, and adding more is one tap away.
+    headline = 'All done for today!';
+    primaryButtonLabel = 'Add more tasks';
+    primaryButtonAction = () {
+      FlowHaptics.lightTap();
+      _openAddTaskSheet(context);
+    };
     if (isDayActuallyFinished) {
-      // Day is genuinely finished according to configured sleep/bedtime boundary
-      headline = "You're all done for today 🦊";
+      // Past the configured bedtime: the next step is tomorrow.
       subtitle = "Nice work. Time to wind down.";
-      primaryButtonLabel = 'Plan tomorrow';
-      primaryButtonAction = () {
-        FlowHaptics.lightTap();
-        _openAddTaskSheet(context);
-      };
-      secondaryButtonLabel = null;
-      secondaryButtonAction = null;
-    } else {
-      // All planned tasks complete, but day is still active
-      headline = "You're clear for now ✨";
-      subtitle = "Nice work. What's next?";
-      primaryButtonLabel = 'Add Task';
-      primaryButtonAction = () {
+      secondaryButtonLabel = 'Plan tomorrow';
+      secondaryButtonAction = () {
         FlowHaptics.selection();
         _openAddTaskSheet(context);
       };
+    } else {
+      subtitle = "Nice work. Rest, or add a little more.";
       secondaryButtonLabel = 'Build My Day';
       secondaryButtonAction = () {
-        FlowHaptics.lightTap();
+        FlowHaptics.selection();
         showBrainDumpSheet(context);
       };
     }
 
-    final NoyaState completionNoyaState = isDayActuallyFinished
-        ? NoyaState.sleepy
-        : (completedCount == 1 ? NoyaState.proud : NoyaState.celebrating);
+    const NoyaState completionNoyaState = NoyaState.sleepy;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -912,7 +946,8 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  NoyaCompanionView(
+                  const NoyaCompanionView(
+                    key: Key('all_done_noya'),
                     state: completionNoyaState,
                     size: 76.0,
                     showAmbientGlow: true,
@@ -924,6 +959,7 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                       children: [
                         Text(
                           headline,
+                          key: const Key('all_done_headline'),
                           style: FlowTypography.headlineMedium(color: FlowColors.textPrimaryOf(context)).copyWith(
                             fontWeight: FontWeight.w800,
                             fontSize: 20,
@@ -943,26 +979,13 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
               ),
               if (completedCount > 0) ...[
                 const SizedBox(height: 14),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: FlowColors.surfaceElevated(context),
-                    borderRadius: BorderRadius.circular(FlowRadii.pill),
-                    border: Border.all(color: FlowColors.border(context)),
-                  ),
-                  child: Text(
-                    '$completedCount ${completedCount == 1 ? 'task' : 'tasks'} completed',
-                    style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)).copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
+                const TodaySoFar(),
               ],
               const SizedBox(height: 18),
               SizedBox(
                 width: double.infinity,
                 height: 46,
-                child: ElevatedButton.icon(
+                child: ElevatedButton(
                   key: const Key('completed_state_primary_button'),
                   onPressed: primaryButtonAction,
                   style: ElevatedButton.styleFrom(
@@ -971,39 +994,71 @@ class _TodayDashboardTabState extends State<TodayDashboardTab> {
                     elevation: 0,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(FlowRadii.button)),
                   ),
-                  icon: Icon(
-                    primaryButtonLabel.contains('Add') ? Icons.add_rounded : Icons.calendar_today_rounded,
-                    size: 18,
-                  ),
-                  label: Text(
-                    primaryButtonLabel,
-                    style: FlowTypography.labelMedium(color: FlowColors.textInverse).copyWith(
-                      fontWeight: FontWeight.w700,
+                  child: Center(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.add_rounded,
+                          size: 18,
+                          color: FlowColors.textInverse,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          primaryButtonLabel,
+                          style: FlowTypography.labelMedium(color: FlowColors.textInverse).copyWith(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14.5,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
               ),
-              if (secondaryButtonLabel != null) ...[
+              ...[
                 const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
                   height: 46,
-                  child: OutlinedButton.icon(
+                  child: OutlinedButton(
                     key: const Key('completed_state_secondary_button'),
                     onPressed: secondaryButtonAction,
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: FlowColors.accentCyan,
-                      side: BorderSide(color: FlowColors.accentCyan.withValues(alpha: 0.5), width: 1.2),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(FlowRadii.button)),
-                      backgroundColor: FlowColors.accentCyan.withValues(alpha: 0.06),
+                      foregroundColor: accent,
+                      backgroundColor: FlowColors.surfaceElevated(context),
+                      side: BorderSide(
+                        color: accent.withValues(alpha: FlowColors.isDark(context) ? 0.45 : 0.35),
+                        width: 1.0,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(FlowRadii.button),
+                      ),
                     ),
-                    icon: const Icon(Icons.auto_awesome_rounded, size: 18, color: FlowColors.accentCyan),
-                    label: Text(
-                      secondaryButtonLabel,
-                      style: FlowTypography.labelMedium(
-                        color: FlowColors.accentCyan,
-                      ).copyWith(
-                        fontWeight: FontWeight.w700,
+                    child: Center(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            secondaryButtonLabel == 'Build My Day'
+                                ? Icons.auto_awesome_rounded
+                                : Icons.calendar_today_rounded,
+                            size: 18,
+                            color: accent,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            secondaryButtonLabel,
+                            style: FlowTypography.labelMedium(
+                              color: accent,
+                            ).copyWith(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14.5,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),

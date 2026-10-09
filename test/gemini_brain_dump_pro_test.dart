@@ -18,6 +18,7 @@ import 'package:flowstate/services/auth_service.dart';
 import 'package:flowstate/providers/theme_provider.dart';
 import 'package:flowstate/providers/flow_provider.dart';
 import 'package:flowstate/services/api_service.dart';
+import 'package:flowstate/components/noya_notice.dart';
 import 'package:flowstate/services/task_parse_service.dart';
 import 'package:flowstate/services/flow_clock.dart';
 import 'package:flowstate/engines/scheduling_engine.dart';
@@ -30,6 +31,11 @@ class MockAISubscriptionApiService extends ApiService {
   int aiPlanCallCount = 0;
   bool throwOnAiPlan = false;
   bool malformedAiPlan = false;
+
+  /// When set, /ai/plan fails like the server does for a provider problem (502 + failure_code), never charging.
+  String? providerFailureCode;
+  bool shieldWelcomePending = false;
+  int welcomeSeenCalls = 0;
 
   /// Opt-in: model the server's entitlement contract. A new account has ONE complimentary AI plan; only a
   /// successful AI plan spends it, a failed attempt never does, and replaying a request key never spends it twice.
@@ -54,6 +60,12 @@ class MockAISubscriptionApiService extends ApiService {
       if (throwOnAiPlan) {
         throw const ApiException('Network connection failed');
       }
+      if (providerFailureCode != null) {
+        throw ApiException('AI task structuring failed. Your Shield was not charged.',
+            statusCode: 502, data: {'failure_code': providerFailureCode, 'detail': 'AI task structuring failed.'});
+      }
+      final shieldFunded = !returnPro && (trackEntitlement ? freeUsesConsumed >= 1 : returnFreeExhausted);
+      if (shieldFunded) shieldsCount -= 1; // charged only once the provider answered
       if (malformedAiPlan) {
         return {'tasks': 'invalid-not-a-list', 'usage': {}};
       }
@@ -70,12 +82,14 @@ class MockAISubscriptionApiService extends ApiService {
         ],
         'ambiguities': [],
         'needs_confirmation': false,
+        'shield_consumed': shieldFunded,
         'usage': {
           'is_pro': false,
           'subscription_tier': 'free',
           'free_use_available': false,
           'free_uses_consumed': 1,
-          'shields_available': 2,
+          'shields_available': shieldsCount,
+          'shield_cost': 1,
           'shield_funded_uses': 0,
           'can_use_ai': true,
           'requires_shield': true,
@@ -87,6 +101,11 @@ class MockAISubscriptionApiService extends ApiService {
         if (key != null) _planCache[key] = response;
       }
       return response;
+    }
+    if (endpoint == '/api/v1/ai/shield-welcome/seen') {
+      welcomeSeenCalls++;
+      shieldWelcomePending = false;
+      return null;
     }
     if (endpoint == '/api/v1/tasks') {
       if (body is Map) {
@@ -143,9 +162,10 @@ class MockAISubscriptionApiService extends ApiService {
         'free_uses_consumed': trackEntitlement ? freeUsesConsumed : (returnFreeExhausted ? 1 : 0),
         'shields_available': shieldsCount,
         'shield_funded_uses': 0,
-        'can_use_ai': returnPro || (trackEntitlement ? freeUsesConsumed < 1 : !returnFreeExhausted) || shieldsCount >= 2,
+        'can_use_ai': returnPro || (trackEntitlement ? freeUsesConsumed < 1 : !returnFreeExhausted) || shieldsCount >= 1,
         'requires_shield': !returnPro && (trackEntitlement ? freeUsesConsumed >= 1 : returnFreeExhausted),
-        'shield_cost': 2,
+        'shield_cost': 1,
+        'shield_welcome_pending': shieldWelcomePending,
         'hourly_requests_remaining': 5,
       };
     }
@@ -1305,8 +1325,9 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
-  // Shield economy: the Shield decision is made BEFORE any AI request.
-  // (Authoritative accounting: backend/tests/test_shield_economy.py.)
+  // Shield economy: "Shields pay for Noya's AI planning". The cost is on screen BEFORE the button is pressed, pressing
+  // it is the consent (no second sheet), and the server owns the accounting.
+  // (Authoritative accounting: backend/tests/test_shield_onboarding.py, test_shield_economy.py.)
   // ---------------------------------------------------------------------------
   group('Shield economy (Build My Day)', () {
     const ambiguous = 'I need to get that project thing done sometime before my meeting';
@@ -1327,7 +1348,6 @@ void main() {
       await tester.pump();
     }
 
-    // The loading animation never settles while the Shield sheet waits for the user, so pump a bounded time.
     Future<void> build(WidgetTester tester) async {
       await tester.tap(find.byKey(const Key('brain_dump_build_button')));
       for (var i = 0; i < 8; i++) {
@@ -1335,125 +1355,158 @@ void main() {
       }
     }
 
-    testWidgets('free allowance available: no sheet, AI runs, no Shield consent sent', (tester) async {
-      final api = MockAISubscriptionApiService();
+    /// The real product account: no free trial plan, Shields pay.
+    MockAISubscriptionApiService account({int shields = 2}) =>
+        MockAISubscriptionApiService()..returnFreeExhausted = true..shieldsCount = shields;
+
+    testWidgets('the cost is on screen BEFORE the button is pressed, in plain words, with no second "free plan" rule', (tester) async {
+      final api = account();
+      await open(tester, api);
+      expect(find.text('✨ AI planning · 1 Shield'), findsOneWidget);
+      expect(find.text('Use 1 Shield and Noya will turn your brain dump into a plan.'), findsOneWidget);
+      expect(find.text('2 Shields left'), findsOneWidget);
+      expect(find.textContaining('free plan', findRichText: true), findsNothing);
+      expect(find.textContaining('Free plan', findRichText: true), findsNothing);
+      expect(api.aiPlanCallCount, 0, reason: 'reading the cost sends nothing');
+    });
+
+    testWidgets('pressing Build my day IS the consent: one request, no sheet, 1 Shield used, balance updates', (tester) async {
+      final api = account();
+      NoyaNoticeCenter.instance.shown.clear();
       await open(tester, api);
       await build(tester);
-      expect(find.byKey(const Key('shield_reason_text')), findsNothing);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('shield_reason_text')), findsNothing, reason: 'no confirmation sheet any more');
+      expect(api.aiPlanCallCount, 1);
+      expect(api.planBodies.single['consume_shield'], true);
+      expect(api.shieldsCount, 1);
+      expect(find.text('Enhanced with AI'), findsOneWidget);
+      final notice = NoyaNoticeCenter.instance.shown.last;
+      expect((notice.title, notice.message), ('Plan ready', '1 Shield used.'));
+    });
+
+    testWidgets('a second plan uses the last Shield; the balance the sheet shows follows the server', (tester) async {
+      final api = account(shields: 1);
+      await open(tester, api);
+      await build(tester);
+      await tester.pumpAndSettle();
+      expect(api.shieldsCount, 0);
+    });
+
+    testWidgets('free allowance (a support grant): no Shield consent sent, and the banner does not mention a Shield price', (tester) async {
+      final api = MockAISubscriptionApiService();
+      await open(tester, api);
+      expect(find.text('✨ AI planning · included'), findsOneWidget);
+      await build(tester);
       expect(api.aiPlanCallCount, 1);
       expect(api.planBodies.single['consume_shield'], false);
     });
 
-    testWidgets('free allowance used + 2 Shields: Noya asks BEFORE the AI request, confirm sends consent once', (tester) async {
-      final api = MockAISubscriptionApiService()..returnFreeExhausted = true;
+    testWidgets('double tapping Build my day sends exactly one request', (tester) async {
+      final api = account();
       await open(tester, api);
-      await build(tester);
-
-      expect(find.text('Noya can plan this for you using 2 Shields.'), findsOneWidget);
-      expect(find.text('Use 2 Shields'), findsOneWidget);
-      expect(api.aiPlanCallCount, 0, reason: 'no AI request until the user confirms');
-
-      await tester.tap(find.byKey(const Key('use_shields_button')));
+      final button = find.byKey(const Key('brain_dump_build_button'));
+      await tester.tap(button);
+      await tester.tap(button, warnIfMissed: false);
       await tester.pumpAndSettle();
       expect(api.aiPlanCallCount, 1);
-      expect(api.planBodies.single['consume_shield'], true);
-      expect(find.text('Enhanced with AI'), findsOneWidget);
+      expect(api.shieldsCount, 1);
     });
 
-    testWidgets('Not now: no AI request, text kept, nothing used, Noya rests', (tester) async {
-      final api = MockAISubscriptionApiService()..returnFreeExhausted = true;
+    testWidgets('0 Shields: Noya naps, says out of Shields, shows balance, earning, Pro and the manual way; nothing sent', (tester) async {
+      final api = account(shields: 0);
+      await open(tester, api);
+      expect(find.byKey(const Key('ai_cost_empty_hint')), findsOneWidget);
+      await build(tester);
+
+      expect(api.aiPlanCallCount, 0, reason: 'no AI request without a Shield');
+      expect(find.byKey(const Key('noya_shield_gate')), findsOneWidget);
+      expect(find.text('Noya is taking a nap 💤'), findsOneWidget);
+      expect(find.byKey(const Key('shield_gate_headline')), findsOneWidget);
+      expect(find.text("You're out of Shields."), findsOneWidget);
+      expect(find.text('Get another Shield from Flow Hub, or unlock Flowstate Pro for more AI planning.'), findsOneWidget);
+      expect(find.text('You have 0 Shields · AI planning uses 1.'), findsOneWidget);
+      expect(find.byKey(const Key('shield_gate_earn')), findsOneWidget);
+      expect(find.byKey(const Key('shield_gate_pro')), findsOneWidget);
+      expect(find.byKey(const Key('use_basic_planner_button')), findsOneWidget);
+      expect(find.byKey(const Key('retry_ai_button')), findsNothing, reason: 'a retry cannot help; no retry spam');
+      expect(find.text(ambiguous), findsOneWidget, reason: 'the text is kept');
+      expect(find.textContaining('temporarily unavailable'), findsNothing, reason: 'not a provider story');
+    });
+
+    testWidgets('0 Shields: "Get Pro" opens the Pro page (and claims nothing)', (tester) async {
+      final api = account(shields: 0);
       await open(tester, api);
       await build(tester);
-      await tester.tap(find.byKey(const Key('shield_not_now_button')));
+      await tester.tap(find.byKey(const Key('shield_gate_pro')));
       await tester.pumpAndSettle();
-
+      expect(find.byType(ProSubscriptionScreen), findsOneWidget);
+      expect(find.textContaining('₹89'), findsWidgets);
       expect(api.aiPlanCallCount, 0);
-      expect(find.text('No Shields were used. Your existing tasks are safe.'), findsOneWidget);
-      expect(find.text(ambiguous), findsOneWidget);
-      expect(find.text('Noya is resting'), findsOneWidget);
-      expect(api.shieldsCount, 2);
     });
 
-    testWidgets('double tapping Confirm sends exactly one request', (tester) async {
-      final api = MockAISubscriptionApiService()..returnFreeExhausted = true;
+    testWidgets('0 Shields: "Plan it myself" still works', (tester) async {
+      final api = account(shields: 0);
       await open(tester, api);
       await build(tester);
-      final confirm = find.byKey(const Key('use_shields_button'));
-      await tester.tap(confirm);
-      await tester.tap(confirm, warnIfMissed: false);
+      await tester.tap(find.byKey(const Key('use_basic_planner_button')));
       await tester.pumpAndSettle();
-      expect(api.aiPlanCallCount, 1);
+      expect(find.text('YOUR PLAN'), findsOneWidget);
+      expect(api.aiPlanCallCount, 0);
     });
 
-    testWidgets('a second confirmation sheet never stacks on the first', (tester) async {
-      final api = MockAISubscriptionApiService()..returnFreeExhausted = true;
-      await open(tester, api);
-      await build(tester);
-      final ctx = tester.element(find.byKey(const Key('shield_reason_text')));
-      final second = await showShieldConfirmationSheet(ctx, shieldsAvailable: 2);
-      await tester.pump();
-      expect(second, isFalse);
-      expect(find.byKey(const Key('shield_reason_text')), findsOneWidget);
-    });
-
-    for (final shields in [0, 1]) {
-      testWidgets('only $shields Shield(s): no sheet, no AI request, friendly resting Noya, no retry spam', (tester) async {
-        final api = MockAISubscriptionApiService()
-          ..returnFreeExhausted = true
-          ..shieldsCount = shields;
-        await open(tester, api);
-        await build(tester);
-
-        expect(api.aiPlanCallCount, 0);
-        expect(find.byKey(const Key('shield_reason_text')), findsNothing);
-        // Noya explains in place (not a dead-end card): what needs Shields, the price, the balance, how to earn
-        expect(find.byKey(const Key('noya_shield_gate')), findsOneWidget);
-        expect(find.text(shields == 0 ? "You're out of Shields." : "You don't have enough Shields."), findsOneWidget);
-        expect(find.text('An AI plan needs 2 Shields. You have $shields.'), findsOneWidget);
-        expect(find.byKey(const Key('shield_gate_earn')), findsOneWidget);
-        expect(find.byKey(const Key('shield_gate_later')), findsOneWidget);
-        expect(find.text('Noya is resting'), findsOneWidget);
-        expect(find.byKey(const Key('retry_ai_button')), findsNothing);
-        expect(find.text(ambiguous), findsOneWidget);
-        expect(find.textContaining('HTTP'), findsNothing);
-        expect(find.byKey(const Key('use_basic_planner_button')), findsOneWidget);
-      });
-    }
-
-    testWidgets('Pro: no Shield sheet, request carries no Shield consent', (tester) async {
+    testWidgets('Pro: the banner says Pro, the request carries no Shield consent', (tester) async {
       final api = MockAISubscriptionApiService()
         ..returnPro = true
         ..returnFreeExhausted = true;
       await open(tester, api);
+      expect(find.text('✨ AI planning · Pro'), findsOneWidget);
       await build(tester);
       expect(find.byKey(const Key('shield_reason_text')), findsNothing);
       expect(api.aiPlanCallCount, 1);
       expect(api.planBodies.single['consume_shield'], false);
     });
 
-    testWidgets('AI failure after consent: neutral message, text kept, retry reuses the request key', (tester) async {
-      final api = MockAISubscriptionApiService()
-        ..returnFreeExhausted = true
-        ..throwOnAiPlan = true;
+    testWidgets('provider failure is a DIFFERENT story: a little nap, AI unavailable, Shield not charged, never "out of Shields"', (tester) async {
+      final api = account()..providerFailureCode = 'provider_unavailable';
       await open(tester, api);
       await build(tester);
-      await tester.tap(find.byKey(const Key('use_shields_button')));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('Something went wrong'), findsOneWidget);
+      expect(find.byKey(const Key('ai_failure_card')), findsOneWidget);
+      expect(find.text("Noya's taking a little nap"), findsOneWidget);
+      expect(find.text('AI is temporarily unavailable. Your tasks are safe and your Shield was not charged.'), findsWidgets);
+      expect(find.textContaining('out of Shields', findRichText: true), findsNothing);
+      expect(find.byKey(const Key('noya_shield_gate')), findsNothing);
+      expect(find.byKey(const Key('retry_ai_button')), findsOneWidget);
+      expect(find.byKey(const Key('use_basic_planner_button')), findsOneWidget);
+      expect(api.shieldsCount, 2, reason: 'a failed request is never charged');
       expect(find.text(ambiguous), findsOneWidget);
-      expect(find.text('Noya is resting'), findsOneWidget);
-      expect(find.textContaining('Exception'), findsNothing);
+    });
 
-      api.throwOnAiPlan = false;
+    testWidgets('retry after a failure reuses the request key, so the server can never charge twice', (tester) async {
+      final api = account()..providerFailureCode = 'timeout';
+      await open(tester, api);
+      await build(tester);
+      await tester.pumpAndSettle();
+
+      api.providerFailureCode = null;
       await tester.tap(find.byKey(const Key('retry_ai_button')));
-      for (var i = 0; i < 8; i++) {
-        await tester.pump(const Duration(milliseconds: 100)); // the Shield sheet waits for the user
-      }
-      await tester.tap(find.byKey(const Key('use_shields_button')));
       await tester.pumpAndSettle();
       expect(api.planKeys.length, 2);
-      expect(api.planKeys[1], api.planKeys[0], reason: 'same request id: the server can never charge twice');
+      expect(api.planKeys[1], api.planKeys[0]);
+      expect(api.shieldsCount, 1);
+    });
+
+    testWidgets('a network failure says Noya could not reach Flowstate, not "AI unavailable" and not "out of Shields"', (tester) async {
+      final api = account()..throwOnAiPlan = true;
+      await open(tester, api);
+      await build(tester);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('reach Flowstate'), findsWidgets);
+      expect(find.textContaining('out of Shields', findRichText: true), findsNothing);
+      expect(api.shieldsCount, 2);
     });
   });
 }

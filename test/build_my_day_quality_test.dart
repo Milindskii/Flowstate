@@ -241,7 +241,15 @@ void main() {
         final api = _PlanApi(failCode: code);
         await _openAndBuild(tester, api);
         expect(find.text("Noya's taking a little nap"), findsOneWidget, reason: code);
-        expect(find.textContaining("Something went wrong while planning your day"), findsOneWidget, reason: code);
+        final line = switch (code) {
+          'offline' => "Noya couldn't reach Flowstate. Check your connection. No Shield was used.",
+          'rate_limited' => "That's a lot of planning in a short time. Please try again in a little while.",
+          'pro_cap_day' => "You've reached today's AI planning limit. It resets tomorrow.",
+          'pro_cap_month' => "You've reached this month's AI planning limit.",
+          _ => 'AI is temporarily unavailable. Your tasks are safe and your Shield was not charged.',
+        };
+        expect(find.text(line), findsOneWidget, reason: code);
+        expect(find.textContaining('out of Shields'), findsNothing, reason: '$code is not an out-of-Shields story');
         expect(find.textContaining("couldn't be reached"), findsNothing, reason: code);
         expect(find.textContaining('Gemini'), findsNothing, reason: '$code: provider names never reach the user');
         expect(find.textContaining('HTTP'), findsNothing, reason: code);
@@ -494,7 +502,7 @@ void main() {
       final api = _PlanApi(failCode: 'quota_exhausted');
       await _openAndBuild(tester, api, text: conversationalDump);
       expect(find.textContaining('resting'), findsOneWidget);
-      expect(find.textContaining("Something went wrong while planning your day"), findsOneWidget);
+      expect(find.text("AI planning isn't available right now. Noya can still build a basic plan."), findsOneWidget);
       expect(find.text('YOUR PLAN'), findsNothing);
       expect(find.text(conversationalDump), findsOneWidget);
     });

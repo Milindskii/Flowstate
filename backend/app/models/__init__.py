@@ -61,3 +61,4 @@ __all__ = [
 from .privacy_grievance import PrivacyGrievance
 from .plan_application import PlanApplication
 from .task_deviation import TaskDeviation
+from .shield_reward import ShieldAdSession, ShieldPurchase

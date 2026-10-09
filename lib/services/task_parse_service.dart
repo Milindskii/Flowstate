@@ -389,7 +389,7 @@ class TaskParseService {
       } else if (RegExp(r'\b(work|client|meeting|sync|email|call|schedule|buy|pay|clean|admin|errand|dentist|doctor)\b', caseSensitive: false).hasMatch(cleanLower)) {
         taskType = RegExp(r'\b(work|client|project)\b', caseSensitive: false).hasMatch(cleanLower)
             ? TaskType.deepWork
-            : TaskType.admin;
+            : TaskType.personal;
         difficulty = TaskDifficulty.medium;
         category = RegExp(r'\b(work|client|project)\b', caseSensitive: false).hasMatch(cleanLower)
             ? 'Work'

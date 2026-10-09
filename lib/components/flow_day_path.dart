@@ -13,7 +13,6 @@ import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
 import 'day_path/day_route_geometry.dart';
 import 'day_path/day_route_painter.dart';
-import 'day_path/stop_emoji.dart';
 import 'companion/noya_moments.dart';
 import 'companion/noya_reaction_controller.dart';
 import 'noya_companion_view.dart';
@@ -712,16 +711,18 @@ class _PathStop extends StatelessWidget {
                 child: Center(
                   child: Transform.scale(
                     scale: isNow ? 1.0 : stop.scale,
-                    child: AnimatedSwitcher(
-                      duration: reduced ? Duration.zero : FlowMotion.standardDuration,
-                      switchInCurve: FlowMotion.easeOut,
-                      switchOutCurve: FlowMotion.easeOut,
-                      transitionBuilder: (child, animation) => FadeTransition(
-                        opacity: animation,
-                        child: ScaleTransition(scale: Tween(begin: 0.9, end: 1.0).animate(animation), child: child),
-                      ),
-                      child: KeyedSubtree(key: ValueKey('node_${item.id}_$_nodeState'), child: _node(context, accent)),
-                    ),
+                    child: reduced
+                        ? KeyedSubtree(key: ValueKey('node_${item.id}_$_nodeState'), child: _node(context, accent))
+                        : AnimatedSwitcher(
+                            duration: FlowMotion.standardDuration,
+                            switchInCurve: FlowMotion.easeOut,
+                            switchOutCurve: FlowMotion.easeOut,
+                            transitionBuilder: (child, animation) => FadeTransition(
+                              opacity: animation,
+                              child: ScaleTransition(scale: Tween(begin: 0.9, end: 1.0).animate(animation), child: child),
+                            ),
+                            child: KeyedSubtree(key: ValueKey('node_${item.id}_$_nodeState'), child: _node(context, accent)),
+                          ),
                   ),
                 ),
               ),
@@ -732,88 +733,23 @@ class _PathStop extends StatelessWidget {
     );
   }
 
-  /// A stop is a small place on the journey: the task's own picture (deterministic emoji) inside a ring coloured by its
-  /// state, with a small corner badge that says the outcome (done, skipped, missed, unfinished, fixed).
-  Widget _stopNode({
-    Key? key,
-    required BuildContext context,
-    required Color ring,
-    Color? fill,
-    double ringWidth = 2.5,
-    IconData? badge,
-    Color? badgeColor,
-    bool faded = false,
-    bool shadow = false,
-    double size = FlowDayPath.upcomingNodeSize,
-  }) {
-    final surface = FlowColors.surface(context);
-    final dark = FlowColors.isDark(context);
-    return SizedBox(
-      key: key,
-      width: size,
-      height: size,
-      child: Stack(
-        clipBehavior: Clip.none,
-        alignment: Alignment.center,
-        children: [
-          Container(
-            width: size,
-            height: size,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: fill ?? surface,
-              border: Border.all(color: ring, width: ringWidth),
-              boxShadow: shadow
-                  ? [BoxShadow(color: Colors.black.withValues(alpha: dark ? 0.25 : 0.08), offset: const Offset(0, 2), blurRadius: 4)]
-                  : null,
-            ),
-            child: Opacity(
-              opacity: faded ? 0.55 : 1,
-              child: Text(
-                stopEmojiFor(title: item.title, category: category, type: item.type),
-                key: Key('path_emoji_${item.id}'),
-                textAlign: TextAlign.center,
-                textScaler: TextScaler.noScaling, // the node has a fixed size: the picture must fit it
-                style: const TextStyle(fontSize: 17, height: 1.1),
-              ),
-            ),
-          ),
-          if (badge != null)
-            Positioned(
-              right: -4,
-              bottom: -4,
-              child: Container(
-                width: 17,
-                height: 17,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: badgeColor ?? ring,
-                  border: Border.all(color: surface, width: 1.5),
-                ),
-                child: Icon(badge, size: 11, color: FlowColors.textInverse),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
   Widget _node(BuildContext context, Color accent) {
     final surface = FlowColors.surface(context);
     final dark = FlowColors.isDark(context);
     if (item.isCompleted) {
       final ok = FlowColors.successOf(context);
-      // Recovered: done, but not on the first pass, so the ring is orange; on plan: a calm green ring.
-      return _stopNode(
+      final ring = item.isCompletedAfterDeviation ? palette.recovery : ok;
+      final ringWidth = item.isCompletedAfterDeviation ? 2.5 : 2.0;
+      return Container(
         key: Key('path_check_${item.id}'),
-        context: context,
-        ring: item.isCompletedAfterDeviation ? palette.recovery : ok,
-        ringWidth: item.isCompletedAfterDeviation ? 2.5 : 2,
-        fill: Color.alphaBlend(ok.withValues(alpha: dark ? 0.2 : 0.14), surface),
-        badge: Icons.check_rounded,
-        badgeColor: ok,
-        size: FlowDayPath.doneNodeSize,
+        width: FlowDayPath.doneNodeSize,
+        height: FlowDayPath.doneNodeSize,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Color.alphaBlend(ok.withValues(alpha: dark ? 0.2 : 0.14), surface),
+          border: Border.all(color: ring, width: ringWidth),
+        ),
+        child: Icon(Icons.check_rounded, size: 20, color: ok),
       );
     }
     if (isNow) return _NowNode(key: Key('path_now_${item.id}'), active: item.isActive, accent: accent, surface: surface);
@@ -821,26 +757,32 @@ class _PathStop extends StatelessWidget {
     if (_isSkippedFamily) {
       // Skipped or deferred: yellow. The route goes around this stop; it is not a failure.
       final yellow = palette.skipped;
-      return _stopNode(
+      return Container(
         key: Key('path_skipped_${item.id}'),
-        context: context,
-        ring: yellow,
-        fill: Color.alphaBlend(yellow.withValues(alpha: dark ? 0.18 : 0.12), surface),
-        badge: Icons.redo_rounded,
-        faded: true,
+        width: FlowDayPath.upcomingNodeSize,
+        height: FlowDayPath.upcomingNodeSize,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Color.alphaBlend(yellow.withValues(alpha: dark ? 0.18 : 0.12), surface),
+          border: Border.all(color: yellow, width: 2.5),
+        ),
+        child: Icon(Icons.alt_route_rounded, size: 17, color: yellow),
       );
     }
 
     if (item.isFailed) {
       // Failed / Unfinished: the only red on the path.
       final err = palette.failed;
-      return _stopNode(
+      return Container(
         key: Key('path_failed_${item.id}'),
-        context: context,
-        ring: err,
-        fill: Color.alphaBlend(err.withValues(alpha: dark ? 0.18 : 0.12), surface),
-        badge: Icons.close_rounded,
-        faded: true,
+        width: FlowDayPath.upcomingNodeSize,
+        height: FlowDayPath.upcomingNodeSize,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Color.alphaBlend(err.withValues(alpha: dark ? 0.18 : 0.12), surface),
+          border: Border.all(color: err, width: 2.5),
+        ),
+        child: Icon(Icons.close_rounded, size: 18, color: err),
       );
     }
 
@@ -850,20 +792,40 @@ class _PathStop extends StatelessWidget {
         : item.isMissed
             ? FlowColors.warningOf(context)
             : (locked ? FlowColors.textSecondaryOf(context) : accent);
-    final badge = item.isConflict
+    // State glyphs win; otherwise the kind of work, when it is known, so the road ahead can be
+    // read at a glance. Generic tasks stay a clean ring.
+    final icon = item.isConflict
         ? Icons.error_outline_rounded
         : item.isMissed
-            ? Icons.priority_high_rounded
-            : (locked ? Icons.lock_rounded : null);
-    return _stopNode(
+            ? Icons.history_rounded
+            : (locked ? Icons.lock_rounded : _kindIcon(workKindOf(category: category, type: item.type, title: item.title)));
+    return Container(
       key: item.isCommitment ? Key('path_commitment_${item.id}') : (item.isMissed ? Key('path_missed_${item.id}') : null),
-      context: context,
-      ring: item.isSuggested ? color.withValues(alpha: 0.55) : color,
-      badge: badge,
-      badgeColor: color,
-      faded: item.isMissed,
-      shadow: true,
+      width: FlowDayPath.upcomingNodeSize,
+      height: FlowDayPath.upcomingNodeSize,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: surface,
+        border: Border.all(color: item.isSuggested ? color.withValues(alpha: 0.55) : color, width: 2.5),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: dark ? 0.25 : 0.08), offset: const Offset(0, 2), blurRadius: 4)],
+      ),
+      child: icon == null ? null : Icon(icon, size: 17, color: color),
     );
+  }
+
+  static IconData? _kindIcon(WorkKind kind) {
+    switch (kind) {
+      case WorkKind.physical:
+        return Icons.directions_run_rounded;
+      case WorkKind.study:
+        return Icons.menu_book_rounded;
+      case WorkKind.planning:
+        return Icons.checklist_rounded;
+      case WorkKind.deepWork:
+        return Icons.bolt_rounded;
+      case WorkKind.other:
+        return null;
+    }
   }
 
   Widget _label(BuildContext context, Color accent, {required bool alignEnd}) {

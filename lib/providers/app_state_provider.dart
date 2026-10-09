@@ -31,9 +31,11 @@ import '../services/timezone_service.dart';
 import '../services/noya_busy.dart';
 import '../services/day_path_anchor_store.dart';
 import '../engines/day_path_order.dart';
+import '../engines/auto_skip.dart';
 import '../services/plan_confirm_exception.dart';
 import '../services/smart_reminder_service.dart';
 import '../utils/mock_data.dart';
+import '../engines/today_completion.dart';
 
 /// Explicit Today Network Status (kept separate from content/task lifecycle state)
 enum TodayNetworkState {
@@ -149,6 +151,9 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Set<String> _skippedTaskIds = {};
   /// taskId -> yyyy-MM-dd of the day it was skipped on. A skip marks THAT day's stop only.
   final Map<String, String> _skipDates = {};
+  /// taskId -> yyyy-MM-dd of the day it was AUTO-skipped on (a middle stop closed in by two done stops). Its own
+  /// state, apart from an explicit skip: the task keeps its slot and is not deferred.
+  final Map<String, String> _autoSkipDates = {};
   /// Where each task's Calendar stop was first placed on a day (device ledger, see DayPathAnchorStore).
   final DayPathAnchorStore _anchorStore = DayPathAnchorStore();
   DateTime? _lastCalendarFetchAt;
@@ -483,6 +488,12 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       final deferred = prefs.getStringList('flowstate_deferred_task_ids');
       final completedDev = prefs.getStringList('flowstate_completed_after_deviation_task_ids');
       final dates = prefs.getString('flowstate_skipped_task_dates');
+      final autoDates = prefs.getString('flowstate_auto_skipped_task_dates');
+      if (autoDates != null && autoDates.isNotEmpty) {
+        try {
+          (jsonDecode(autoDates) as Map<String, dynamic>).forEach((k, v) => _autoSkipDates[k] = v.toString());
+        } catch (_) {}
+      }
       if (dates != null && dates.isNotEmpty) {
         try {
           (jsonDecode(dates) as Map<String, dynamic>).forEach((k, v) => _skipDates[k] = v.toString());
@@ -508,6 +519,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       await prefs.setStringList('flowstate_skipped_task_ids', _skippedTaskIds.toList());
       _skipDates.removeWhere((id, _) => !_skippedTaskIds.contains(id));
       await prefs.setString('flowstate_skipped_task_dates', jsonEncode(_skipDates));
+      await prefs.setString('flowstate_auto_skipped_task_dates', jsonEncode(_autoSkipDates));
       await prefs.setStringList('flowstate_deferred_task_ids', _deferredTaskIds.toList());
       await prefs.setStringList('flowstate_completed_after_deviation_task_ids', _completedAfterDeviationTaskIds.toList());
     } catch (_) {}
@@ -583,7 +595,12 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       : _tasks.isEmpty;
   bool get isTodayCompleted => _todaySnapshot != null
       ? _todaySnapshot!.lifecycleState == TodayLifecycleState.completed
-      : (_tasks.isNotEmpty && _tasks.every((t) => t.isCompleted));
+      : todayCompletion.allDone;
+
+  /// Today's tasks by the device's local date: what is still open, and what was finished today (newest first).
+  /// Yesterday's finished tasks are not part of it, so a new day starts clean while History keeps everything.
+  TodayCompletion get todayCompletion => TodayCompletion.of(_tasks, FlowClock().now,
+      completedAtOf: (t) => reflectionFor(t.id)?.completedAt);
 
   String get greetingName => _currentUser?.name ?? 'Friend';
   bool get onboardingComplete => _onboardingComplete;
@@ -606,9 +623,9 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   // Progressive lifecycle state helpers
   TodayLifecycleState get lifecycleState {
-    final hasTasks = _tasks.isNotEmpty;
-    final allCompleted = hasTasks && _tasks.every((t) => t.isCompleted);
-    if (allCompleted) return TodayLifecycleState.completed;
+    // "Completed" means TODAY's plan is done, never "every task ever is done": a fresh day with only yesterday's
+    // finished tasks is an empty day, not a completed one.
+    if (todayCompletion.allDone) return TodayLifecycleState.completed;
     if (_todaySnapshot != null) {
       return _todaySnapshot!.lifecycleState;
     }
@@ -624,7 +641,8 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get isDayCompleted => lifecycleState == TodayLifecycleState.completed;
 
   int get currentNavIndex => _currentNavIndex;
-  String get selectedCategory => _selectedCategory;
+  String get selectedCategory =>
+      _selectedCategory.toLowerCase() == 'admin' ? 'Personal' : _selectedCategory;
   bool get isOptimizing => _isOptimizing;
   TaskItem? get activeFocusTask => _activeFocusTask;
   PersonalLearningEngine get learningEngine => _learningEngine;
@@ -708,7 +726,11 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   List<TaskItem> get filteredTasks {
     if (_selectedCategory == 'All') return _tasks;
-    return _tasks.where((t) => t.category.toLowerCase() == _selectedCategory.toLowerCase()).toList();
+    final target = _selectedCategory.toLowerCase() == 'admin' ? 'personal' : _selectedCategory.toLowerCase();
+    return _tasks.where((t) {
+      final cat = t.category.toLowerCase() == 'admin' ? 'personal' : t.category.toLowerCase();
+      return cat == target;
+    }).toList();
   }
 
   List<TaskItem> get highPriorityTasks =>
@@ -732,6 +754,18 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     final day = DateFormat('yyyy-MM-dd').format(date);
     return {for (final id in _skippedTaskIds) if (_skipDates[id] == day) id};
   }
+
+  /// Tasks AUTO-skipped on [date]: middle stops left behind between two done stops (they keep their slot).
+  Set<String> autoSkippedTaskIdsOn(DateTime date) {
+    final day = DateFormat('yyyy-MM-dd').format(date);
+    return {for (final e in _autoSkipDates.entries) if (e.value == day) e.key};
+  }
+
+  /// Every still auto-skipped task and the day it was auto-skipped on (History keeps it apart from a skip).
+  Map<String, DateTime> get autoSkippedOnByTask => {
+        for (final e in _autoSkipDates.entries)
+          if (DateTime.tryParse(e.value) != null) e.key: DateTime.parse(e.value),
+      };
 
   /// Every still-skipped task and the day it was skipped on (History files an explicit skip under that day).
   Map<String, DateTime> get skippedOnByTask => {
@@ -798,13 +832,13 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     final backendTask = _todaySnapshot?.currentRecommendation?.task;
     final isBackendTaskCompletedLocally = backendTask != null &&
         _tasks.any((t) => t.id == backendTask.id && t.isCompleted); // by id: another day's same-named task is another task
-    if (backendTask != null && !backendTask.isCompleted && !isBackendTaskCompletedLocally && !_deferredTaskIds.contains(backendTask.id) && isTaskForToday(backendTask) && !isMissedSlot(backendTask)) {
+    if (backendTask != null && !backendTask.isCompleted && !isBackendTaskCompletedLocally && !_deferredTaskIds.contains(backendTask.id) && !_autoSkipDates.containsKey(backendTask.id) && isTaskForToday(backendTask) && !isMissedSlot(backendTask)) {
       return backendTask;
     }
 
     // 3. Fallback: filter pending tasks for today excluding deferred tasks
     final pendingNonDeferred = _tasks
-        .where((t) => !t.isCompleted && isTaskForToday(t) && !isMissedSlot(t) && !isFutureSlot(t) && !_deferredTaskIds.contains(t.id))
+        .where((t) => !t.isCompleted && isTaskForToday(t) && !isMissedSlot(t) && !isFutureSlot(t) && !_deferredTaskIds.contains(t.id) && !_autoSkipDates.containsKey(t.id))
         .toList();
     if (pendingNonDeferred.isNotEmpty) {
       return pendingNonDeferred.firstWhere(
@@ -852,6 +886,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     _preferredActiveDate = DateTime(pickedOn.year, pickedOn.month, pickedOn.day);
     _deferredTaskIds.remove(cleanId);
     _skippedTaskIds.remove(cleanId);
+    _autoSkipDates.remove(cleanId);
 
     // Nothing else is marked: the stops this choice leaves behind are passed by the journey itself (the Calendar derives
     // it from what actually happens next, see markPassedStops). A "Do this now" is never recorded as a skip of others.
@@ -957,6 +992,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       cleanId = byTitle.id;
     }
     _skippedTaskIds.add(cleanId);
+    _autoSkipDates.remove(cleanId); // an explicit skip is its own state from here on
     SmartReminderService.instance.onTaskSkipped(cleanId);
     _skipDates[cleanId] = DateFormat('yyyy-MM-dd').format(_skipDayOf(cleanId));
     _deferredTaskIds.add(cleanId);
@@ -1161,7 +1197,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void setSelectedCategory(String category) {
-    _selectedCategory = category;
+    _selectedCategory = category.toLowerCase() == 'admin' ? 'Personal' : category;
     notifyListeners();
   }
 
@@ -1345,6 +1381,12 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (!willComplete) {
         _pendingCompletions.remove(task.id); // taken back: no unconfirmed completion to protect
         _completedAfterDeviationTaskIds.remove(task.id); // no longer done, so no longer "done late"
+        // an auto-skipped neighbour this completion closed in is Open again (the server does the same)
+        final restored = autoSkipsToRestore(_tasks, task, _autoSkipDates.keys.toSet());
+        if (restored.isNotEmpty) {
+          _autoSkipDates.removeWhere((id, _) => restored.contains(id));
+          _saveRouteStates();
+        }
         SmartReminderService.instance.onTaskUpdated(_tasks[index], task);
         // The undo belongs to the account, not only to this screen: the server reopens the task, and until it has
         // answered, reads that still list it as done are corrected (the Calendar route recomputes at once).
@@ -1364,6 +1406,11 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         // If this task was skipped or deferred, mark it as completed after deviation (recovery)
         final wasSkipped = _skippedTaskIds.contains(task.id);
         final wasDeferred = _deferredTaskIds.contains(task.id);
+        final wasAutoSkipped = _autoSkipDates.remove(task.id);
+        if (wasAutoSkipped != null) {
+          _completedAfterDeviationTaskIds.add(task.id);
+          _saveRouteStates();
+        }
         // A slot that ended before this completion was MISSED (derived from the clock, never stored): finishing it
         // now is a recovery too, so its stop rejoins the road marked as done late rather than as done on plan.
         final slotEnd = task.scheduledEnd ?? task.scheduledStart?.add(Duration(minutes: task.durationMinutes));
@@ -1378,6 +1425,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
           _deferredTaskIds.remove(task.id);
           _saveRouteStates();
         }
+        final autoSkipped = _autoSkipMiddleLocally(task);
         // No made-up reflection here: ratings only ever come from the reflection sheet, and the server records
         // the real completion time itself.
 
@@ -1390,7 +1438,8 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
             // Task creation is still in-flight; will be completed once created
             debugPrint('Task ${task.id} creation in-flight; backend completion queued.');
           } else {
-            unawaited(_sendCompleteToBackend(task, wasSkipped: wasSkipped, wasDeferred: wasDeferred));
+            unawaited(_sendCompleteToBackend(task,
+                wasSkipped: wasSkipped, wasDeferred: wasDeferred, autoSkipped: autoSkipped));
           }
         }
         _recalculateReadiness();
@@ -1404,6 +1453,21 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       notifyListeners();
     }
+  }
+
+  /// Finishing [done] can close in ONE open middle stop on each side (A done, B open, C done -> B): it shows as
+  /// auto-skipped at once, at its own slot (it is not moved and not deferred). The server records the same when it
+  /// stores the completion, and the re-read that follows replaces this local mark. Mirrors `bypassed_open_tasks`.
+  /// Returns the ids it auto-skipped (a rejected completion takes them back).
+  Set<String> _autoSkipMiddleLocally(TaskItem done) {
+    final ids = autoSkippedMiddleIds(_tasks, done, _clockNow());
+    for (final id in ids) {
+      final t = _tasks.firstWhere((t) => t.id == id);
+      _autoSkipDates[id] = DateFormat('yyyy-MM-dd').format(_dayOnly(t.scheduledStart!.toLocal()));
+      if (_preferredActiveTaskId == id) _preferredActiveTaskId = null;
+    }
+    if (ids.isNotEmpty) _saveRouteStates();
+    return ids;
   }
 
   /// The server copy of an undone completion: the task goes back to todo. Rejected: the completion is restored (the
@@ -1434,7 +1498,8 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Stores a completion the user just made. Until the server answers the completion is a pending edit: any read
   /// that was already in flight is re-checked against it. Confirmed: the day and Today are re-read once. Rejected:
   /// the task is put back as it was (never a "done" the server does not have) and the day is re-read.
-  Future<void> _sendCompleteToBackend(TaskItem task, {bool wasSkipped = false, bool wasDeferred = false}) async {
+  Future<void> _sendCompleteToBackend(TaskItem task,
+      {bool wasSkipped = false, bool wasDeferred = false, Set<String> autoSkipped = const {}}) async {
     _pendingCompletions.add(task.id);
     try {
       await taskService.completeTask(task.id);
@@ -1448,6 +1513,8 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       _completedAfterDeviationTaskIds.remove(task.id);
       if (wasSkipped) _skippedTaskIds.add(task.id);
       if (wasDeferred) _deferredTaskIds.add(task.id);
+      // the stops this completion skipped on its own are open again too
+      _autoSkipDates.removeWhere((id, _) => autoSkipped.contains(id));
       unawaited(_saveRouteStates());
       _lastSyncError = "Couldn't save \u201c${task.title}\u201d as done. It was put back.";
       _recalculateReadiness();
@@ -2041,6 +2108,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         category: 'Work',
         scheduledStart: match.startTime,
         scheduledEnd: match.endTime,
+        timeLocked: nt.timeLocked,
       ));
     }
     for (final c in diff.cancelledTasks) {
@@ -2093,7 +2161,9 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       final sStart = t.scheduledStart!;
       // Mirrors the backend day render: a user-fixed time stays fixed in Calendar.
       final locked = t.timeLocked && !t.isCompleted;
-      final isDeviated = (_skippedTaskIds.contains(t.id) || _deferredTaskIds.contains(t.id)) && !t.isCompleted;
+      final isAutoSkipped = _autoSkipDates.containsKey(t.id) && !t.isCompleted;
+      final isDeviated = (_skippedTaskIds.contains(t.id) || _deferredTaskIds.contains(t.id) || isAutoSkipped) &&
+          !t.isCompleted;
       final isRecovered = _completedAfterDeviationTaskIds.contains(t.id) && t.isCompleted;
       final sEnd = t.scheduledEnd ?? sStart.add(Duration(minutes: t.durationMinutes));
       final derived = deriveSlotState(
@@ -2113,7 +2183,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
         tagText: t.isCompleted
             ? (isRecovered ? 'RECOVERED' : 'COMPLETED')
             : isDeviated
-                ? 'SKIPPED'
+                ? (isAutoSkipped && !_skippedTaskIds.contains(t.id) ? 'AUTO-SKIPPED' : 'SKIPPED')
                 : locked
                     ? 'FIXED'
                     : (t.taskType == TaskType.deepWork ? 'DEEP WORK' : 'TASK'),
@@ -2839,6 +2909,7 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
     _deferredTaskIds.clear();
     _completedAfterDeviationTaskIds.clear();
     _skipDates.clear();
+    _autoSkipDates.clear();
     _reflections.clear();
     notifyListeners();
     onAccountCleared?.call();

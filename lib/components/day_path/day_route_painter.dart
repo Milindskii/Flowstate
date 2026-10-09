@@ -76,7 +76,7 @@ class DayRoutePainter extends CustomPainter {
       var last = -1;
       for (var i = 0; i < from.length; i++) {
         final now = geometry.sampleStates[i];
-        if (now != from[i] && now != RouteSegmentState.ahead) {
+        if (now != from[i] && now != RouteSegmentState.ahead && now != RouteSegmentState.hidden) {
           if (first < 0) first = i;
           last = i;
         }
@@ -94,7 +94,7 @@ class DayRoutePainter extends CustomPainter {
     final now = geometry.sampleStates[i];
     final from = fromStates;
     if (from == null || _revealFrom < 0 || from.length != geometry.sampleStates.length) return now;
-    if (from[i] == now || now == RouteSegmentState.ahead) return now;
+    if (from[i] == now || now == RouteSegmentState.ahead || now == RouteSegmentState.hidden) return now;
     return i < _revealFrom + (_revealTo - _revealFrom + 1) * t ? now : from[i];
   }
 
@@ -102,6 +102,7 @@ class DayRoutePainter extends CustomPainter {
         RouteSegmentState.traveled => palette.traveled,
         RouteSegmentState.recovered => palette.recovery,
         RouteSegmentState.ahead => palette.ahead,
+        RouteSegmentState.hidden => palette.ahead, // never drawn
       };
 
   double _x(int i) => fromXs == null ? geometry.sampleXs[i] : ui.lerpDouble(fromXs![i], geometry.sampleXs[i], t)!;
@@ -110,10 +111,12 @@ class DayRoutePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (!geometry.hasRoute) return;
     final g = geometry;
-    final main = [for (var i = 0; i < g.sampleYs.length; i++) Offset(_x(i), g.sampleYs[i])];
     // Beds first (the road and every branch share one bed language), then the coloured lines on top, so a branch
-    // that leaves the road blends into it instead of being drawn over it.
-    _paintBed(canvas, main);
+    // that leaves the road blends into it instead of being drawn over it. A stretch the traveller did not walk (the
+    // journey continues from a branch) is not drawn at all.
+    for (final run in g.visibleRuns([for (var i = 0; i < g.sampleYs.length; i++) _x(i)])) {
+      if (run.length >= 2) _paintBed(canvas, run);
+    }
     for (final b in g.branches) {
       if (b.points.length >= 2) _paintBed(canvas, b.points);
     }
@@ -137,7 +140,7 @@ class DayRoutePainter extends CustomPainter {
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round
           ..strokeWidth = centerLineWidth
-          ..color = palette.recovery,
+          ..color = _color(b.state),
       );
     }
   }
@@ -191,6 +194,7 @@ class DayRoutePainter extends CustomPainter {
     final n = g.sampleYs.length;
     for (var i = 0; i + 1 < n; i++) {
       // the stretch from sample i to i + 1 is the one that ARRIVES at i + 1: it takes that sample's state
+      if (g.sampleStates[i + 1] == RouteSegmentState.hidden) continue;
       canvas.drawLine(
         Offset(_x(i), g.sampleYs[i]),
         Offset(_x(i + 1), g.sampleYs[i + 1]),

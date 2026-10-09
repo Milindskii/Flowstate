@@ -18,23 +18,21 @@ String formatShieldWait(Duration d) {
   return '${d.inMinutes}m';
 }
 
-/// Noya explains, in place, that a genuinely AI-powered action needs Shields the account does not have: what needs
-/// them, how many, the current balance, when the next free one lands, and how to earn more.
+/// Noya is napping because the account is out of Shields: what happened, the balance, when the next free one lands,
+/// how to earn one, the Pro path, and the manual planner, all in one compact card.
 ///
-/// It is shown ONLY for an AI action. Everything deterministic in the planner (create, edit, reschedule, routines,
-/// complete, skip, delete) works with zero Shields and never reaches this widget.
+/// It is shown ONLY for the AI action (Build My Day). Everything deterministic in the planner (create, edit, reschedule,
+/// routines, complete, skip, delete) works with zero Shields and never reaches this widget. A provider failure is NOT
+/// this card: that one says "AI is temporarily unavailable" and that no Shield was charged.
 class NoyaShieldGate extends StatelessWidget {
   /// The server's view of the account (balance, price, cooldown). Never invented client-side.
   final AIUsageStatus status;
 
-  /// What the Shields would have paid for, e.g. "An AI plan".
-  final String action;
-
   /// "Earn a Shield": opens the place Shields are earned (Flow Hub). Null hides the button.
   final VoidCallback? onEarn;
 
-  /// "Maybe later": dismisses the gate and keeps what the user typed.
-  final VoidCallback onLater;
+  /// "Get Pro": opens the Pro page. It only opens it: nothing is bought or unlocked from here.
+  final VoidCallback? onPro;
 
   /// Optional deterministic route ("Plan it myself") so a user with no Shields is never stuck.
   final VoidCallback? onManual;
@@ -46,9 +44,8 @@ class NoyaShieldGate extends StatelessWidget {
   const NoyaShieldGate({
     super.key,
     required this.status,
-    this.action = 'An AI plan',
     this.onEarn,
-    required this.onLater,
+    this.onPro,
     this.onManual,
     this.manualLabel = 'Plan it myself',
     this.clock = DateTime.now,
@@ -87,7 +84,9 @@ class NoyaShieldGate extends StatelessWidget {
             child: const NoyaMotionView(mood: NoyaMood.asleep, pose: NoyaState.sleepy, size: 44, showAmbientGlow: true),
           ),
           const SizedBox(height: 6),
-          Text('Noya 🦊', style: FlowTypography.labelMedium(color: accent).copyWith(fontWeight: FontWeight.w700)),
+          Text('Noya is taking a nap 💤',
+              key: const Key('shield_gate_title'),
+              style: FlowTypography.labelMedium(color: accent).copyWith(fontWeight: FontWeight.w700)),
           const SizedBox(height: 4),
           Text(
             headline,
@@ -97,22 +96,22 @@ class NoyaShieldGate extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '$action needs $cost Shields. You have $have.',
-            key: const Key('shield_gate_balance'),
-            textAlign: TextAlign.center,
-            style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            refill,
-            key: const Key('shield_gate_refill'),
+            'Get another Shield from Flow Hub, or unlock Flowstate Pro for more AI planning.',
+            key: const Key('shield_gate_ways'),
             textAlign: TextAlign.center,
             style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
           ),
           const SizedBox(height: 6),
           Text(
-            'Earn Shields with a 7-day streak or by finishing your weekly quest.',
-            key: const Key('shield_gate_ways'),
+            'You have $have ${have == 1 ? 'Shield' : 'Shields'} · AI planning uses $cost.',
+            key: const Key('shield_gate_balance'),
+            textAlign: TextAlign.center,
+            style: FlowTypography.labelSmall(color: muted),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            refill,
+            key: const Key('shield_gate_refill'),
             textAlign: TextAlign.center,
             style: FlowTypography.labelSmall(color: muted),
           ),
@@ -134,17 +133,18 @@ class NoyaShieldGate extends StatelessWidget {
                   ),
                   child: const Text('Earn a Shield'),
                 ),
-              OutlinedButton(
-                key: const Key('shield_gate_later'),
-                onPressed: onLater,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: FlowColors.textPrimaryOf(context),
-                  side: BorderSide(color: FlowColors.border(context)),
-                  minimumSize: const Size(48, 44),
-                  shape: const RoundedRectangleBorder(borderRadius: FlowRadii.pillRadius),
+              if (onPro != null)
+                OutlinedButton(
+                  key: const Key('shield_gate_pro'),
+                  onPressed: onPro,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: FlowColors.textPrimaryOf(context),
+                    side: BorderSide(color: FlowColors.border(context)),
+                    minimumSize: const Size(48, 44),
+                    shape: const RoundedRectangleBorder(borderRadius: FlowRadii.pillRadius),
+                  ),
+                  child: const Text('Get Pro'),
                 ),
-                child: const Text('Maybe later'),
-              ),
               if (onManual != null)
                 TextButton(
                   key: const Key('use_basic_planner_button'),

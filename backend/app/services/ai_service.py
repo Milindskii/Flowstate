@@ -124,7 +124,7 @@ def infer_priority(deadline_at: Optional[datetime], text: str, now_local: dateti
 def infer_focus(task_type: TaskType) -> str:
     if task_type in (TaskType.deep_work, TaskType.study):
         return "high"
-    if task_type in (TaskType.admin, TaskType.physical):
+    if task_type in (TaskType.admin, TaskType.personal, TaskType.physical):
         return "low"
     return "medium"
 
@@ -158,7 +158,7 @@ _GEMINI_TASK_SCHEMA_FIELDS = (
     '"ref": "t1",\n'
     '      "title": "concise task title",\n'
     '      "description": null,\n'
-    '      "type": "deep_work" | "shallow_work" | "study" | "creative" | "admin" | "physical" | "meeting" | "personal",\n'
+    '      "type": "deep_work" | "shallow_work" | "study" | "creative" | "physical" | "meeting" | "personal",\n'
     '      "category": "College" | "Work" | "Personal" | "Fitness" | "General",\n'
     '      "estimated_minutes": 45,\n'
     '      "difficulty": "high" | "medium" | "light" | "physical",\n'
@@ -271,8 +271,8 @@ def _build_initial_gemini_prompt(raw_text: str, today_str: str, user_timezone_st
         "    - 'finish my ML assignment and submit it before 11 AM, probably 90 minutes' -> title: 'Finish ML assignment', type: 'deep_work', estimated_minutes: 90, deadline: today, deadline_time: '11:00'\n"
         "    - 'fix the authentication bug, preferably in the afternoon' -> title: 'Fix auth bug', type: 'deep_work', estimated_minutes: 120, preferred_window: 'afternoon'\n"
         "    - 'after dinner I want to review DSA for 45 minutes' -> title: 'Review DSA', type: 'study', estimated_minutes: 45, preferred_window: 'after_dinner', relative_after: 'dinner', earliest_start_hhmm: '20:00'\n"
-        "    - 'call my mom sometime in the evening, probably 15 minutes' -> title: 'Call mom', type: 'admin', estimated_minutes: 15, preferred_window: 'evening'\n"
-        "    - 'clean my room' -> title: 'Clean room', type: 'admin', estimated_minutes: 30, priority: 'low'\n"
+        "    - 'call my mom sometime in the evening, probably 15 minutes' -> title: 'Call mom', type: 'personal', estimated_minutes: 15, preferred_window: 'evening'\n"
+        "    - 'clean my room' -> title: 'Clean room', type: 'personal', estimated_minutes: 30, priority: 'low'\n"
         "    - 'meeting Friday at 3 PM' -> title: 'Meeting', type: 'meeting', target_date: Friday's date, fixed_start: '15:00', deadline: null\n"
         "    - 'Study DSA Friday morning' -> title: 'Study DSA', target_date: Friday's date, preferred_window: 'morning', deadline: null\n"
         "  * DO NOT generate titles like 'Gym to do', 'Work to do', 'Assignment task', or 'Task for gym'.\n"
@@ -290,7 +290,7 @@ def _build_initial_gemini_prompt(raw_text: str, today_str: str, user_timezone_st
         "  * If user does NOT explicitly specify priority: infer it from urgency cues (deadline today/tomorrow -> 'high'; 'optional'/'if I have time' -> 'low'; otherwise 'medium') and set priority_source='inferred'. Never return null.\n"
         "- DURATION / FOCUS RULES:\n"
         "  * duration_source='explicit' only when the user stated a duration ('for 45 minutes', 'about 2 hours'); otherwise estimate it and set 'inferred'.\n"
-        "  * focus_level='high' + focus_source='explicit' when the user says it needs deep focus / concentration / no distractions; 'low' + 'explicit' for 'mindless' / 'easy'. Otherwise infer from type (deep_work/study -> high, admin/physical -> low, else medium) with focus_source='inferred'.\n"
+        "  * focus_level='high' + focus_source='explicit' when the user says it needs deep focus / concentration / no distractions; 'low' + 'explicit' for 'mindless' / 'easy'. Otherwise infer from type (deep_work/study -> high, personal/physical -> low, else medium) with focus_source='inferred'.\n"
         "- TASK REFS & DEPENDENCIES:\n"
         "  * Give every task a unique ref: 't1', 't2', ... in mention order.\n"
         "  * 'after that' / 'then' / 'once X is done' / 'after finishing X' -> depends_on: [ref of that earlier task]. Otherwise depends_on: [].\n"
@@ -1330,7 +1330,7 @@ class AIService:
             category = "College"
             provenance["task_type"] = FieldProvenance(source="inferred", confidence=0.85)
         elif any(w in lower_title for w in admin_words):
-            task_type = TaskType.admin
+            task_type = TaskType.personal
             difficulty = TaskDifficulty.light
             category = "Personal"
             provenance["task_type"] = FieldProvenance(source="inferred", confidence=0.85)
@@ -1500,7 +1500,7 @@ class AIService:
             },
         }
         models_to_try: List[str] = []
-        for m in [settings.GEMINI_MODEL, "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-flash-latest"]:
+        for m in [settings.GEMINI_MODEL, "gemini-3.1-flash-lite", "gemini-3-flash-preview", "gemini-flash-lite-latest"]:
             if m and m not in models_to_try:
                 models_to_try.append(m)
         models_to_try = models_to_try[:max(1, settings.GEMINI_MAX_ATTEMPTS)]  # bounded attempts per call
@@ -1523,9 +1523,14 @@ class AIService:
                 if remaining is not None and remaining <= 0.25:
                     seen.setdefault("timeout", 0)  # the request deadline, not the provider, ended the attempts
                     break
+                # Inside the gateway's request deadline an attempt may use all the time left: a full-size plan is
+                # 2-4k output tokens and Gemini has taken up to ~24 s to generate one. Capping each attempt at the
+                # per-call timeout split the deadline in two, so a slow but healthy answer timed out and the
+                # fallback model then had to regenerate it in what was left. Fast failures (5xx, 404, network)
+                # still fall through to the fallback model within the remaining deadline.
                 request_timeout = settings.GEMINI_REQUEST_TIMEOUT_SECONDS
                 if remaining is not None:
-                    request_timeout = max(0.25, min(request_timeout, remaining))
+                    request_timeout = max(0.25, remaining)
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
                 started_at = clock.perf_counter()
                 error_class, status_code = None, 0
@@ -1560,6 +1565,10 @@ class AIService:
                             return text
                     elif status_code == 429:
                         error_class = "provider_quota"
+                        try:
+                            retry_after = min(5.0, float(resp.headers.get("retry-after", 0)))
+                        except (TypeError, ValueError):
+                            retry_after = 0.0
                     elif status_code in (401, 403):
                         error_class = "provider_auth"
                     elif status_code == 404:
@@ -1716,10 +1725,13 @@ class AIService:
             dur_src = "explicit" if (item.get("duration_source") == "explicit" and item.get("estimated_minutes") is not None) else "inferred"
 
             raw_type = str(item.get("type", "deep_work")).lower()
-            try:
-                task_type = TaskType(raw_type)
-            except Exception:
-                task_type = TaskType.deep_work
+            if raw_type == "admin":
+                task_type = TaskType.personal
+            else:
+                try:
+                    task_type = TaskType(raw_type)
+                except Exception:
+                    task_type = TaskType.deep_work
 
             raw_diff = str(item.get("difficulty", "medium")).lower()
             try:
@@ -1957,7 +1969,7 @@ class AIService:
                     task_type=task_type,
                     difficulty=difficulty,
                     priority=priority,
-                    category=item.get("category", "General") or "General",
+                    category="Personal" if str(item.get("category", "")).strip().lower() == "admin" else (item.get("category", "General") or "General"),
                     deadline_at=deadline_at,
                     scheduled_start=scheduled_start,
                     scheduled_end=scheduled_end,

@@ -7,6 +7,8 @@ import '../components/noya_failure_state.dart';
 import '../components/noya_thinking.dart';
 import '../components/plan_diff_view.dart';
 import '../components/replan_new_task_sheet.dart';
+import '../components/shield_popups.dart';
+import '../providers/flow_provider.dart';
 import '../models/calendar_models.dart';
 import '../models/schedule_item.dart';
 import '../providers/app_state_provider.dart';
@@ -39,6 +41,24 @@ Future<void> showReplanDaySheet(
 
 /// User-facing text for a failed Replan call (plain language only). Exposed for tests.
 String replanFriendlyError(Object e) => friendlyErrorMessage(e, fallback: _replanFallback);
+
+bool _isInsufficientShields(Object e) {
+  if (e is ApiException) {
+    if (e.statusCode == 403) return true;
+    final data = e.data;
+    if (data is Map<String, dynamic>) {
+      final detail = data['detail'];
+      if (detail is Map<String, dynamic>) {
+        if (detail['code'] == 'insufficient_shields' || detail['failure_code'] == 'insufficient_shields') return true;
+      }
+      if (detail == 'insufficient_shields') return true;
+      if (data['code'] == 'insufficient_shields' || data['failure_code'] == 'insufficient_shields') return true;
+    }
+    final msg = e.message.toLowerCase();
+    if (msg.contains('insufficient_shields') || msg.contains('out of shields') || msg.contains('need 1 shield')) return true;
+  }
+  return false;
+}
 
 const String _replanFallback = "I couldn't build a new plan right now. Your message is still here, so you can try again.";
 
@@ -101,6 +121,9 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
         text: "Tell me what changed with your day, or tap a quick action below.",
       ),
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _refreshShieldBalance();
+    });
   }
 
   @override
@@ -137,6 +160,12 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
       TextPosition(offset: _textCtrl.text.length),
     );
     _focusNode.requestFocus();
+  }
+
+  void _refreshShieldBalance() {
+    try {
+      Provider.of<FlowProvider>(context, listen: false).loadWallet();
+    } catch (_) {}
   }
 
   Future<void> _sendMessage(String text, {Map<String, dynamic>? quickAdd, String? display, _ChatMessage? retryOf}) async {
@@ -194,9 +223,17 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
         _scrollToBottom();
         FlowHaptics.success();
       }
+      _refreshShieldBalance(); // an AI-read request may have used a Shield: every pill shows the server's new balance
     } catch (e) {
       if (mounted) {
-        final errText = replanFriendlyError(e);
+        final isInsufficient = _isInsufficientShields(e);
+        if (isInsufficient) {
+          _refreshShieldBalance();
+          ShieldWalletPopup.show(context);
+        }
+        final errText = isInsufficient
+            ? "You're out of Shields. Shields are needed for AI-powered planning."
+            : replanFriendlyError(e);
         setState(() {
           _isLoading = false;
           _messages.add(_ChatMessage(
@@ -227,7 +264,10 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
 
   Future<void> _openUrgentSheet() async {
     FlowHaptics.lightTap();
-    final r = await ReplanNewTaskSheet.show(context);
+    final r = await ReplanNewTaskSheet.show(
+      context,
+      selectedDate: widget.selectedDate,
+    );
     if (r == null || !mounted) return;
     final start = r.time == null
         ? null
@@ -235,7 +275,13 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
     await _sendMessage(
       '',
       display: 'Urgent: ${r.title} · ${r.minutes} min${r.time == null ? '' : ' at ${r.time!.format(context)}'}',
-      quickAdd: {'title': r.title, 'duration_minutes': r.minutes, if (start != null) 'start_time': start},
+      quickAdd: {
+        'title': r.title,
+        'duration_minutes': r.minutes,
+        if (start != null) 'start_time': start,
+        if (start != null) 'constraint_type': 'fixed_start',
+        if (r.isNoyaPick && start == null) 'is_preferred': true,
+      },
     );
   }
 
@@ -250,6 +296,7 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
       initialTitle: item.needsTitle ? '' : item.title,
       initialMinutes: item.durationMinutes,
       initialTime: startLocal == null ? null : TimeOfDay(hour: startLocal.hour, minute: startLocal.minute),
+      selectedDate: widget.selectedDate,
     );
     if (r == null || !mounted) return;
     DateTime? start;
@@ -343,6 +390,22 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
     }
   }
 
+  /// The price, before anything is sent: simple changes are free; Noya uses Shields only when she needs AI to read the
+  /// request. The number is the server's (wallet), shown only once the wallet is known.
+  Widget _replanCostNote(BuildContext context) {
+    FlowProvider? flow;
+    try {
+      flow = Provider.of<FlowProvider>(context);
+    } catch (_) {}
+    final cost = flow?.wallet?.costReplan;
+    if (cost == null) return const SizedBox.shrink();
+    return Text(
+      'Simple changes are free · AI help uses $cost ${cost == 1 ? 'Shield' : 'Shields'}',
+      key: const Key('replan_cost_note'),
+      style: FlowTypography.labelSmall(color: FlowColors.textMutedOf(context)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
@@ -395,9 +458,11 @@ class _ReplanDaySheetState extends State<ReplanDaySheet> with WidgetsBindingObse
                             DateFormat('EEEE, MMMM d').format(widget.selectedDate),
                             style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)),
                           ),
+                          _replanCostNote(context),
                         ],
                       ),
                     ),
+                    const ShieldBalancePill(),
                     IconButton(
                       icon: const Icon(Icons.close_rounded),
                       color: FlowColors.textSecondaryOf(context),

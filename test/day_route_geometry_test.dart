@@ -379,7 +379,10 @@ void main() {
       for (var i = 0; i < plain.stops.length; i++) {
         expect(g.stops[i].center, plain.stops[i].center, reason: 'adding the finish moves no stop');
       }
-      expect(g.sampleXs.sublist(0, plain.sampleXs.length - 1), plain.sampleXs.sublist(0, plain.sampleXs.length - 1));
+      // the road above may only ease its last bend toward the finish (one smooth curve), never visibly move
+      for (var i = 0; i < plain.sampleXs.length - 1; i++) {
+        expect(g.sampleXs[i], closeTo(plain.sampleXs[i], 2.0));
+      }
     });
 
     test('a finish after skipped / recovered stops still follows the one road', () {

@@ -10,6 +10,8 @@ import '../models/flow_challenge.dart';
 import '../models/flow_daily_quest.dart';
 import '../models/flow_achievement.dart';
 import '../models/flow_overview.dart';
+import '../models/shield_wallet.dart';
+import '../services/shield_earning.dart';
 import '../services/flow_service.dart';
 import '../services/api_service.dart';
 import '../components/companion/flow_companion_animation_controller.dart';
@@ -158,6 +160,7 @@ class FlowProvider extends ChangeNotifier {
       final res = await flowService.getOverview();
       if (_mockMode) return;
       _overview = res;
+      _hasServerBalance = true;
       _activeSessionId = res.activeSessionId;
       _latestNotification = res.notification;
 
@@ -445,6 +448,184 @@ class FlowProvider extends ChangeNotifier {
     return false;
   }
 
+  // ---- Shields: one balance on every screen, always the server's ----------------------------------------------------
+
+  ShieldWallet? _wallet;
+  bool _hasServerBalance = false;
+
+  /// True once a balance came from the server (overview, wallet, AI usage). Until then no Shield count is shown, so a
+  /// placeholder can never read as "0 Shields".
+  bool get hasServerShieldBalance => _hasServerBalance;
+
+  /// The last wallet the server returned (prices, ad offer, pack). Null until [loadWallet] succeeds.
+  ShieldWallet? get wallet => _wallet;
+
+  /// The account's Shield balance as the server last reported it (overview, wallet, AI usage or a spend/reward reply).
+  int get shieldBalance => _overview.profile.shieldsAvailable;
+
+  /// Whether the server says the streak can be restored right now (and for how much).
+  StreakRecovery get streakRecovery => _overview.streakRecovery;
+
+  /// Record a balance the SERVER just reported (an AI plan's usage status, a restore, an ad or a purchase), so every
+  /// Shield pill updates at once. Never called with a locally computed number.
+  void applyServerShieldBalance(int balance) {
+    final first = !_hasServerBalance;
+    _hasServerBalance = true;
+    if (balance == _overview.profile.shieldsAvailable) {
+      if (first) notifyListeners();
+      return;
+    }
+    _overview = _overview.copyWithProfile(_overview.profile.copyWith(shieldsAvailable: balance));
+    notifyListeners();
+  }
+
+  Future<ShieldWallet?> loadWallet() => _flight.run('shield-wallet', () async {
+        if (_mockMode) return _wallet;
+        try {
+          final w = await flowService.getShieldWallet();
+          _wallet = w;
+          applyServerShieldBalance(w.balance);
+          notifyListeners();
+          return w;
+        } catch (_) {
+          return _wallet;
+        }
+      });
+
+  @visibleForTesting
+  void setWalletForTesting(ShieldWallet? w) {
+    _wallet = w;
+    _hasServerBalance = true;
+    if (w != null) {
+      _overview = _overview.copyWithProfile(_overview.profile.copyWith(shieldsAvailable: w.balance));
+    }
+    notifyListeners();
+  }
+
+  // Streak restore: ONE idempotency key per confirmation, reused by retries of that confirmation, so a network retry,
+  // a double tap or an app restart mid-request can never pay twice (the server replays the first result).
+  String? _restoreKey;
+
+  /// Restore the broken streak for the price the user was shown. The server checks eligibility, the price and the
+  /// balance, and spends + restores in one atomic step.
+  Future<StreakRestoreOutcome> restoreStreak({required int expectedCost, String restoreMethod = 'shield'}) =>
+      _flight.run('restore-streak', () async {
+        _restoreKey ??= 'restore-${DateTime.now().microsecondsSinceEpoch}-${identityHashCode(this)}';
+        try {
+          final res = await flowService.restoreStreak(
+            idempotencyKey: _restoreKey!,
+            expectedCost: expectedCost,
+            restoreMethod: restoreMethod,
+          );
+          _restoreKey = null;
+          final balance = (res['shields_available'] as num?)?.toInt();
+          if (balance != null) applyServerShieldBalance(balance);
+          _overview = _overview.copyWith(streakRecovery: StreakRecovery.none);
+          notifyListeners();
+          unawaited(loadOverview());
+          return StreakRestoreOutcome(true, res['message'] as String? ?? 'Your streak is back.');
+        } on ApiException catch (e) {
+          // A definite refusal (price changed, not eligible, can't afford): this confirmation is over. A timeout or a
+          // dropped connection keeps the key, so trying again replays instead of paying twice.
+          if (!e.isTimeout && e.statusCode != null) _restoreKey = null;
+          unawaited(loadOverview());
+          return StreakRestoreOutcome(false, friendlyActionError(e, fallback: "Couldn't restore your streak. Nothing was charged."),
+              priceChanged: e.statusCode == 409 && e.message.contains('costs'));
+        } catch (_) {
+          unawaited(loadOverview());
+          return const StreakRestoreOutcome(false, "Couldn't reach Flowstate. Nothing was charged.");
+        }
+      });
+
+  /// Watch one rewarded ad. The Shield (when this ad completes a set) is granted ONLY by the server after Google's
+  /// signed verification; this method reads the server's answer back and never adds anything itself.
+  Future<ShieldEarnOutcome> watchRewardedAd() => _flight.run('watch-ad', () async {
+        final gateway = ShieldEarning.ads;
+        final offer = _wallet?.ads;
+        if (!gateway.isAvailable || offer == null || !offer.enabled) {
+          return const ShieldEarnOutcome(ShieldEarnStatus.unavailable, 'Rewarded ads are coming soon.');
+        }
+        Map<String, dynamic> session;
+        try {
+          session = await flowService.startAdSession();
+        } on ApiException catch (e) {
+          return ShieldEarnOutcome(ShieldEarnStatus.refused, friendlyActionError(e, fallback: "Couldn't start an ad."));
+        }
+        final shown = await gateway.show(
+          adUnitId: session['ad_unit_id'] as String,
+          ssvUserId: session['ssv_user_id'] as String,
+          customData: session['session_id'] as String,
+        );
+        if (shown != RewardedAdOutcome.earned) {
+          return ShieldEarnOutcome(ShieldEarnStatus.notEarned,
+              shown == RewardedAdOutcome.dismissed ? 'The ad was closed early, so it didn\'t count.' : "The ad couldn't play.");
+        }
+        // Google calls the server; the reward shows up there within a few seconds.
+        for (var i = 0; i < 6; i++) {
+          await Future<void>.delayed(adPollInterval);
+          try {
+            final st = await flowService.adSessionStatus(session['session_id'] as String);
+            final w = st['wallet'];
+            if (w is Map<String, dynamic>) {
+              _wallet = ShieldWallet.fromJson(w);
+              applyServerShieldBalance(_wallet!.balance);
+              notifyListeners();
+            }
+            final status = st['status'] as String?;
+            if (status == 'verified') {
+              final granted = (st['shields_granted'] as num?)?.toInt() ?? 0;
+              return ShieldEarnOutcome(ShieldEarnStatus.verified,
+                  granted > 0 ? '+$granted Shield${granted == 1 ? '' : 's'} added.' : 'Ad counted.');
+            }
+            if (status == 'over_limit') {
+              return const ShieldEarnOutcome(ShieldEarnStatus.refused, "That's all the ads for today.");
+            }
+            if (status == 'expired') break;
+          } catch (_) {}
+        }
+        return const ShieldEarnOutcome(ShieldEarnStatus.pending, 'Google is still confirming that ad. It will count once it does.');
+      });
+
+  @visibleForTesting
+  static Duration adPollInterval = const Duration(milliseconds: 1500);
+
+  /// Buy the Shield pack through the store. Shields arrive only after the server verified the purchase with Google Play.
+  Future<ShieldEarnOutcome> buyShieldPack() => _flight.run('buy-pack', () async {
+        final store = ShieldEarning.store;
+        final pack = _wallet?.pack;
+        if (!store.isAvailable || pack == null || !pack.enabled || pack.accountRef == null) {
+          return const ShieldEarnOutcome(ShieldEarnStatus.unavailable, 'Shield packs are coming soon.');
+        }
+        final result = await store.buy(productId: pack.productId, accountRef: pack.accountRef!);
+        switch (result.status) {
+          case StorePurchaseStatus.cancelled:
+            return const ShieldEarnOutcome(ShieldEarnStatus.notEarned, 'Purchase cancelled. You were not charged.');
+          case StorePurchaseStatus.pending:
+            return const ShieldEarnOutcome(ShieldEarnStatus.pending, 'Your payment is pending. Shields arrive once it completes.');
+          case StorePurchaseStatus.failed:
+          case StorePurchaseStatus.unavailable:
+            return const ShieldEarnOutcome(ShieldEarnStatus.refused, "The purchase couldn't start.");
+          case StorePurchaseStatus.purchased:
+            break;
+        }
+        try {
+          final res = await flowService.verifyShieldPack(
+              purchaseToken: result.purchase!.purchaseToken, productId: result.purchase!.productId);
+          final w = res['wallet'];
+          if (w is Map<String, dynamic>) {
+            _wallet = ShieldWallet.fromJson(w);
+            applyServerShieldBalance(_wallet!.balance);
+            notifyListeners();
+          }
+          final granted = (res['granted'] as num?)?.toInt() ?? 0;
+          return ShieldEarnOutcome(ShieldEarnStatus.verified,
+              granted > 0 ? '+$granted Shields added.' : 'This purchase was already added.');
+        } on ApiException catch (e) {
+          return ShieldEarnOutcome(ShieldEarnStatus.pending,
+              friendlyActionError(e, fallback: "We couldn't confirm the purchase yet. It will be added once Google confirms it."));
+        }
+      });
+
   void clearNotification() {
     _latestNotification = null;
     notifyListeners();
@@ -462,6 +643,9 @@ class FlowProvider extends ChangeNotifier {
     _errorMessage = null;
     _shopCatalog = [];
     _latestNotification = null;
+    _wallet = null;
+    _restoreKey = null;
+    _hasServerBalance = false;
     animController.setIdle();
     unawaited(flowService.clearCache());
     notifyListeners();
@@ -471,6 +655,7 @@ class FlowProvider extends ChangeNotifier {
   void setOverviewForTesting(FlowOverview overview) {
     _mockMode = true;
     _overview = overview;
+    _hasServerBalance = true;
     _isLoading = false;
     notifyListeners();
   }
@@ -481,4 +666,19 @@ class FlowProvider extends ChangeNotifier {
     animController.dispose();
     super.dispose();
   }
+}
+
+class StreakRestoreOutcome {
+  final bool restored;
+  final String message;
+  final bool priceChanged;
+  const StreakRestoreOutcome(this.restored, this.message, {this.priceChanged = false});
+}
+
+enum ShieldEarnStatus { verified, pending, notEarned, refused, unavailable }
+
+class ShieldEarnOutcome {
+  final ShieldEarnStatus status;
+  final String message;
+  const ShieldEarnOutcome(this.status, this.message);
 }

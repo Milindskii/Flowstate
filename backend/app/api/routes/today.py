@@ -760,6 +760,152 @@ def record_override(
     )
 
 
+def _skip_open_task(db: Session, user: User, task_obj: Task, now_utc: datetime, user_tz, user_tz_str) -> Optional[dict]:
+    """The one skip: keep the slot as "skipped" history and move the task to its next good window (caller commits).
+
+    Returns the new window's description, or None when no free slot fits before its deadline (the task keeps its slot).
+    """
+    placement = None
+    engine_window = GenericRecommendationEngine().suggest_next_window(
+        task=task_obj, now_utc=now_utc, readiness_profile=readiness_repo.get_profile(db, user.id), user_tz=user_tz)
+    if engine_window and engine_window.get("suggested_date"):
+        from datetime import time as tm_cls
+        t_parts = engine_window.get("suggested_time", "09:30").split(":")
+        suggested = datetime.combine(datetime.fromisoformat(engine_window["suggested_date"]).date(),
+                                     tm_cls(int(t_parts[0]), int(t_parts[1])), tzinfo=user_tz)
+        placement = _place_override(db, user, task_obj, user_tz, user_tz_str, now_utc,
+                                    earliest_start=max(suggested, now_utc.astimezone(user_tz)))
+    _note_origin(db, user, task_obj, now_utc, user_tz, skipped=True)
+    if task_obj.status == TaskStatus.in_progress:
+        task_obj.status = TaskStatus.todo
+    if placement is None:
+        return None
+    _persist_placement(task_obj, placement, user_tz)
+    return planning_service.describe_slot(placement.start, user_tz, now_utc)
+
+
+AUTO_SKIPPED = "auto_skipped"
+
+
+def _day_stops(db: Session, user_id: str, anchor: Task, user_tz) -> List[Task]:
+    """The planned stops (non-commitment, slotted, not cancelled) of ``anchor``'s local day, in planned order."""
+    start = _make_aware(anchor.scheduled_start)
+    if start is None:
+        return []
+    day = start.astimezone(user_tz).date()
+    day_start = datetime.combine(day, datetime.min.time(), tzinfo=user_tz).astimezone(timezone.utc)
+    rows = (db.query(Task).filter(
+        Task.user_id == user_id, Task.status.notin_([TaskStatus.cancelled, TaskStatus.archived]),
+        Task.is_commitment.is_(False), Task.scheduled_start.isnot(None),
+        Task.scheduled_start >= day_start - timedelta(days=1), Task.scheduled_start < day_start + timedelta(days=2))
+        .order_by(Task.scheduled_start.asc(), Task.created_at.asc()).all())
+    return [t for t in rows if _make_aware(t.scheduled_start).astimezone(user_tz).date() == day]
+
+
+def _closed_in(stops: List[Task], i: int) -> bool:
+    """Stop ``i`` lies in a run between two done stops: a completed stop comes somewhere before it and after it, with
+    only unfinished stops in between. The first and last stops of a day are never closed in."""
+    def done(j: int) -> bool:
+        return stops[j].status == TaskStatus.completed
+
+    before = next((j for j in range(i - 1, -1, -1) if done(j)), None)
+    after = next((j for j in range(i + 1, len(stops)) if done(j)), None)
+    return before is not None and after is not None
+
+
+def bypassed_open_tasks(db: Session, user_id: str, done: Task, user_tz, now_utc: datetime) -> List[Task]:
+    """The open stops ``done`` closes in: every open stop in a run between two done stops, on either side of it.
+
+    A → B → C with A and C done leaves B behind; A done, B and C open, D done leaves B AND C behind. Planned order on
+    ``done``'s day. The first and last stops of a day are never closed in. Only planned work counts: commitments and
+    unslotted tasks are not stops here. A task being worked on keeps its state (it is not skipped), and a slot that
+    already ended is MISSED (derived from the clock) and stays missed; either still belongs to the run.
+    """
+    if done.is_commitment:
+        return []
+    stops = _day_stops(db, user_id, done, user_tz)
+    at = next((i for i, t in enumerate(stops) if t.id == done.id), None)
+    if at is None:
+        return []
+
+    def is_open(t: Task) -> bool:
+        return t.status in (TaskStatus.todo, TaskStatus.postponed) and not task_slot_elapsed(t, now_utc)
+
+    run = []
+    for step in (-1, 1):  # the run on each side of ``done``, up to the next done stop
+        i = at + step
+        while 0 <= i < len(stops) and stops[i].status != TaskStatus.completed:
+            run.append(i)
+            i += step
+    return [stops[i] for i in sorted(run) if is_open(stops[i]) and _closed_in(stops, i)]
+
+
+def _note_auto_skip(db: Session, user: User, task: Task, user_tz) -> None:
+    """Record B as auto-skipped at its slot. B is NOT moved: its stop stays where it was planned (caller commits)."""
+    from ...services.calendar_service import CalendarService
+
+    start = _make_aware(task.scheduled_start)
+    if start is None or CalendarService._deviation_recorded(db, [], str(task.id), AUTO_SKIPPED, task.scheduled_start):
+        return
+    db.add(TaskDeviation(
+        user_id=user.id, task_id=str(task.id), deviation_date=start.astimezone(user_tz).date(), kind=AUTO_SKIPPED,
+        original_start=task.scheduled_start, original_end=task.scheduled_end))
+
+
+def skip_bypassed_tasks(db: Session, user: User, done: Task, timezone_name: Optional[str] = None) -> List[str]:
+    """Completing a stop that closes in open stops (A done, B [and C ...] open, D done) auto-skips each of them.
+
+    Auto-skip is its own state, apart from an explicit Skip (which moves the task), Missed (the clock) and Completed:
+    B keeps its slot and stays doable there. Never fails the completion: on any error nothing is recorded.
+    """
+    try:
+        now_utc = datetime.now(timezone.utc)
+        user_tz, _ = resolve_user_timezone(user, timezone_name)
+        skipped = []
+        for t in bypassed_open_tasks(db, user.id, done, user_tz, now_utc):
+            _note_auto_skip(db, user, t, user_tz)
+            skipped.append(str(t.id))
+        if skipped:
+            db.commit()
+        return skipped
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Auto-skip after completion failed: {type(e).__name__}")
+        return []
+
+
+def restore_auto_skipped(db: Session, user: User, reopened: Task, timezone_name: Optional[str] = None) -> List[str]:
+    """Un-completing a stop can undo an auto-skip: every auto-skipped stop of that day that is no longer between two
+    done stops is Open again (its auto-skip record is removed). Explicit skips, missed and completed tasks are never touched.
+
+    Never fails the un-completion: on any error nothing is changed.
+    """
+    try:
+        user_tz, _ = resolve_user_timezone(user, timezone_name)
+        stops = _day_stops(db, user.id, reopened, user_tz)
+        at = next((i for i, t in enumerate(stops) if t.id == reopened.id), None)
+        if at is None:
+            return []
+
+        restored = []
+        for i, t in enumerate(stops):
+            if t.status not in (TaskStatus.todo, TaskStatus.postponed) or _closed_in(stops, i):
+                continue  # still closed in (or not open): its state stays
+            n = db.query(TaskDeviation).filter(
+                TaskDeviation.user_id == user.id, TaskDeviation.task_id == str(t.id),
+                TaskDeviation.kind == AUTO_SKIPPED,
+                TaskDeviation.original_start == t.scheduled_start).delete(synchronize_session=False)
+            if n:
+                restored.append(str(t.id))
+        if restored:
+            db.commit()
+        return restored
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Auto-skip restore after un-completion failed: {type(e).__name__}")
+        return []
+
+
 @router.post("/skip/{task_id}", response_model=OverrideResponse)
 def skip_task(
     task_id: str,
@@ -786,25 +932,9 @@ def skip_task(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
             "code": "not_open", "message": "Only an open task can be skipped."})
 
-    placement = None
-    next_window = None
-    engine_window = GenericRecommendationEngine().suggest_next_window(
-        task=task_obj, now_utc=now_utc, readiness_profile=readiness_repo.get_profile(db, current_user.id), user_tz=user_tz)
-    if engine_window and engine_window.get("suggested_date"):
-        from datetime import time as tm_cls
-        t_parts = engine_window.get("suggested_time", "09:30").split(":")
-        suggested = datetime.combine(datetime.fromisoformat(engine_window["suggested_date"]).date(),
-                                     tm_cls(int(t_parts[0]), int(t_parts[1])), tzinfo=user_tz)
-        placement = _place_override(db, current_user, task_obj, user_tz, user_tz_str, now_utc,
-                                    earliest_start=max(suggested, now_utc.astimezone(user_tz)))
-    _note_origin(db, current_user, task_obj, now_utc, user_tz, skipped=True)
-    if task_obj.status == TaskStatus.in_progress:
-        task_obj.status = TaskStatus.todo
-    if placement is not None:
-        _persist_placement(task_obj, placement, user_tz)
-        next_window = planning_service.describe_slot(placement.start, user_tz, now_utc)
+    next_window = _skip_open_task(db, current_user, task_obj, now_utc, user_tz, user_tz_str)
     db.commit()
-    if placement is None:
+    if next_window is None:
         return OverrideResponse(recorded=True, next_window=None,
                                 message="Skipped. I couldn't find a free slot before its deadline, so it stays where it was.")
     return OverrideResponse(recorded=True, next_window=next_window,

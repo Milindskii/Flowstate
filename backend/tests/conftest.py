@@ -100,3 +100,14 @@ def _reset_ai_gateway_state():
     _clear()
     yield
     _clear()
+
+
+@pytest.fixture
+def one_free_plan(monkeypatch):
+    """Accounts created in this test hold one complimentary AI plan.
+
+    The product no longer gives one (Shields pay for AI planning), but the gateway still supports a free allowance
+    (a support grant), and the refund / idempotency / concurrency tests exercise that mechanism."""
+    import app.services.ai_economy_service as economy
+
+    monkeypatch.setattr(economy, "FREE_BMD_PLANS", 1)

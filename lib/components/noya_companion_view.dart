@@ -196,6 +196,9 @@ class NoyaCompanionView extends StatelessWidget {
   /// Custom semantic label override.
   final String? semanticLabel;
 
+  /// Explicit decode width override in physical pixels to prevent blur during scale animations.
+  final int? cacheWidth;
+
   const NoyaCompanionView({
     super.key,
     required this.state,
@@ -203,6 +206,7 @@ class NoyaCompanionView extends StatelessWidget {
     this.onTap,
     this.showAmbientGlow = false,
     this.semanticLabel,
+    this.cacheWidth,
   });
 
   /// Resolves the optimal, context-aware [NoyaState] based on task domain,
@@ -309,14 +313,17 @@ class NoyaCompanionView extends StatelessWidget {
     );
   }
 
-  /// Decode width in physical pixels. The source art is 1024×1024; decoding at display size keeps
-  /// each pose under ~1 MB in the image cache instead of 4 MB (spec §17 P5).
+  /// Decode width in physical pixels. The source art is 1024×1024. Decoding at exactly display
+  /// size looked soft (the decoder's downscale is low quality and there is no headroom for scale
+  /// animations or fractional DPRs), so decode at 2x display size, capped at the source width.
+  /// That is still at most 4 MB per pose, and typically far less for small sizes.
   @visibleForTesting
-  static int cacheWidthFor(double size, double devicePixelRatio) => (size * devicePixelRatio).round();
+  static int cacheWidthFor(double size, double devicePixelRatio) =>
+      (size * devicePixelRatio * 2).round().clamp(1, 1024);
 
   @override
   Widget build(BuildContext context) {
-    final decodeWidth = cacheWidthFor(size, MediaQuery.devicePixelRatioOf(context));
+    final decodeWidth = cacheWidth ?? cacheWidthFor(size, MediaQuery.devicePixelRatioOf(context));
     Widget characterImage = Image.asset(
       state.assetPath,
       width: size,

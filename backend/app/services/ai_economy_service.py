@@ -5,11 +5,14 @@ import threading
 from typing import Optional, Dict, Tuple, Any, List
 from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
-from ..core.economy_config import SHIELD_COST_BUILD_MY_DAY, SHIELD_COST_REPLAN, input_limit_for
+from ..core.economy_config import (
+    FREE_BMD_PLANS, ONBOARDING_SHIELDS_EVENT, ONBOARDING_WELCOME_SEEN_EVENT, SHIELD_COST_BUILD_MY_DAY,
+    SHIELD_COST_REPLAN, input_limit_for)
 from ..models.ai_usage import AIUsageRecord, AIPlanningAttempt
 from ..models.flow_progression import FlowProfile
 from ..models.user import User
@@ -61,7 +64,7 @@ class AIEconomyService:
         if not record:
             record = AIUsageRecord(
                 user_id=user_id,
-                free_uses_total=1,
+                free_uses_total=FREE_BMD_PLANS,
                 free_uses_consumed=0,
                 shield_uses_consumed=0,
                 total_ai_uses=0,
@@ -126,12 +129,39 @@ class AIEconomyService:
             max_input_words=input_limit_for(is_pro=is_pro),
             can_afford_shield_plan=shields >= SHIELD_COST_BUILD_MY_DAY,
             shield_max=refill.maximum,
+            shield_welcome_pending=cls.shield_welcome_pending(db, user_id),
             next_shield_refill_at=refill.next_refill_at,
             server_now=refill.server_now,
             subscription_tier=usage.subscription_tier,
             subscription_status=usage.subscription_status,
             subscription_expires_at=usage.subscription_expires_at,
         )
+
+    @classmethod
+    def shield_welcome_pending(cls, db: Session, user_id: str) -> bool:
+        """True while the one-time "2 Shields added" welcome is still to be shown: the account HAS the onboarding grant
+        in the ledger and has not dismissed the welcome. Server state, so a restart or a second device never repeats it
+        and an account created before the grant existed never sees it."""
+        from ..models.flow_progression import FlowEconomicEvent
+        kinds = set(db.execute(
+            select(FlowEconomicEvent.event_type).where(
+                FlowEconomicEvent.user_id == user_id,
+                FlowEconomicEvent.event_type.in_((ONBOARDING_SHIELDS_EVENT, ONBOARDING_WELCOME_SEEN_EVENT)))
+        ).scalars())
+        return ONBOARDING_SHIELDS_EVENT in kinds and ONBOARDING_WELCOME_SEEN_EVENT not in kinds
+
+    @classmethod
+    def mark_shield_welcome_seen(cls, db: Session, user_id: str) -> None:
+        """Dismiss the welcome for good. Idempotent (unique per user and event) and grants nothing."""
+        from ..models.flow_progression import FlowEconomicEvent
+        cls.get_or_create_profile(db, user_id)
+        db.add(FlowEconomicEvent(user_id=user_id, idempotency_key=f"{ONBOARDING_WELCOME_SEEN_EVENT}-{user_id}",
+                                 event_type=ONBOARDING_WELCOME_SEEN_EVENT, reference_id=user_id,
+                                 flow_awarded=0, xp_awarded=0))
+        try:
+            db.commit()
+        except IntegrityError:  # already dismissed (a double tap, a retry, another device)
+            db.rollback()
 
     @classmethod
     def record_attempt(

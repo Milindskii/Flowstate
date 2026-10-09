@@ -22,8 +22,10 @@ ScheduleItem _it(String id, {bool skipped = false, bool done = false, bool recov
       endTime: commitment ? DateTime(2026, 10, 5, 20, 30) : null,
     );
 
+final _testTheme = FlowTheme.lightTheme();
+
 Widget _host(List<ScheduleItem> items, {bool reduced = false}) => MaterialApp(
-      theme: FlowTheme.lightTheme(),
+      theme: _testTheme,
       home: MediaQuery(
         data: MediaQueryData(size: const Size(400, 900), disableAnimations: reduced),
         child: Scaffold(

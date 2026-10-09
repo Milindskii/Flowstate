@@ -20,6 +20,8 @@ from ..core.economy_config import (
     SHIELD_EARN_DAYS,
     MAX_FREE_SHIELDS,
     INITIAL_SHIELDS,
+    ONBOARDING_SHIELDS_EVENT,
+    SHIELD_COST_STREAK_RESTORE,
     MAX_XP_PER_DAY,
     MIN_TASK_DURATION_FOR_PRIORITY_BONUS,
     get_level_for_xp,
@@ -66,6 +68,8 @@ from ..schemas.flow import (
     FlowWeeklyProgressResponse,
     PurchaseCompanionResponse,
     UseShieldResponse,
+    StreakRecoveryStatus,
+    StreakRestoreResponse,
 )
 
 def _now() -> datetime:
@@ -156,6 +160,13 @@ class FlowService:
                 is_pro=False,
             )
             db.add(profile)
+            # The onboarding grant is the profile row's own creation (primary key = user_id, so it can exist once) and is
+            # recorded in the ledger in the SAME transaction: the unique (user, event, reference) key makes a replay
+            # impossible, and a concurrent creator that loses the race rolls back both the row and the event.
+            db.add(FlowEconomicEvent(
+                user_id=user.id, idempotency_key=f"{ONBOARDING_SHIELDS_EVENT}-{user.id}",
+                event_type=ONBOARDING_SHIELDS_EVENT, reference_id=user.id, flow_awarded=0, xp_awarded=0,
+                metadata_json=json.dumps({"shields": INITIAL_SHIELDS})))
             db.flush()
         else:
             # Check weekly reset
@@ -540,6 +551,7 @@ class FlowService:
             companion=FlowCompanionResponse.model_validate(companion),
             profile=FlowProfileResponse.model_validate(profile).model_copy(
                 update={"shield_active_today": profile.last_shield_used_date == today_str}),
+            streak_recovery=self.streak_recovery_status(db, user, profile),
             active_challenge=FlowChallengeResponse.model_validate(challenge) if challenge else None,
             weekly_quests=[FlowChallengeResponse.model_validate(q)
                            for q in self.get_weekly_quests(db, user, self._get_current_week_identifier(user_tz))],
@@ -759,62 +771,9 @@ class FlowService:
         profile.weekly_flow_points += flow_earned
 
         # Streak & Shield logic (Timezone aware, user-confirmed shield consumption)
-        streak_incremented = False
-        shield_awarded = False
-        shield_used = False
-        notification = None
-
-        if profile.last_qualifying_date == today_str:
-            # Already qualified today
-            pass
-        else:
-            streak_incremented = True
-            if profile.last_qualifying_date is None:
-                # First qualifying day
-                profile.current_streak = 1
-                profile.longest_streak = 1
-                profile.streak_start_date = today_str
-                profile.last_qualifying_date = today_str
-                profile.shield_progress_days = 1
-            else:
-                last_dt = datetime.strptime(profile.last_qualifying_date, "%Y-%m-%d").date()
-                today_dt = datetime.strptime(today_str, "%Y-%m-%d").date()
-                days_diff = (today_dt - last_dt).days
-
-                if days_diff == 1:
-                    # Consecutive day!
-                    profile.current_streak += 1
-                    if profile.current_streak > profile.longest_streak:
-                        profile.longest_streak = profile.current_streak
-                    profile.last_qualifying_date = today_str
-
-                    if profile.last_shield_used_date == today_str:
-                        shield_used = True
-                        notification = "Your Flow Shield protected your streak."
-
-                    profile.shield_progress_days += 1
-                    if profile.shield_progress_days >= SHIELD_EARN_DAYS:
-                        # One conditional, capped UPDATE through the ledger (never read-modify-write, never past the
-                        # maximum), with an audit row unique per (user, streak day): a replayed or concurrent
-                        # completion of the same day can never pay twice.
-                        if self._mark_once(db, user.id, "shield_streak_award", today_str):
-                            shield_awarded = shield_ledger.grant_capped(db, user.id, 1) > 0
-                        profile.shield_progress_days = 0
-                elif days_diff > 1:
-                    # Missed a day! Check if user confirmed shield usage
-                    if profile.last_shield_used_date == today_str:
-                        profile.current_streak += 1
-                        if profile.current_streak > profile.longest_streak:
-                            profile.longest_streak = profile.current_streak
-                        profile.last_qualifying_date = today_str
-                        notification = "Your Flow Shield protected your streak."
-                        shield_used = True
-                    else:
-                        # Streak resets cleanly with zero guilt; shields preserved in inventory
-                        profile.current_streak = 1
-                        profile.streak_start_date = today_str
-                        profile.last_qualifying_date = today_str
-                        profile.shield_progress_days = 1
+        streak_incremented, shield_awarded, shield_used, notification = (
+            self._advance_streak_qualifying_day(db, user, profile, today_str)
+        )
 
         # Advance this week's quests (priority tasks, focus sessions, focus minutes)
         counts_priority = bool(is_priority_task and session.task_id
@@ -1279,9 +1238,11 @@ class FlowService:
             )
         db.refresh(profile)
 
-        # Protect streak: if user missed yesterday, keep streak chain alive
+        # Protect streak: if user missed yesterday, keep streak chain alive. Never move the qualifying day BACKWARDS
+        # (a day already qualified today or yesterday): that would let today's next session count a second time.
         yesterday_str = (_now().astimezone(user_tz) - timedelta(days=1)).strftime("%Y-%m-%d")
-        profile.last_qualifying_date = yesterday_str
+        if profile.last_qualifying_date is None or profile.last_qualifying_date < yesterday_str:
+            profile.last_qualifying_date = yesterday_str
 
         event = FlowEconomicEvent(
             user_id=user.id,
@@ -1304,6 +1265,339 @@ class FlowService:
             shield_active_today=True,
         )
 
+    def _advance_streak_qualifying_day(
+        self, db: Session, user: User, profile: FlowProfile, today_str: str
+    ) -> Tuple[bool, bool, bool, Optional[str]]:
+        """
+        Calculates and advances the user's daily streak on completing a qualifying activity (task or focus session).
+        - Multiple qualifying activities on the same local calendar day increment only once.
+        - Day 1: User's first ever qualifying activity sets streak to 1.
+        - Day 2+: Qualifying activity on the next consecutive calendar day increments streak by 1.
+        - If days were missed (days_diff > 1):
+          - If a shield was used today, streak continues (+1).
+          - Otherwise, streak resets cleanly to 1 (new Day 1).
+        - Shields earned every SHIELD_EARN_DAYS (7) days capped at MAX_SHIELDS.
+        - Clears any streak recovery window when a new qualifying day is achieved.
+        """
+        streak_incremented = False
+        shield_awarded = False
+        shield_used = False
+        notification = None
+
+        if profile.last_qualifying_date == today_str:
+            # Already qualified today: idempotency for multiple tasks on same calendar day
+            return False, False, False, None
+
+        if profile.last_qualifying_date is None:
+            # First qualifying day ever
+            streak_incremented = True
+            profile.current_streak = 1
+            if profile.current_streak > profile.longest_streak:
+                profile.longest_streak = profile.current_streak
+            profile.streak_start_date = today_str
+            profile.last_qualifying_date = today_str
+            profile.shield_progress_days = 1
+            profile.streak_recovery_deadline_at = None
+            profile.streak_recovery_ad_progress = 0
+            return streak_incremented, shield_awarded, shield_used, notification
+
+        last_dt = datetime.strptime(profile.last_qualifying_date, "%Y-%m-%d").date()
+        today_dt = datetime.strptime(today_str, "%Y-%m-%d").date()
+        days_diff = (today_dt - last_dt).days
+
+        if days_diff == 1:
+            # Consecutive day!
+            streak_incremented = True
+            profile.current_streak += 1
+            if profile.current_streak > profile.longest_streak:
+                profile.longest_streak = profile.current_streak
+            profile.last_qualifying_date = today_str
+            profile.streak_recovery_deadline_at = None
+            profile.streak_recovery_ad_progress = 0
+
+            if profile.last_shield_used_date == today_str:
+                shield_used = True
+                notification = "Your Flow Shield protected your streak."
+
+            profile.shield_progress_days += 1
+            if profile.shield_progress_days >= SHIELD_EARN_DAYS:
+                if self._mark_once(db, user.id, "shield_streak_award", today_str):
+                    shield_awarded = shield_ledger.grant_capped(db, user.id, 1) > 0
+                profile.shield_progress_days = 0
+
+        elif days_diff > 1:
+            # Missed a day!
+            if profile.last_shield_used_date == today_str:
+                # User used shield / restored streak today!
+                streak_incremented = True
+                profile.current_streak += 1
+                if profile.current_streak > profile.longest_streak:
+                    profile.longest_streak = profile.current_streak
+                profile.last_qualifying_date = today_str
+                profile.streak_recovery_deadline_at = None
+                profile.streak_recovery_ad_progress = 0
+                notification = "Your Flow Shield protected your streak."
+                shield_used = True
+
+                profile.shield_progress_days += 1
+                if profile.shield_progress_days >= SHIELD_EARN_DAYS:
+                    if self._mark_once(db, user.id, "shield_streak_award", today_str):
+                        shield_awarded = shield_ledger.grant_capped(db, user.id, 1) > 0
+                    profile.shield_progress_days = 0
+            else:
+                # Streak resets to Day 1
+                streak_incremented = True
+                profile.current_streak = 1
+                profile.streak_start_date = today_str
+                profile.last_qualifying_date = today_str
+                profile.shield_progress_days = 1
+                profile.streak_recovery_deadline_at = None
+                profile.streak_recovery_ad_progress = 0
+
+        return streak_incremented, shield_awarded, shield_used, notification
+
+    def streak_recovery_status(self, db: Session, user: User, profile: Optional[FlowProfile] = None) -> StreakRecoveryStatus:
+        """
+        A streak is restorable when:
+        1. An active streak existed (> 0) and last_qualifying_date is present.
+        2. At least one day was missed (missed_days >= 1).
+        3. Today's shield was not already consumed for streak protection today.
+        4. The persistent 7-hour recovery window has not expired.
+        Once the 7-hour window expires:
+        - profile.current_streak resets to 0.
+        - returns expired=True, eligible=False.
+        """
+        if profile is None:
+            profile, _, _ = self.get_or_create_flow_profile(db, user)
+        user_tz = self._get_user_timezone(db, user.id)
+        today = _now().astimezone(user_tz).date()
+        cost = SHIELD_COST_STREAK_RESTORE
+        now_utc = utcnow()
+
+        base = dict(
+            cost=cost,
+            shields_available=profile.shields_available,
+            can_afford=profile.shields_available >= cost,
+            streak=profile.current_streak,
+            ads_required=5,
+            ads_progress=profile.streak_recovery_ad_progress or 0,
+            can_restore_with_ads=(profile.streak_recovery_ad_progress or 0) >= 5,
+        )
+
+        if profile.streak_recovery_deadline_at is not None:
+            deadline_utc = _make_aware(profile.streak_recovery_deadline_at)
+            if now_utc >= deadline_utc:
+                if profile.current_streak > 0:
+                    profile.current_streak = 0
+                    db.commit()
+                    db.refresh(profile)
+                return StreakRecoveryStatus(
+                    eligible=False,
+                    expired=True,
+                    streak=0,
+                    missed_days=0,
+                    reason="expired",
+                    deadline_at=deadline_utc,
+                    seconds_remaining=0,
+                    cost=cost,
+                    shields_available=profile.shields_available,
+                    can_afford=False,
+                    ads_required=5,
+                    ads_progress=profile.streak_recovery_ad_progress or 0,
+                    can_restore_with_ads=False,
+                )
+
+        if profile.current_streak <= 0 or not profile.last_qualifying_date:
+            return StreakRecoveryStatus(eligible=False, expired=False, reason="no_streak", **base)
+
+        last = datetime.strptime(profile.last_qualifying_date, "%Y-%m-%d").date()
+        missed = (today - last).days - 1
+        if missed < 1:
+            return StreakRecoveryStatus(eligible=False, expired=False, reason="not_broken", **base)
+
+        if profile.last_shield_used_date == today.isoformat():
+            return StreakRecoveryStatus(eligible=False, expired=False, reason="already_used_today", missed_days=missed, **base)
+
+        # Streak is broken (missed >= 1). Check or initialize the 7-hour recovery window.
+        if profile.streak_recovery_deadline_at is None:
+            profile.streak_recovery_deadline_at = now_utc + timedelta(hours=7)
+            profile.streak_recovery_ad_progress = profile.streak_recovery_ad_progress or 0
+            db.commit()
+            db.refresh(profile)
+
+        deadline_utc = _make_aware(profile.streak_recovery_deadline_at)
+
+        seconds_remaining = max(0, int((deadline_utc - now_utc).total_seconds()))
+        return StreakRecoveryStatus(
+            eligible=True,
+            expired=False,
+            missed_days=missed,
+            deadline_at=deadline_utc,
+            seconds_remaining=seconds_remaining,
+            **base,
+        )
+
+    def _restore_event(self, db: Session, user_id: str, ref: str) -> Optional[FlowEconomicEvent]:
+        return (db.query(FlowEconomicEvent)
+                .filter(FlowEconomicEvent.user_id == user_id, FlowEconomicEvent.event_type == "streak_restore",
+                        FlowEconomicEvent.reference_id == ref).first())
+
+    def restore_streak(
+        self,
+        db: Session,
+        user: User,
+        *,
+        idempotency_key: str,
+        expected_cost: int,
+        restore_method: str = "shield",
+    ) -> StreakRestoreResponse:
+        """Spend 1 Shield or use 5 verified ads to restore a broken streak, atomically and at most once per key.
+        - Option A ("shield"): requires 1 shield, deducts atomically.
+        - Option B ("ads"): requires 5 verified ads.
+        """
+        ref = f"{user.id}:{idempotency_key}"
+        profile, _, _ = self.get_or_create_flow_profile(db, user)
+        prior = self._restore_event(db, user.id, ref)
+        if prior is not None:
+            return self._restore_replay(profile, prior)
+
+        state = self.streak_recovery_status(db, user, profile)
+        if state.expired:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The 7-hour streak recovery window has expired. You can start a fresh streak today!",
+            )
+
+        if not state.eligible:
+            detail = {
+                "already_used_today": "You already used a Shield on your streak today.",
+                "not_broken": "Your streak is not broken, so there is nothing to restore.",
+                "expired": "The recovery window has expired.",
+            }.get(state.reason or "", "There is no streak to restore.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail + " Nothing was charged.")
+
+        user_tz = self._get_user_timezone(db, user.id)
+        today_str = self._get_user_today_str(user_tz)
+        yesterday_str = (_now().astimezone(user_tz) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        if restore_method == "ads":
+            if not state.can_restore_with_ads:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Restoring with ads requires 5 verified ads. Progress: {state.ads_progress}/5.",
+                )
+            # Restore via verified ads
+            profile.last_shield_used_date = today_str
+            profile.last_qualifying_date = yesterday_str
+            profile.streak_recovery_deadline_at = None
+            profile.streak_recovery_ad_progress = 0
+            db.add(FlowEconomicEvent(
+                user_id=user.id,
+                idempotency_key=f"streak_restore-{ref}",
+                event_type="streak_restore",
+                reference_id=ref,
+                flow_awarded=0,
+                xp_awarded=0,
+                metadata_json=json.dumps({
+                    "method": "ads",
+                    "streak": state.streak,
+                    "missed_days": state.missed_days,
+                    "date": today_str,
+                }),
+            ))
+            db.commit()
+            db.refresh(profile)
+            return StreakRestoreResponse(
+                restored=True,
+                current_streak=profile.current_streak,
+                shields_spent=0,
+                shields_available=profile.shields_available,
+                message=f"Your {profile.current_streak}-day streak is back. Keep it going today.",
+            )
+
+        # Default restore_method == "shield"
+        cost = state.cost
+        plural = "s" if cost != 1 else ""
+        if expected_cost != cost:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Restoring a streak costs {cost} Shield{plural} now. Nothing was charged.",
+            )
+        if not state.can_afford:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=f"Restoring needs {cost} Shield{plural}. Nothing was charged.",
+            )
+
+        spent = db.execute(
+            update(FlowProfile)
+            .where(
+                FlowProfile.user_id == user.id,
+                FlowProfile.shields_available >= cost,
+                FlowProfile.current_streak == state.streak,
+                FlowProfile.last_qualifying_date == profile.last_qualifying_date,
+                or_(FlowProfile.last_shield_used_date.is_(None), FlowProfile.last_shield_used_date != today_str),
+            )
+            .values(
+                **shield_ledger.debit_values(cost),
+                shields_used_count=FlowProfile.shields_used_count + 1,
+                last_shield_used_date=today_str,
+                last_qualifying_date=yesterday_str,
+                streak_recovery_deadline_at=None,
+                streak_recovery_ad_progress=0,
+            )
+        )
+        if spent.rowcount != 1:
+            db.rollback()
+            prior = self._restore_event(db, user.id, ref)
+            if prior is not None:
+                db.refresh(profile)
+                return self._restore_replay(profile, prior)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Your streak or Shields changed. Nothing was charged; please try again.",
+            )
+
+        db.add(FlowEconomicEvent(
+            user_id=user.id,
+            idempotency_key=f"streak_restore-{ref}",
+            event_type="streak_restore",
+            reference_id=ref,
+            flow_awarded=0,
+            xp_awarded=0,
+            metadata_json=json.dumps({
+                "shields": -cost,
+                "streak": state.streak,
+                "missed_days": state.missed_days,
+                "date": today_str,
+            }),
+        ))
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            db.refresh(profile)
+            return self._restore_replay(profile, self._restore_event(db, user.id, ref))
+        db.refresh(profile)
+        return StreakRestoreResponse(
+            restored=True,
+            current_streak=profile.current_streak,
+            shields_spent=cost,
+            shields_available=profile.shields_available,
+            message=f"Your {profile.current_streak}-day streak is back. Keep it going today.",
+        )
+
+    @staticmethod
+    def _restore_replay(profile: FlowProfile, prior: Optional[FlowEconomicEvent]) -> StreakRestoreResponse:
+        try:
+            meta = json.loads((prior.metadata_json if prior else None) or "{}")
+        except ValueError:
+            meta = {}
+        return StreakRestoreResponse(
+            restored=True, replayed=True, current_streak=profile.current_streak,
+            shields_spent=-int(meta.get("shields", 0)), shields_available=profile.shields_available,
+            message="Your streak was already restored.")
+
     def _mark_once(self, db: Session, user_id: str, event_type: str, reference_id: str) -> bool:
         """Insert a ledger marker for (user, event_type, reference). False when it already exists: the caller must not
         reward again. The unique constraint backs this up if two requests race (the loser's commit fails whole)."""
@@ -1324,6 +1618,7 @@ class FlowService:
         """
         Authoritative hook invoked when a task is completed. Idempotent per task: completing, reopening and
         completing the same task again never counts twice.
+        - Advances daily streak (or qualifies for today).
         - Increments daily quest 'finish_2_tasks'
         - If task is a priority task, advances the weekly 'priority_tasks' quest and weekly progress once.
         """
@@ -1339,12 +1634,16 @@ class FlowService:
             today_str = self._get_user_today_str(user_tz)
             current_week = self._get_current_week_identifier(user_tz)
 
+            profile, _companion, _challenge = self.get_or_create_flow_profile(db, user)
+
+            # Authoritatively advance or record qualifying day for daily streak
+            self._advance_streak_qualifying_day(db, user, profile, today_str)
+
             self.get_or_create_daily_quests(db, user, today_str)
             self._update_daily_quest_progress(db, user_id, today_str, "finish_2_tasks", 1)
 
             is_prio = getattr(task, "is_priority", False) or str(getattr(task, "priority", "")).lower().endswith(("high", "urgent"))
             if is_prio:
-                profile, _companion, _challenge = self.get_or_create_flow_profile(db, user)
                 weekly_progress = self._get_or_create_weekly_progress(db, user_id, current_week)
                 # The focus-session path may already have counted this task toward the weekly quest.
                 if self._mark_once(db, user_id, "priority_progress", task.id):
@@ -1382,3 +1681,4 @@ class FlowService:
             db.commit()
         except Exception:
             db.rollback()
+

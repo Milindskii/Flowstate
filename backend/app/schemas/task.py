@@ -1,7 +1,7 @@
 from typing import Optional, List, Dict, Any, Literal
 from uuid import uuid4
 from datetime import date, datetime
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 from ..models.task import TaskStatus, TaskType, TaskDifficulty, TaskPriority, TaskSource
 
 Source = Literal["explicit", "inferred"]
@@ -35,6 +35,18 @@ class TaskCreate(TaskQualityFields):
     time_locked: bool = False
     is_commitment: bool = False
     planned_date: Optional[date] = None
+
+    @field_validator("category", mode="before")
+    def normalize_category(cls, v):
+        if isinstance(v, str) and v.strip().lower() == "admin":
+            return "Personal"
+        return v
+
+    @field_validator("task_type", mode="before")
+    def normalize_task_type(cls, v):
+        if v == "admin" or v == TaskType.admin:
+            return TaskType.personal
+        return v
 
 class FieldProvenance(BaseModel):
     source: str = "default"  # "explicit", "inferred", "default"
@@ -168,6 +180,18 @@ class TaskUpdate(BaseModel):
     preferred_window_start: Optional[datetime] = None
     preferred_window_end: Optional[datetime] = None
 
+    @field_validator("category", mode="before")
+    def normalize_category(cls, v):
+        if isinstance(v, str) and v.strip().lower() == "admin":
+            return "Personal"
+        return v
+
+    @field_validator("task_type", mode="before")
+    def normalize_task_type(cls, v):
+        if v == "admin" or v == TaskType.admin:
+            return TaskType.personal
+        return v
+
     # Fields that may be explicitly set to null (clear). Everything else is non-nullable.
     _NULLABLE = {"description", "deadline_at", "scheduled_start", "scheduled_end", "planned_date",
                  "focus_level", "deadline_kind", "priority_source", "duration_source", "focus_source",
@@ -221,6 +245,18 @@ class TaskResponse(TaskQualityFields):
     completed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("category", mode="before")
+    def normalize_category(cls, v):
+        if isinstance(v, str) and v.strip().lower() == "admin":
+            return "Personal"
+        return v
+
+    @field_validator("task_type", mode="before")
+    def normalize_task_type(cls, v):
+        if v == "admin" or v == TaskType.admin:
+            return TaskType.personal
+        return v
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -167,8 +167,7 @@ def _charge(db: Session, user_id: str, is_pro: bool, consume_shield: bool, today
     if not consume_shield:
         raise QuotaExceeded(
             status.HTTP_402_PAYMENT_REQUIRED,
-            f"You have used your free AI plan. Using an additional AI planning session requires {cost} Flow Shields. "
-            "Confirm shield consumption to proceed.",
+            f"AI planning uses {cost} Shield{'s' if cost != 1 else ''}. Confirm to proceed.",
         )
     shield = db.execute(
         update(FlowProfile)
@@ -178,7 +177,7 @@ def _charge(db: Session, user_id: str, is_pro: bool, consume_shield: bool, today
     if shield.rowcount != 1:
         raise QuotaExceeded(
             status.HTTP_403_FORBIDDEN,
-            f"Not enough Flow Shields: an AI plan needs {cost}. Earn more by keeping a 7-day focus streak, "
+            f"You're out of Shields: an AI plan needs {cost}. Earn one in the Flow Hub, "
             "or upgrade to Flowstate Pro.",
             "insufficient_shields",
         )
@@ -420,7 +419,11 @@ def reserve_replan(db: Session, *, user_id: str, fingerprint: str, idempotency_k
             db.commit()
             logger.info("ai_gateway.replan_unaffordable user=%s shields=%s needed=%s",
                         user_id, profile.shields_available, cost)
-            return None
+            raise GatewayError(
+                status.HTTP_403_FORBIDDEN,
+                "insufficient_shields",
+                f"You're out of Shields: an AI replan needs {cost}. Earn one in the Flow Hub, or upgrade to Flowstate Pro.",
+            )
 
         res = db.execute(
             update(FlowProfile)
@@ -430,7 +433,11 @@ def reserve_replan(db: Session, *, user_id: str, fingerprint: str, idempotency_k
         if res.rowcount != 1:
             _refund_period(db, user_id, "replan_day", now.date())
             db.commit()
-            return None
+            raise GatewayError(
+                status.HTTP_403_FORBIDDEN,
+                "insufficient_shields",
+                f"You're out of Shields: an AI replan needs {cost}. Earn one in the Flow Hub, or upgrade to Flowstate Pro.",
+            )
         source = "shield"
         units = cost
 

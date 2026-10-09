@@ -159,7 +159,8 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                     },
                     child: const NoyaCompanionView(
                       state: NoyaState.idle,
-                      size: 88,
+                      size: 96,
+                      cacheWidth: 512,
                       showAmbientGlow: true,
                     ),
                   ),

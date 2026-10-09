@@ -47,14 +47,14 @@ def _poor_free_user(shields):
     return uid, headers
 
 
-def test_the_price_of_a_build_my_day_plan_is_two_shields():
-    assert COST == 2
+def test_the_price_of_a_build_my_day_plan_is_one_shield():
+    assert COST == 1
 
 
 # ── 1. free allowance available ───────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_free_allowance_runs_ai_and_consumes_no_shield_even_with_consent_flag():
+async def test_free_allowance_runs_ai_and_consumes_no_shield_even_with_consent_flag(one_free_plan):
     uid, headers = make_user()
     async with client() as ac:
         with patch.object(*EXTRACT, return_value=_ok()) as extract:
@@ -67,7 +67,7 @@ async def test_free_allowance_runs_ai_and_consumes_no_shield_even_with_consent_f
 # ── status tells the app the price (it never hard-codes it) ───────────────────
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("shields,affordable", [(0, False), (1, False), (2, True), (3, True)])
+@pytest.mark.parametrize("shields,affordable", [(0, False), (1, True), (2, True), (3, True)])
 async def test_status_reports_server_owned_price_and_affordability(shields, affordable):
     uid, headers = _poor_free_user(shields)
     async with client() as ac:
@@ -103,14 +103,14 @@ async def test_without_consent_nothing_is_charged_and_the_provider_is_not_called
         with patch.object(*EXTRACT, return_value=_ok()) as extract:
             res = await _post(ac, headers, consume_shield=False)
     assert res.status_code == 402 and res.json()["failure_code"] == "quota_exhausted"
-    assert "2 Flow Shields" in res.json()["detail"]
+    assert "1 Shield" in res.json()["detail"]
     assert extract.call_count == 0 and _shields(uid) == 5
 
 
 # ── 5-6. insufficient Shields: no AI request, no charge ──────────────────────
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("shields", [0, 1])
+@pytest.mark.parametrize("shields", [0])
 async def test_insufficient_shields_never_reach_the_provider_or_change_the_balance(shields):
     uid, headers = _poor_free_user(shields)
     async with client() as ac:

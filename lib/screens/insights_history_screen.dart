@@ -79,6 +79,7 @@ class _InsightsHistoryScreenState extends State<InsightsHistoryScreen> {
       now: now,
       bedtimeHours: state.personalData.bedtimeHour,
       skippedOn: state.skippedOnByTask,
+      autoSkippedOn: state.autoSkippedOnByTask,
     );
 
     final days = allDays.where((d) {
@@ -369,6 +370,7 @@ class _DayRow extends StatelessWidget {
       '$count finished',
       if (day.missedCount > 0) '${day.missedCount} not done',
       if (day.skippedCount > 0) '${day.skippedCount} skipped',
+      if (day.autoSkippedCount > 0) '${day.autoSkippedCount} auto-skipped',
       if (day.totalMinutes > 0) _minutes(day.totalMinutes),
       if (feeling != null) 'felt ${TaskReflection.feelingLabel(feeling.round()).toLowerCase()}',
     ].join(' · ');
@@ -641,7 +643,7 @@ class _DayDetails extends StatelessWidget {
                               text: m.label,
                               style: TextStyle(
                                 fontWeight: FontWeight.w800,
-                                color: m.outcome == HistoryOutcome.skipped ? FlowColors.warningOf(context) : FlowColors.errorOf(context),
+                                color: m.outcome != HistoryOutcome.missed ? FlowColors.warningOf(context) : FlowColors.errorOf(context),
                               ),
                             ),
                             TextSpan(

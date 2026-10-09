@@ -49,6 +49,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("one_free_plan")  # these exercise the free-allowance mechanism
+
 from app.services import ai_service as _ais
 from app.services.ai_service import AIService, GeminiFailure
 

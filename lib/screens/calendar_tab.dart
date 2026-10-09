@@ -350,6 +350,7 @@ class _CalendarTabState extends State<CalendarTab> {
 
     final bedtimeHour = state.personalData.bedtimeHour;
     final skippedHere = state.skippedTaskIdsOn(selectedDate);
+    final autoSkippedHere = state.autoSkippedTaskIdsOn(selectedDate);
     final doneHere = state.locallyCompletedTaskIds;
     final reopenedHere = state.locallyReopenedTaskIds;
 
@@ -387,6 +388,11 @@ class _CalendarTabState extends State<CalendarTab> {
       // through Replan/Redo, kept at its original place) and only fails once the day's sleep boundary has passed.
       final derived = item.withDerivedState(now: now, bedtimeHours: bedtimeHour);
       final isFailed = derived.isFailed;
+      // a middle stop left behind between two done stops: auto-skipped at its own slot (not an explicit skip, not missed)
+      final isAutoSkipped = !isSkippedExplicitly && !isFailed && item.taskId != null && autoSkippedHere.contains(cleanKey);
+      if (isAutoSkipped) {
+        return derived.copyWith(isSkipped: true, isCompletedAfterDeviation: false, isMissed: false, state: 'auto_skipped');
+      }
       final isSkipped = isSkippedExplicitly && !isFailed;
 
       return derived.copyWith(
@@ -450,13 +456,19 @@ class _CalendarTabState extends State<CalendarTab> {
               final res = await state.claimDayComplete(selectedDate);
               if (res == null) throw StateError('not claimed');
               FlowHaptics.success();
+              // the "claimed" pop-up (central Noya feedback: compact, deduplicated against repeat taps)
+              final xp = (res['xp_awarded'] as num?)?.toInt() ?? 0;
+              if (res['already_claimed'] == true || xp <= 0) {
+                NoyaNoticeCenter.instance.info('Trophy already claimed.');
+              } else {
+                NoyaNoticeCenter.instance.reward('+$xp XP for Noya 🎉', title: 'Trophy claimed!');
+              }
             }
           : null,
       reflectionFor: (item) => state.reflectionFor(item.taskId ?? item.id) ?? state.reflectionFor(item.id),
       completedAtFor: completedAt,
       categoryFor: categoryOf,
       onTap: (item) {
-        if (item.deviation != null) return; // history node: the live task is on its new slot
         if (item.isCompleted) {
           showHistoryMomentSheet(
             context,
@@ -510,10 +522,15 @@ class _CalendarTabState extends State<CalendarTab> {
     final missColor = FlowColors.warningOf(context);
     final notices = NoyaNoticeCenter.instance;
 
+    final isAutoSkipped = item.deviation == 'auto_skipped' || (item.isSkipped && item.state == 'auto_skipped');
+    final isSkipped = item.isSkipped || item.deviation == 'skipped' || item.deviation == 'deferred' || isAutoSkipped;
+
     final (String?, Color?) badge = isCurrent
         ? ('Up now', accent)
-        : item.isSkipped
-            ? ('Skipped', skipColor)
+        : isSkipped
+            ? (item.deviation == 'deferred'
+                ? ('Deferred', skipColor)
+                : (isAutoSkipped ? ('Auto-skipped', skipColor) : ('Skipped', skipColor)))
             : item.isMissed
                 ? (item.state == 'passed' ? 'Bypassed' : 'Missed', missColor)
                 : (null, null);
@@ -543,14 +560,14 @@ class _CalendarTabState extends State<CalendarTab> {
           icon: Icons.check_circle_outline_rounded,
           color: FlowColors.successOf(context),
           title: 'Mark as completed',
-          subtitle: item.isSkipped || item.isMissed ? 'Done after all: drawn as a recovery' : 'Done along today\'s path',
+          subtitle: isSkipped || item.isMissed ? 'Done after all: drawn as a recovery' : 'Done along today\'s path',
           run: () async {
             FlowHaptics.success();
             state.toggleTaskCompletion(id);
             notices.success('Task completed!', title: item.title);
           },
         ),
-      if (!item.isSkipped && !isCurrent && !item.isCommitment)
+      if (!isSkipped && !isCurrent && !item.isCommitment)
         StopAction(
           key: const Key('calendar_action_skip'),
           icon: Icons.redo_rounded,

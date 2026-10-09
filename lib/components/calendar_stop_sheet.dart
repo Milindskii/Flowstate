@@ -93,6 +93,7 @@ class _CalendarStopSheetState extends State<_CalendarStopSheet> {
     final muted = FlowColors.textMutedOf(context);
     final time = '${item.time} ${item.period}'.trim();
     final maxHeight = MediaQuery.sizeOf(context).height * 0.7;
+    final accent = Theme.of(context).colorScheme.primary;
     return ConstrainedBox(
       key: const Key('calendar_stop_sheet'),
       constraints: BoxConstraints(maxHeight: maxHeight),
@@ -117,8 +118,16 @@ class _CalendarStopSheetState extends State<_CalendarStopSheet> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Text(stopEmojiFor(title: item.title, category: widget.category, type: item.type),
-                    style: const TextStyle(fontSize: 24)),
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: accent.withValues(alpha: 0.12),
+                  ),
+                  child: Icon(stopIconFor(title: item.title, category: widget.category, type: item.type),
+                      size: 22, color: accent),
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -268,6 +277,8 @@ Future<void> showCalendarLegendSheet(BuildContext context) {
             row(Theme.of(context).colorScheme.primary, 'Blue', 'the road still ahead'),
             row(FlowColors.routeRecoveryOf(context), 'Orange', 'recovery: you changed course to go back to a stop'),
             row(FlowColors.routeSkippedOf(context), 'Skipped', 'you chose to bypass it', dot: true),
+            row(FlowColors.routeSkippedOf(context), 'Auto-skipped', 'you finished the stops on both sides of it',
+                dot: true),
             row(FlowColors.warningOf(context), 'Missed', 'its time passed without completion', dot: true),
             const SizedBox(height: 12),
             Text('Flowstate updates the road as your real day changes. You never have to mark anything just to move on.',

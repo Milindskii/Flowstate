@@ -30,13 +30,14 @@ class TaskCard extends StatelessWidget {
   /// One quiet line of metadata; "Priority not specified" is noise, so only real priorities show.
   /// Duration is not here: it sits on the right as the row's one number.
   List<String> get _metaParts {
+    final cat = task.category.toLowerCase() == 'admin' ? 'Personal' : task.category;
     return <String>[
       task.difficulty.label,
       if (task.isPriorityExplicit && task.priority != null)
         '${task.priority!.value[0].toUpperCase()}${task.priority!.value.substring(1)} priority'
       else if (task.isPriorityInferred && task.priority != null)
         'Suggested ${task.priority!.value}',
-      if (task.category.isNotEmpty) task.category,
+      if (cat.isNotEmpty) cat,
     ];
   }
 
@@ -302,7 +303,7 @@ class TaskCard extends StatelessWidget {
                           Row(
                             children: [
                               Text(
-                                task.category,
+                                task.category.toLowerCase() == 'admin' ? 'Personal' : task.category,
                                 style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(sheetContext)),
                               ),
                               if (task.durationMinutes > 0) ...[

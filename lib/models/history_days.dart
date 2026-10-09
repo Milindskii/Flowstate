@@ -42,8 +42,9 @@ class HistoryEntry {
   }
 }
 
-/// What happened to a planned task that was NOT finished: the user chose to skip it, or its slot passed without it.
-enum HistoryOutcome { skipped, missed }
+/// What happened to a planned task that was NOT finished: the user chose to skip it, it was auto-skipped (a middle
+/// stop left behind between two done stops), or its slot passed without it.
+enum HistoryOutcome { skipped, autoSkipped, missed }
 
 /// One planned task that was not done on its day. [dayOver] separates a slot that passed while the day is still open
 /// (recoverable, "Missed") from one the day ended on ("Not done").
@@ -68,7 +69,11 @@ class HistoryMiss {
     required this.dayOver,
   });
 
-  String get label => outcome == HistoryOutcome.skipped ? 'Skipped' : (dayOver ? 'Not done' : 'Missed');
+  String get label => switch (outcome) {
+        HistoryOutcome.skipped => 'Skipped',
+        HistoryOutcome.autoSkipped => 'Auto-skipped',
+        HistoryOutcome.missed => dayOver ? 'Not done' : 'Missed',
+      };
 }
 
 /// A day the user finished something (or planned something and did not), oldest entry first.
@@ -82,6 +87,7 @@ class HistoryDay {
   const HistoryDay({required this.date, required this.entries, this.unfinished = const []});
 
   int get skippedCount => unfinished.where((m) => m.outcome == HistoryOutcome.skipped).length;
+  int get autoSkippedCount => unfinished.where((m) => m.outcome == HistoryOutcome.autoSkipped).length;
   int get missedCount => unfinished.where((m) => m.outcome == HistoryOutcome.missed).length;
 
   int get totalMinutes => entries.fold(0, (sum, e) => sum + e.minutes);
@@ -110,7 +116,8 @@ class HistoryDay {
   /// wins over the task's for the time shown; finished tasks without any recorded time cannot be placed and are skipped.
   ///
   /// With [now] the days also carry what was planned and not done: a task the user skipped ([skippedOn]: task id ->
-  /// the day it was skipped on) and a task whose slot ended unfinished (derived from the clock and [bedtimeHours] with
+  /// the day it was skipped on), a task auto-skipped at its slot ([autoSkippedOn], never also counted as missed that
+  /// day) and a task whose slot ended unfinished (derived from the clock and [bedtimeHours] with
   /// the same rule as Calendar, so the two always agree). Missed work stays on its planned day; it is never moved or
   /// counted as finished.
   static List<HistoryDay> from({
@@ -119,6 +126,7 @@ class HistoryDay {
     DateTime? now,
     double bedtimeHours = 23.0,
     Map<String, DateTime> skippedOn = const {},
+    Map<String, DateTime> autoSkippedOn = const {},
   }) {
     final byTask = {for (final r in reflections) r.taskId: r};
     final entries = <String, HistoryEntry>{};
@@ -181,6 +189,12 @@ class HistoryDay {
         }
         final start = t.scheduledStart;
         final owning = t.owningDate;
+        final autoDay = autoSkippedOn[t.id];
+        if (autoDay != null && skipDay == null) {
+          final d = DateTime(autoDay.year, autoDay.month, autoDay.day);
+          misses.putIfAbsent(d, () => []).add(miss(t, d, HistoryOutcome.autoSkipped, true));
+          if (owning == d) continue; // it stayed at its slot: that day already tells it, never twice as missed
+        }
         if (start == null || owning == null) continue;
         final state = deriveSlotState(
           completed: false,

@@ -190,14 +190,16 @@ class _NoyaReminderOverlayState extends State<NoyaReminderOverlay>
                       ),
                     ),
                     const SizedBox(width: 4),
+                    // No `tooltip`: this overlay is mounted in MaterialApp.builder, above the
+                    // Navigator, so there is no Overlay ancestor for a Tooltip to use. The
+                    // semantic label keeps the button announced as "Dismiss".
                     IconButton(
                       key: const Key('noya_reminder_dismiss_button'),
-                      icon: const Icon(Icons.close_rounded, size: 18),
+                      icon: const Icon(Icons.close_rounded, size: 18, semanticLabel: 'Dismiss'),
                       color: FlowColors.textSecondaryOf(context),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                       onPressed: _dismiss,
-                      tooltip: 'Dismiss',
                     ),
                   ],
                 ),

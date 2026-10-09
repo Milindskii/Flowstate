@@ -67,6 +67,8 @@ class QuickAddTask(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     duration_minutes: int = Field(default=45, ge=5, le=480)
     start_time: Optional[str] = Field(default=None, pattern=r"^\d{2}:\d{2}$")  # "HH:MM" local, optional
+    is_preferred: Optional[bool] = False
+    constraint_type: Optional[str] = None
 
 
 class ReplanRequest(BaseModel):
@@ -94,6 +96,7 @@ class ReplanOperation(BaseModel):
     block_start: Optional[str] = None  # protect_block: "HH:MM" local, a window the planner must keep clear
     block_end: Optional[str] = None
     intent: Optional[str] = None       # move_task_date: "skipped" | "deferred" | "rescheduled"
+    is_preferred: Optional[bool] = False
 
 class TaskDiffItem(BaseModel):
     task_id: str

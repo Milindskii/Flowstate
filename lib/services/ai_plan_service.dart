@@ -135,6 +135,14 @@ class AIPlanService {
     }
   }
 
+  /// Tells the server the one-time "2 Shields added" welcome was shown, so no restart or other device shows it again.
+  /// Records that and nothing else: it can never grant, spend or change a Shield. Best effort; never blocks the UI.
+  Future<void> markShieldWelcomeSeen() async {
+    try {
+      await api.post('/api/v1/ai/shield-welcome/seen');
+    } catch (_) {}
+  }
+
   static const _reportableCodes = {'privacy_declined', 'gemini_error', 'input_too_long', 'client_error'};
 
   /// Diagnostics for failures that never reach the server's Gemini call (privacy declined,

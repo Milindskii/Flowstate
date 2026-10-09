@@ -120,9 +120,42 @@ class LeagueCohortResponse(BaseModel):
     is_mock: bool = False
     status_message: str
 
+class StreakRecoveryStatus(BaseModel):
+    """Whether the account's streak can be restored right now, decided by the server on its own clock."""
+    eligible: bool = False
+    expired: bool = False            # True when the 7-hour recovery window has expired
+    streak: int = 0                  # the streak that would be restored
+    missed_days: int = 0
+    cost: int = 1                    # Shields the restore costs (server-owned; send it back as expected_cost)
+    shields_available: int = 0
+    can_afford: bool = False
+    reason: Optional[str] = None     # why not eligible: no_streak | not_broken | already_used_today | expired
+    deadline_at: Optional[datetime] = None
+    seconds_remaining: int = 0       # countdown in seconds during the 7-hour recovery window
+    ads_required: int = 5            # Option B: verified ads required to restore
+    ads_progress: int = 0            # Option B: verified ads watched so far
+    can_restore_with_ads: bool = False
+
+
+class StreakRestoreRequest(BaseModel):
+    idempotency_key: str = Field(..., min_length=8, max_length=100)
+    expected_cost: int = Field(1, ge=0, le=100)
+    restore_method: str = Field("shield", description="shield or ads")
+
+
+class StreakRestoreResponse(BaseModel):
+    restored: bool
+    replayed: bool = False           # the same idempotency key was already applied; nothing was charged again
+    current_streak: int
+    shields_spent: int
+    shields_available: int
+    message: str
+
+
 class FlowOverviewResponse(BaseModel):
     companion: FlowCompanionResponse
     profile: FlowProfileResponse
+    streak_recovery: Optional[StreakRecoveryStatus] = None
     active_challenge: Optional[FlowChallengeResponse] = None
     weekly_quests: List[FlowChallengeResponse] = []
     daily_quests: List[FlowDailyQuestResponse] = []

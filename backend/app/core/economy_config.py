@@ -41,12 +41,38 @@ INITIAL_SHIELDS: int = 2
 # The clock is the server's (FlowProfile.shield_refill_at); the device clock never takes part.
 SHIELD_REFILL_DAYS: int = 3
 
-# AI economy: Shields a free-tier user pays for one Build My Day plan once the free allowance is used up.
+# One simple mental model: "Shields pay for Noya's AI planning". There is no separate free trial plan; a new account
+# starts with INITIAL_SHIELDS (granted once, recorded in the ledger as ONBOARDING_SHIELDS_EVENT) and each Build My
+# Day plan costs SHIELD_COST_BUILD_MY_DAY of them.
+FREE_BMD_PLANS: int = 0
+ONBOARDING_SHIELDS_EVENT: str = "onboarding_initial_shields"
+ONBOARDING_WELCOME_SEEN_EVENT: str = "onboarding_shield_welcome_seen"
+
+# Shields one Build My Day plan costs a free-tier user.
 # Server-authoritative (ai_gateway charges exactly this many in one conditional UPDATE); /ai/status reports it
 # so the app never hard-codes the price.
-SHIELD_COST_BUILD_MY_DAY: int = 2
+SHIELD_COST_BUILD_MY_DAY: int = 1
 # Shields one AI Replan costs when the deterministic rules cannot read the request. Rules-only replan costs 0 Shields.
 SHIELD_COST_REPLAN: int = 1
+# Shields restoring a broken streak costs (POST /flow/streak/restore). The app shows it before the user confirms and
+# sends it back as `expected_cost`; the server charges only this value and refuses a stale one.
+SHIELD_COST_STREAK_RESTORE: int = 1
+
+# --- Earning Shields beyond the free refill (see services/shield_rewards.py) ------------------------------------------
+# Rewarded ads: every ADS_PER_SHIELD_REWARD ads that Google's server-side verification (SSV) confirms add
+# SHIELDS_PER_AD_REWARD Shields (capped at MAX_FREE_SHIELDS, like every free grant). At most ADS_DAILY_LIMIT verified
+# ads count per account per UTC day; further callbacks are recorded and pay nothing. Values are overridable from the
+# environment (Settings.SHIELD_ADS_*), so the "five ads" offer can change without a release.
+ADS_PER_SHIELD_REWARD: int = 5
+SHIELDS_PER_AD_REWARD: int = 1
+ADS_DAILY_LIMIT: int = 10
+AD_SESSION_TTL_MINUTES: int = 60   # an ad session that Google has not confirmed by then can no longer pay
+
+# Paid Shield pack (Google Play Billing, consumable). Granted only after the server verifies the purchase token with the
+# Google Play Developer API; paid Shields are NOT capped at MAX_FREE_SHIELDS (the user paid for them).
+SHIELD_PACK_PRODUCT_ID: str = "flowstate_shield_pack_20"
+SHIELD_PACK_PRICE_INR: int = 20
+SHIELD_PACK_UNITS: int = 5        # product decision: confirm before launch (Play Console price must say the same)
 
 # Build My Day input limit. ONE value, server-authoritative: /ai/status reports it, the app counter shows it, and
 # /ai/plan enforces it before any Shield is reserved or any model is called. PROVISIONAL until

@@ -9,6 +9,8 @@ import uuid
 from unittest.mock import patch
 
 import pytest
+
+pytestmark = pytest.mark.usefixtures("one_free_plan")  # these exercise the free-allowance mechanism
 from httpx import ASGITransport, AsyncClient
 
 from app.core.security import create_access_token

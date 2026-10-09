@@ -235,6 +235,8 @@ class SchedulingEngine {
     final List<String> secondaryReasons = [];
     String explanation;
 
+    final isUrgent = task.priority == TaskPriority.urgent || task.isPriority;
+
     if (requiresTonightForDeadline) {
       // Must be scheduled tonight before bedtime to protect deadline!
       var cur = now.minute % 15 == 0 ? now : now.add(Duration(minutes: 15 - (now.minute % 15)));
@@ -243,6 +245,13 @@ class SchedulingEngine {
       secondaryReasons.addAll(['deadline_safety_overrides_sleep', 'protects_deadline']);
       final timeStr = DateFormat('h:mm a').format(targetStart);
       explanation = 'Today at $timeStr — Prioritized tonight to protect your upcoming deadline before your bedtime.';
+    } else if (isUrgent && !isNearBedtime) {
+      var cur = now.minute % 15 == 0 ? now : now.add(Duration(minutes: 15 - (now.minute % 15)));
+      targetStart = cur;
+      primaryReason = 'urgent_work';
+      secondaryReasons.addAll(['urgent_placement', 'fits_schedule']);
+      final timeStr = DateFormat('h:mm a').format(targetStart);
+      explanation = 'Today at $timeStr — Urgent work placed at the earliest available slot before bedtime.';
     } else if (isNearBedtime) {
       // SLEEP PROTECTION: Ordinary / no-deadline tasks are moved to tomorrow!
       final tmw = now.add(const Duration(days: 1));
@@ -294,7 +303,7 @@ class SchedulingEngine {
         secondaryReasons.addAll(['optimal_workout_window', 'scheduled_tomorrow']);
         explanation = 'Tomorrow at 4:30 PM — Ideal late-afternoon workout slot.';
       }
-    } else if (task.taskType == TaskType.admin || task.taskType == TaskType.shallowWork) {
+    } else if (task.taskType == TaskType.admin || task.taskType == TaskType.personal || task.taskType == TaskType.shallowWork) {
       if (nowHour < 14.0) {
         targetStart = DateTime(now.year, now.month, now.day, 14, 0);
         dayOffset = 0;
@@ -365,7 +374,7 @@ class SchedulingEngine {
         final tmw = now.add(const Duration(days: 1));
         final nextStartHour = (task.taskType == TaskType.physical)
             ? 16
-            : (task.taskType == TaskType.admin || task.taskType == TaskType.shallowWork ? 14 : 9);
+            : (task.taskType == TaskType.admin || task.taskType == TaskType.personal || task.taskType == TaskType.shallowWork ? 14 : 9);
         final nextStartMin = (task.taskType == TaskType.physical || task.taskType == TaskType.deepWork || task.taskType == TaskType.study) ? 30 : 0;
         resolvedStart = DateTime(tmw.year, tmw.month, tmw.day, nextStartHour, nextStartMin);
         dayOffset = 1;
@@ -509,7 +518,8 @@ class SchedulingEngine {
       case TaskType.study:
         return 'Study';
       case TaskType.admin:
-        return 'Admin';
+      case TaskType.personal:
+        return 'Personal';
       case TaskType.physical:
         return 'Physical';
       default:
@@ -524,6 +534,7 @@ class SchedulingEngine {
       case TaskType.study:
         return 'MEDIUM';
       case TaskType.admin:
+      case TaskType.personal:
         return 'LIGHT';
       case TaskType.physical:
         return 'PHYSICAL';
@@ -539,6 +550,7 @@ class SchedulingEngine {
       case TaskType.study:
         return FlowColors.tagMediumBg;
       case TaskType.admin:
+      case TaskType.personal:
         return FlowColors.tagLightBg;
       case TaskType.physical:
         return FlowColors.tagPhysicalBg;
@@ -554,6 +566,7 @@ class SchedulingEngine {
       case TaskType.study:
         return FlowColors.tagMediumText;
       case TaskType.admin:
+      case TaskType.personal:
         return FlowColors.tagLightText;
       case TaskType.physical:
         return FlowColors.tagPhysicalText;

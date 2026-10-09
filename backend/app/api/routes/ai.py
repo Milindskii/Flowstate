@@ -72,6 +72,17 @@ def get_ai_planning_status(
     """
     return AIEconomyService.get_usage_status(db, current_user.id)
 
+@router.post("/shield-welcome/seen", status_code=status.HTTP_204_NO_CONTENT)
+def dismiss_shield_welcome(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The user dismissed the one-time "2 Shields added" welcome. Records that and nothing else: it never grants,
+    spends or changes a Shield, and repeating it is harmless."""
+    AIEconomyService.mark_shield_welcome_seen(db, current_user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/plan", response_model=AIPlanResponse)
 def generate_ai_plan(
     request: AIPlanRequest,
@@ -133,7 +144,7 @@ def generate_ai_plan(
         now_local = now_local.replace(tzinfo=tz_obj) if now_local.tzinfo is None else now_local.astimezone(tz_obj)
     else:
         now_local = datetime.now(tz_obj)
-    not_charged = " Your free plans and shields were not charged."
+    not_charged = " Your Shield was not charged."
     started = clock.perf_counter()
     db.rollback()  # end any implicit transaction so no pooled connection is held during the provider call
     try:

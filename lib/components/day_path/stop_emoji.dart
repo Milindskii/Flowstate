@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 /// A small, deterministic picture for a Calendar stop, so the road reads at a glance ("🧠 ML assignment",
 /// "🏫 Class", "🏋️ Gym").
 ///
@@ -53,9 +55,46 @@ const List<(List<String>, String)> _byCategory = [
   (['fitness', 'physical', 'health', 'sport'], '🏋️'),
   (['study', 'learning', 'education', 'medium'], '📚'),
   (['deep', 'high focus', 'work'], '💼'),
-  (['admin', 'light'], '📧'),
+  (['light'], '📧'),
   (['rest', 'break'], '😴'),
-  (['personal', 'life', 'home'], '🌿'),
+  (['personal', 'life', 'home', 'admin'], '🌿'),
   (['social'], '💛'),
   (['creative'], '🎨'),
 ];
+
+/// The themed picture for a stop: a rounded line icon in the caller's colour instead of a platform emoji, so the road
+/// looks the same on every device and takes the ring / accent colour of its state. Derived from [stopEmojiFor], so the
+/// choice stays deterministic and the two never disagree.
+IconData stopIconFor({required String title, String? category, String? type}) =>
+    _iconByEmoji[stopEmojiFor(title: title, category: category, type: type)] ?? Icons.place_rounded;
+
+const Map<String, IconData> _iconByEmoji = {
+  '🏋️': Icons.fitness_center_rounded,
+  '🏃': Icons.directions_run_rounded,
+  '🧘': Icons.self_improvement_rounded,
+  '🚶': Icons.directions_walk_rounded,
+  '🏊': Icons.pool_rounded,
+  '🏫': Icons.school_rounded,
+  '🧠': Icons.psychology_rounded,
+  '📝': Icons.edit_note_rounded,
+  '📚': Icons.menu_book_rounded,
+  '📖': Icons.auto_stories_rounded,
+  '✍️': Icons.edit_rounded,
+  '💻': Icons.code_rounded,
+  '👥': Icons.groups_rounded,
+  '📞': Icons.call_rounded,
+  '📧': Icons.mail_rounded,
+  '🗂️': Icons.folder_open_rounded,
+  '🍽️': Icons.restaurant_rounded,
+  '🛒': Icons.shopping_cart_rounded,
+  '🧹': Icons.cleaning_services_rounded,
+  '🩺': Icons.medical_services_rounded,
+  '🚌': Icons.directions_bus_rounded,
+  '🎵': Icons.music_note_rounded,
+  '😴': Icons.bedtime_rounded,
+  '💛': Icons.favorite_rounded,
+  '🎨': Icons.palette_rounded,
+  '💼': Icons.work_rounded,
+  '🌿': Icons.spa_rounded,
+  '📌': Icons.place_rounded,
+};

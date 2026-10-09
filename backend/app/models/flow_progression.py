@@ -56,6 +56,13 @@ class FlowProfile(Base):
     # The server instant the next FREE Shield becomes claimable. NULL while the balance is at the maximum (no
     # cooldown runs). Only app/services/shield_ledger.py writes it; the device clock is never consulted.
     shield_refill_at = Column(UTCDateTime(), nullable=True)
+    # Verified rewarded ads not yet turned into a Shield (0..ADS_PER_SHIELD_REWARD-1). Written only by
+    # services/shield_rewards.py from AdMob's server-side verification callback; the app can never move it.
+    ad_reward_progress = Column(Integer, default=0, server_default="0", nullable=False)
+    # The server instant the persistent 7-hour streak recovery window expires. Written only by flow_service.
+    streak_recovery_deadline_at = Column(UTCDateTime(), nullable=True)
+    # Verified rewarded ads watched toward restoring the current broken streak (0..5).
+    streak_recovery_ad_progress = Column(Integer, default=0, server_default="0", nullable=False)
 
     weekly_flow_points = Column(Integer, default=0, nullable=False)
     current_week_identifier = Column(String, nullable=True) # e.g. 2026-W38

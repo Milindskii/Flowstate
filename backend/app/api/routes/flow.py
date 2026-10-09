@@ -23,6 +23,9 @@ from ...schemas.flow import (
     UseShieldResponse,
     DayCompleteClaimRequest,
     DayCompleteClaimResponse,
+    StreakRecoveryStatus,
+    StreakRestoreRequest,
+    StreakRestoreResponse,
 )
 from ...services.flow_service import FlowService
 
@@ -207,4 +210,30 @@ def use_streak_shield(
     Consumes 1 shield to protect/restore streak after an unavoidable missed focus day.
     """
     return flow_service.use_streak_shield(db, current_user)
+
+
+
+@router.get("/streak/recovery", response_model=StreakRecoveryStatus)
+def get_streak_recovery(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Whether the streak can be restored now, and what it costs (server clock, server price)."""
+    return flow_service.streak_recovery_status(db, current_user)
+
+
+@router.post("/streak/restore", response_model=StreakRestoreResponse)
+def restore_streak(
+    body: StreakRestoreRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Spend the restore cost and restore a broken streak in one atomic, idempotent step (see FlowService.restore_streak)."""
+    return flow_service.restore_streak(
+        db,
+        current_user,
+        idempotency_key=body.idempotency_key,
+        expected_cost=body.expected_cost,
+        restore_method=body.restore_method,
+    )
 

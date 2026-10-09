@@ -23,19 +23,20 @@ class PlanningAttemptReport(BaseModel):
 
 class AIUsageStatus(BaseModel):
     is_pro: bool = False
-    free_uses_remaining: int = 1
-    free_uses_total: int = 1
+    free_uses_remaining: int = 0
+    free_uses_total: int = 0
     free_uses_consumed: int = 0
-    free_use_available: bool = True
+    free_use_available: bool = False
     can_use_ai: bool = True
     shields_available: int = 2
-    can_plan_free: bool = True
-    requires_shield: bool = False
-    shield_cost: int = 2          # Shields one AI plan costs once the free use is gone (server-owned)
+    can_plan_free: bool = False
+    requires_shield: bool = True
+    shield_cost: int = 1          # Shields one AI plan costs (server-owned)
     shield_cost_replan: int = 1   # Shields one AI replan costs (server-owned)
     max_input_words: int = 200    # Build My Day dump limit (server-owned; the app counter shows it)
     can_afford_shield_plan: bool = False
     shield_max: int = 3
+    shield_welcome_pending: bool = False               # the one-time "2 Shields added" welcome has not been dismissed yet
     next_shield_refill_at: Optional[datetime] = None   # server instant of the next free Shield; None at the maximum
     server_now: Optional[datetime] = None              # the server clock when this was read (countdown base)
     subscription_tier: str = "free"

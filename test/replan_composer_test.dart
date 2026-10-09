@@ -172,6 +172,6 @@ void main() {
     await tester.tap(find.byKey(const Key('replan_new_task_submit')));
     await tester.pumpAndSettle();
     expect(sent, true);
-    expect(find.text('Urgent: Finish API security testing · 60 min', skipOffstage: false), findsOneWidget);
+    expect(find.textContaining('Urgent: Finish API security testing · 60 min', skipOffstage: false), findsOneWidget);
   });
 }

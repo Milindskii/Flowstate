@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flowstate/components/noya_companion_view.dart';
 import 'package:flowstate/models/task_item.dart';
 import 'package:flowstate/providers/app_state_provider.dart';
 import 'package:flowstate/providers/flow_provider.dart';
@@ -52,7 +53,7 @@ void main() {
   }
 
   group('TASK 1: Home Screen "All Done" vs "Clear For Now" States', () {
-    testWidgets('1. Completing only planned task while day is active shows "You\'re clear for now ✨" with + Add Task', (tester) async {
+    testWidgets('1. Completing every task while the day is active shows sleeping Noya, "All done for today!" and Add more tasks', (tester) async {
       final appState = AppStateProvider();
       final flowProvider = FlowProvider();
 
@@ -90,18 +91,21 @@ void main() {
       expect(find.text("You're all done for today. 🦊"), findsNothing);
       expect(find.text("You're all done for today 🦊"), findsNothing);
 
-      // Verify it shows active-day completion language
-      expect(find.text("You're clear for now ✨"), findsOneWidget);
-      expect(find.text("Nice work. What's next?"), findsOneWidget);
+      // One calm all-done message with Noya asleep; the day itself is not declared over (no wind-down copy)
+      expect(find.text('All done for today!'), findsOneWidget);
+      expect(find.text('Nice work. Rest, or add a little more.'), findsOneWidget);
+      expect(find.text('Nice work. Time to wind down.'), findsNothing);
+      final noya = tester.widget<NoyaCompanionView>(find.byKey(const Key('all_done_noya')));
+      expect(noya.state, NoyaState.sleepy);
 
-      // Verify primary action is "Add Task"
-      expect(find.text('Add Task'), findsOneWidget);
-
-      // Verify secondary action is "Build My Day"
+      // Verify actions: Add more tasks (primary) and Build My Day (secondary)
+      expect(find.text('Add more tasks'), findsOneWidget);
       expect(find.text('Build My Day'), findsOneWidget);
+      expect(find.byKey(const Key('completed_state_primary_button')), findsOneWidget);
+      expect(find.byKey(const Key('completed_state_secondary_button')), findsOneWidget);
     });
 
-    testWidgets('2. Tapping "Add Task" on completed clear-for-now state opens Add Task modal', (tester) async {
+    testWidgets('2. Tapping "Add more tasks" on the all-done state opens Add Task modal', (tester) async {
       final appState = AppStateProvider();
       appState.updatePersonalData(appState.personalData.copyWith(bedtime: '23:59'));
       appState.clearAllTasksForNewUserState();
@@ -117,8 +121,8 @@ void main() {
       await tester.pumpWidget(buildTestableWidget(appState: appState));
       await tester.pumpAndSettle();
 
-      // Tap primary action "Add Task"
-      await tester.tap(find.text('Add Task'));
+      // Tap primary action "Add more tasks"
+      await tester.tap(find.text('Add more tasks'));
       await tester.pumpAndSettle();
 
       // Verify AddTaskSheet is opened
@@ -151,7 +155,7 @@ void main() {
       expect(find.textContaining('Build My Day with Noya'), findsOneWidget);
     });
 
-    testWidgets('4. Completing all tasks at or past configured bedtime displays "You\'re all done for today 🦊" and "Plan tomorrow"', (tester) async {
+    testWidgets('4. Completing all tasks at or past configured bedtime displays "All done for today!" and "Plan tomorrow"', (tester) async {
       final appState = AppStateProvider();
       // Configure bedtime to an hour in the past
       final now = DateTime.now();
@@ -171,7 +175,8 @@ void main() {
       await tester.pumpWidget(buildTestableWidget(appState: appState));
       await tester.pumpAndSettle();
 
-      expect(find.text("You're all done for today 🦊"), findsOneWidget);
+      expect(find.text('All done for today!'), findsOneWidget);
+      expect(find.text('Add more tasks'), findsOneWidget);
       expect(find.text("Nice work. Time to wind down."), findsOneWidget);
       expect(find.text('Plan tomorrow'), findsOneWidget);
     });

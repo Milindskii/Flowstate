@@ -9,7 +9,7 @@ from .db.session import get_db, Base, engine
 # Ensure all models are registered with Base metadata
 from . import models  # noqa: F401
 
-from .api.routes import auth, tasks, today, flow, admin, readiness, personalization, insights, ai, subscription, calendar, routines
+from .api.routes import auth, tasks, today, flow, admin, readiness, personalization, insights, ai, subscription, calendar, routines, shields
 from .core.security_headers import SecurityHeadersMiddleware
 from .core.rate_limit import RateLimitMiddleware
 
@@ -65,6 +65,19 @@ if not is_production and settings.DATABASE_URL.startswith("sqlite"):
                     if col_name not in rp_cols:
                         logger.info(f"Adding missing column to SQLite readiness_profiles table: {col_name}")
                         conn.execute(text(f"ALTER TABLE readiness_profiles ADD COLUMN {col_name} {col_def}"))
+                conn.commit()
+
+            if "flow_profiles" in inspector.get_table_names():
+                fp_cols = {c["name"] for c in inspector.get_columns("flow_profiles")}
+                fp_missing = [
+                    ("ad_reward_progress", "INTEGER DEFAULT 0"),
+                    ("streak_recovery_deadline_at", "DATETIME"),
+                    ("streak_recovery_ad_progress", "INTEGER DEFAULT 0"),
+                ]
+                for col_name, col_def in fp_missing:
+                    if col_name not in fp_cols:
+                        logger.info(f"Adding missing column to SQLite flow_profiles table: {col_name}")
+                        conn.execute(text(f"ALTER TABLE flow_profiles ADD COLUMN {col_name} {col_def}"))
                 conn.commit()
     except Exception as e:
         logger.error(f"Development schema safety check failed: {type(e).__name__}")
@@ -124,6 +137,7 @@ app.add_exception_handler(ai.PlanFailure, ai.plan_failure_handler)
 app.include_router(subscription.router, prefix=settings.API_V1_STR)
 app.include_router(calendar.router, prefix=settings.API_V1_STR)
 app.include_router(routines.router, prefix=settings.API_V1_STR)
+app.include_router(shields.router, prefix=settings.API_V1_STR)
 
 @app.get("/health", tags=["Health"])
 def health_check():

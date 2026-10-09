@@ -60,7 +60,8 @@ List<ScheduleItem> mergeDayPathHistory(List<ScheduleItem> live, List<ScheduleIte
       continue;
     }
     used.add(dayPathTaskKey(item));
-    final skippedFamily = ghost.deviation == 'skipped' || ghost.deviation == 'deferred';
+    final skippedFamily =
+        ghost.deviation == 'skipped' || ghost.deviation == 'deferred' || ghost.deviation == 'auto_skipped';
     merged.add(item.copyWith(
       time: ghost.time,
       period: ghost.period,

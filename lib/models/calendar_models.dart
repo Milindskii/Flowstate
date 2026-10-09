@@ -266,7 +266,7 @@ class TaskDiffItem {
         taskId: taskId, title: title, changeType: changeType, oldTime: oldTime,
         newTime: newTime ?? this.newTime, oldDate: oldDate, newDate: newDate, isFixed: isFixed,
         durationMinutes: minutes, reason: reason, newStart: start ?? newStart, newEnd: end ?? newEnd,
-        newDateIso: newDateIso, timeLocked: timeLocked, isCommitment: isCommitment, oldTimeRange: oldTimeRange,
+        newDateIso: newDateIso, timeLocked: start != null ? true : timeLocked, isCommitment: isCommitment, oldTimeRange: oldTimeRange,
         newTimeRange: newTimeRange ?? this.newTimeRange, taskType: taskType, priority: priority,
         suggestionStart: suggestionStart, suggestionEnd: suggestionEnd, applyIndex: applyIndex, needsTitle: false,
       );
@@ -660,6 +660,7 @@ class PlanDiff {
         priority: nt.priority ?? 'medium',
         scheduledStart: start,
         scheduledEnd: end,
+        timeLocked: nt.timeLocked,
         source: 'manual',
       ));
     }
@@ -764,6 +765,7 @@ class NewTaskCreateModel {
   final DateTime? scheduledEnd;
   final DateTime? deadlineAt;
   final String source;
+  final bool timeLocked;
 
   const NewTaskCreateModel({
     required this.title,
@@ -777,6 +779,7 @@ class NewTaskCreateModel {
     this.scheduledEnd,
     this.deadlineAt,
     this.source = 'quick_add',
+    this.timeLocked = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -791,6 +794,7 @@ class NewTaskCreateModel {
         if (scheduledEnd != null) 'scheduled_end': scheduledEnd!.toUtc().toIso8601String(),
         if (deadlineAt != null) 'deadline_at': deadlineAt!.toUtc().toIso8601String(),
         'source': source,
+        'time_locked': timeLocked,
       };
 }
 

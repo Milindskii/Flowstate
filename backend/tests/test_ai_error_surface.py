@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
+
+pytestmark = pytest.mark.usefixtures("one_free_plan")  # these exercise the free-allowance mechanism
 from jose import jwt
 
 from app.core import security
@@ -40,7 +42,7 @@ async def test_failure_detail_is_neutral_but_the_machine_code_is_stable(code):
     body = res.json()
     assert res.status_code == 502 and body["failure_code"] == code
     assert body["detail"].startswith("AI task structuring failed")
-    assert "were not charged" in body["detail"]
+    assert "was not charged" in body["detail"]
     assert not FORBIDDEN.search(body["detail"]), body["detail"]
     # Internal diagnostics keep the real reason for operators.
     with SessionLocal() as db:

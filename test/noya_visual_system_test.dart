@@ -200,12 +200,12 @@ void main() {
   });
 
   group('Noya decode size (spec §17 P5)', () {
-    test('cacheWidthFor rounds size x dpr', () {
-      expect(NoyaCompanionView.cacheWidthFor(40, 2.625), 105);
-      expect(NoyaCompanionView.cacheWidthFor(156, 3.0), 468);
+    test('cacheWidthFor oversamples 2x size x dpr, capped at source width', () {
+      expect(NoyaCompanionView.cacheWidthFor(40, 2.625), 210);
+      expect(NoyaCompanionView.cacheWidthFor(156, 3.0), 936);
     });
 
-    testWidgets('NoyaCompanionView decodes at size x DPR, not 1024x1024', (tester) async {
+    testWidgets('NoyaCompanionView decodes at 2x size x DPR, not full 1024x1024', (tester) async {
       tester.view.devicePixelRatio = 3.0;
       addTearDown(tester.view.resetDevicePixelRatio);
       await tester.pumpWidget(const MaterialApp(
@@ -213,7 +213,7 @@ void main() {
       ));
       final image = tester.widget<Image>(find.byType(Image).first).image;
       expect(image, isA<ResizeImage>());
-      expect((image as ResizeImage).width, 120);
+      expect((image as ResizeImage).width, 240);
     });
   });
 }
