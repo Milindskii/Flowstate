@@ -112,14 +112,35 @@ class _CalendarTabState extends State<CalendarTab> {
     return List.generate(27, (index) => selected.add(Duration(days: index - 13)));
   }
 
-  Future<void> _openMonthPicker(AppStateProvider state, DateTime selected, DateTime today) async {
-    FlowHaptics.lightTap();
-    // Dots only from tasks already in memory: drawing the month never costs a request.
+  Set<DateTime> _daysWithTasks(AppStateProvider state) {
     final days = <DateTime>{};
     for (final t in state.tasks) {
-      final d = t.plannedDate ?? t.scheduledStart;
-      if (d != null) days.add(DateTime(d.year, d.month, d.day));
+      if (t.status == TaskStatus.archived || t.status == TaskStatus.cancelled) continue;
+      final d = t.plannedDate ?? t.scheduledStart ?? t.deadlineAt;
+      if (d != null) {
+        days.add(DateTime(d.year, d.month, d.day));
+      }
     }
+    for (final entry in state.dayScheduleCache.entries) {
+      final sched = entry.value;
+      if (sched.timeline.isNotEmpty || sched.unscheduledTasks.isNotEmpty) {
+        try {
+          final parsed = DateTime.parse(entry.key);
+          days.add(DateTime(parsed.year, parsed.month, parsed.day));
+        } catch (_) {}
+      }
+    }
+    final selectedSched = state.selectedDateSchedule;
+    if (selectedSched != null && (selectedSched.timeline.isNotEmpty || selectedSched.unscheduledTasks.isNotEmpty)) {
+      final s = state.selectedCalendarDate;
+      days.add(DateTime(s.year, s.month, s.day));
+    }
+    return days;
+  }
+
+  Future<void> _openMonthPicker(AppStateProvider state, DateTime selected, DateTime today) async {
+    FlowHaptics.lightTap();
+    final days = _daysWithTasks(state);
     final picked = await showFlowMonthPicker(context, selected: selected, today: today, daysWithTasks: days);
     if (picked != null && mounted) state.loadCalendarDay(picked);
   }
@@ -230,10 +251,36 @@ class _CalendarTabState extends State<CalendarTab> {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Text(
-                          DateFormat('EEEE, MMMM d').format(selectedDate),
-                          key: const Key('calendar_selected_date_header'),
-                          style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
+                        Semantics(
+                          button: true,
+                          label: 'Customize date, ${DateFormat('EEEE, MMMM d').format(selectedDate)}',
+                          child: InkWell(
+                            key: const Key('calendar_selected_date_header_button'),
+                            borderRadius: FlowRadii.chipRadius,
+                            onTap: () => _openMonthPicker(state, selectedDate, today),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2.0),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      DateFormat('EEEE, MMMM d').format(selectedDate),
+                                      key: const Key('calendar_selected_date_header'),
+                                      style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Icon(
+                                    Icons.edit_calendar_rounded,
+                                    size: 14,
+                                    color: FlowColors.textMutedOf(context),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -271,7 +318,9 @@ class _CalendarTabState extends State<CalendarTab> {
                 days: _daysFor(selectedDate),
                 selected: selectedDate,
                 today: today,
+                daysWithTasks: _daysWithTasks(state),
                 onSelect: state.loadCalendarDay,
+                onCustomizeDate: (day) => _openMonthPicker(state, day, today),
               ),
               const SizedBox(height: 16),
 

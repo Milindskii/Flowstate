@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:flowstate/components/flow_date_strip.dart';
+import 'package:flowstate/components/flow_month_picker.dart';
 import 'package:flowstate/providers/app_state_provider.dart';
 import 'package:flowstate/screens/calendar_tab.dart';
 import 'package:flowstate/services/api_service.dart';
@@ -200,6 +201,41 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets('dot button displays task indicator and clicking it triggers date customization', (tester) async {
+      DateTime? customized;
+      final tomorrow = _today.add(const Duration(days: 1));
+      await tester.pumpWidget(_host(FlowDateStrip(
+        days: _daysFrom(_today.subtract(const Duration(days: 1))),
+        selected: _today,
+        today: _today,
+        daysWithTasks: {tomorrow},
+        onSelect: (_) {},
+        onCustomizeDate: (d) => customized = d,
+      )));
+
+      final tomorrowDotKey = Key('calendar_dot_button_${DateFormat('yyyy-MM-dd').format(tomorrow)}');
+      expect(find.byKey(tomorrowDotKey), findsOneWidget);
+
+      await tester.tap(find.byKey(tomorrowDotKey));
+      await tester.pumpAndSettle();
+      expect(customized, tomorrow);
+    });
+
+    testWidgets('tapping selected date chip triggers date customization', (tester) async {
+      DateTime? customized;
+      await tester.pumpWidget(_host(FlowDateStrip(
+        days: _daysFrom(_today.subtract(const Duration(days: 1))),
+        selected: _today,
+        today: _today,
+        onSelect: (_) {},
+        onCustomizeDate: (d) => customized = d,
+      )));
+
+      await tester.tap(find.byKey(const Key('calendar_day_chip_today')));
+      await tester.pumpAndSettle();
+      expect(customized, _today);
+    });
   });
 
   testWidgets('header shows full selected date', (tester) async {
@@ -234,5 +270,37 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text(DateFormat('EEEE, MMMM d').format(now.add(const Duration(days: 1)))), findsOneWidget);
     expect(find.text(todayLabel), findsNothing);
+  });
+
+  testWidgets('tapping date header opens month picker to customize date', (tester) async {
+    final mockClient = MockClient((request) async => http.Response(
+          jsonEncode({
+            'date': request.url.queryParameters['date'],
+            'is_today': false,
+            'is_past': false,
+            'timeline': [],
+            'fixed_commitments': [],
+            'completed_tasks': [],
+            'remaining_tasks': [],
+            'unscheduled_tasks': [],
+            'conflicts': [],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        ));
+    final provider = AppStateProvider(customApi: ApiService(client: mockClient));
+
+    await tester.pumpWidget(MaterialApp(
+      home: ChangeNotifierProvider<AppStateProvider>.value(value: provider, child: const CalendarTab()),
+    ));
+    await tester.pumpAndSettle();
+
+    final headerButton = find.byKey(const Key('calendar_selected_date_header_button'));
+    expect(headerButton, findsOneWidget);
+
+    await tester.tap(headerButton);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(FlowMonthPicker), findsOneWidget);
   });
 }
