@@ -101,7 +101,7 @@ class _LegalHubScreenState extends State<LegalHubScreen> {
               Text('Companion Mascot: Noya (Fox)', style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context))),
               const SizedBox(height: 12),
               Text(
-                'Note: All task parsing is performed locally in-memory. No task text is sent to third-party public AI models.',
+                'Your account, setup answers and tasks are stored on Flowstate servers. Build My Day notes that need AI are also sent to an external AI service. See the Privacy Policy for details.',
                 style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)),
               ),
             ],
@@ -358,8 +358,8 @@ class _LegalHubScreenState extends State<LegalHubScreen> {
         ),
         content: Text(
           'This action is permanent and irreversible.\n\n'
-          'All your tasks, performance logs, rhythm calibrations, Flow Points, and companion progression (Noya) will be permanently purged from our servers.\n\n'
-          'An external web account deletion request page will also be available prior to production launch.',
+          'Your account and the data linked to it in Flowstate (tasks, setup answers, history, Flow Points and Noya progress) will be permanently deleted.\n\n'
+          'Your sign-in record with our authentication provider is not removed by this button. Email us if you want that removed too.',
           style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(context)),
         ),
         actions: [
@@ -445,7 +445,7 @@ class _LegalHubScreenState extends State<LegalHubScreen> {
               ),
               const SizedBox(height: 6),
               Text(
-                'Access our legal agreements, privacy disclosures, and exercise data portability and account erasure rights.',
+                'Read the Terms and Privacy Policy, and manage your data: view, export, pause or delete.',
                 style: FlowTypography.bodyMedium(color: textSecondary),
               ),
               const SizedBox(height: 20),
@@ -458,7 +458,7 @@ class _LegalHubScreenState extends State<LegalHubScreen> {
                 context,
                 icon: Icons.shield_outlined,
                 title: 'Privacy & Data Policy',
-                subtitle: 'Data collection, AI parsing disclosures, and user rights',
+                subtitle: 'What we collect, who handles it, and your choices',
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()),
                 ),
@@ -467,7 +467,7 @@ class _LegalHubScreenState extends State<LegalHubScreen> {
                 context,
                 icon: Icons.description_outlined,
                 title: 'Terms of Service',
-                subtitle: 'Fair usage, acceptable conduct, non-medical disclaimer',
+                subtitle: 'Using Flowstate, AI assistance, and acceptable use',
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const TermsOfServiceScreen()),
                 ),
@@ -525,7 +525,7 @@ class _LegalHubScreenState extends State<LegalHubScreen> {
                     Text(
                       'Location: Chennai, Tamil Nadu, India\n'
                       'Developer Status: Solo / Independent Developer project (not an incorporated company or registered entity).\n'
-                      'External Web Deletion URL: TBD (will be hosted at the verified web domain before production launch)',
+                      'A web page for deleting your account without opening the app is not available yet. Email us to request deletion.',
                       style: FlowTypography.bodySmall(color: textSecondary).copyWith(height: 1.45),
                     ),
                     const SizedBox(height: 12),
@@ -577,7 +577,7 @@ class _LegalHubScreenState extends State<LegalHubScreen> {
                 context,
                 icon: Icons.download_rounded,
                 title: 'Data Portability & Export (JSON Archive)',
-                subtitle: _isExporting ? 'Generating JSON bundle...' : 'Data export functionality supporting applicable portability/access rights',
+                subtitle: _isExporting ? 'Generating JSON bundle...' : 'Copy a JSON summary of your account, tasks and progress',
                 trailing: _isExporting
                     ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                     : const Icon(Icons.copy_rounded, size: 20),
@@ -600,7 +600,7 @@ class _LegalHubScreenState extends State<LegalHubScreen> {
                 context,
                 icon: Icons.delete_forever_rounded,
                 title: 'Permanent Account & Data Deletion',
-                subtitle: _isDeleting ? 'Purging account...' : 'Permanently erase all personal data from Flowstate servers',
+                subtitle: _isDeleting ? 'Purging account...' : 'Permanently delete your account and linked data',
                 trailing: _isDeleting
                     ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: FlowColors.error))
                     : const Icon(Icons.chevron_right_rounded, color: FlowColors.error, size: 20),
@@ -612,7 +612,7 @@ class _LegalHubScreenState extends State<LegalHubScreen> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
                 child: Text(
-                  'Google Play Policy Note: An external web-based account deletion route will be provided before launch. The URL will be confirmed and linked here.',
+                  'Prefer not to use the app? Email us and we will help with access, correction or deletion requests.',
                   style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)),
                 ),
               ),

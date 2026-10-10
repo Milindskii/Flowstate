@@ -4,11 +4,14 @@ import '../models/ai_plan_models.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_radii.dart';
+import '../screens/legal/privacy_policy_screen.dart';
 import '../theme/flow_typography.dart';
 
+/// Stored key keeps its original name so existing acceptances remain valid; it is never shown to users.
 const String kGeminiPrivacyAcceptedKey = 'flowstate_gemini_privacy_accepted_v1';
 
-/// Checks if user has accepted the Gemini privacy disclosure. If not, shows disclosure modal.
+/// Checks if the user has seen the Build My Day privacy notice. If not, shows it before anything is sent.
+/// Choosing Cancel sends nothing; the caller then offers the basic planner.
 Future<bool> checkAndShowGeminiPrivacyDisclosure(BuildContext context) async {
   try {
     final prefs = await SharedPreferences.getInstance();
@@ -25,7 +28,7 @@ Future<bool> checkAndShowGeminiPrivacyDisclosure(BuildContext context) async {
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
-    builder: (ctx) => const _GeminiPrivacyDisclosureSheet(),
+    builder: (ctx) => const BuildMyDayPrivacySheet(requireChoice: true),
   );
 
   if (result == true) {
@@ -38,13 +41,30 @@ Future<bool> checkAndShowGeminiPrivacyDisclosure(BuildContext context) async {
   return false;
 }
 
-class _GeminiPrivacyDisclosureSheet extends StatelessWidget {
-  const _GeminiPrivacyDisclosureSheet();
+/// Read-only version of the same notice, opened from the small "How your notes are used" link in Build My Day.
+Future<void> showBuildMyDayPrivacyInfo(BuildContext context) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: FlowColors.surface(context),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (ctx) => const BuildMyDayPrivacySheet(requireChoice: false),
+  );
+}
+
+/// Short, product-voiced notice about how Build My Day handles notes. Names no provider; the Privacy Policy does.
+/// [requireChoice] shows Cancel / Continue (the pre-send gate); otherwise a single Done button.
+class BuildMyDayPrivacySheet extends StatelessWidget {
+  final bool requireChoice;
+  const BuildMyDayPrivacySheet({super.key, required this.requireChoice});
 
   @override
   Widget build(BuildContext context) {
+    final textPrimary = FlowColors.textPrimaryOf(context);
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: EdgeInsets.only(
           left: 24,
           right: 24,
@@ -78,10 +98,12 @@ class _GeminiPrivacyDisclosureSheet extends StatelessWidget {
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text(
-                    'Privacy & AI Notice',
-                    style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(context))
-                        .copyWith(fontWeight: FontWeight.w700),
+                  child: Semantics(
+                    header: true,
+                    child: Text(
+                      'How Build My Day uses your notes',
+                      style: FlowTypography.titleMedium(color: textPrimary).copyWith(fontWeight: FontWeight.w700),
+                    ),
                   ),
                 ),
               ],
@@ -95,55 +117,93 @@ class _GeminiPrivacyDisclosureSheet extends StatelessWidget {
                 border: Border.all(color: FlowColors.border(context)),
               ),
               child: Text(
-                'Flowstate uses Google Gemini to organize your task list.\nThe text you submit is sent to Google to process your request.',
-                style: FlowTypography.bodyMedium(color: FlowColors.textPrimaryOf(context)).copyWith(height: 1.5),
+                'Build My Day turns your notes into a practical plan. To do that, your text is sent to Flowstate\'s '
+                'servers and to an external AI service that organizes it into tasks. You review everything before it is added.',
+                style: FlowTypography.bodyMedium(color: textPrimary).copyWith(height: 1.5),
               ),
             ),
             const SizedBox(height: 12),
             Text(
-              'Only raw task notes, current date, and timezone are transmitted. Credentials, passwords, and private profile records are never sent.',
-              style: FlowTypography.bodySmall(color: FlowColors.textMutedOf(context)),
+              'Only your notes, today\'s date and your time zone are sent. Your email, password and sign-in details are not. '
+              'Simple lists can be organized on your device without being sent.',
+              style: FlowTypography.bodySmall(color: FlowColors.textSecondaryOf(context)).copyWith(height: 1.45),
             ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(false),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: FlowColors.textMutedOf(context),
-                      side: BorderSide(color: FlowColors.border(context)),
-                      shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: Text('Cancel', style: FlowTypography.labelLarge(color: FlowColors.textMutedOf(context))),
-                  ),
+            const SizedBox(height: 4),
+            TextButton(
+              key: const Key('privacy_policy_link'),
+              style: TextButton.styleFrom(
+                minimumSize: const Size(48, 48),
+                padding: EdgeInsets.zero,
+                alignment: Alignment.centerLeft,
+                foregroundColor: FlowColors.accentCyan,
+              ),
+              onPressed: () {
+                FlowHaptics.lightTap();
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()));
+              },
+              child: Text(
+                'Read the Privacy Policy',
+                style: FlowTypography.labelLarge(color: FlowColors.accentCyan).copyWith(
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.underline,
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: ElevatedButton(
-                    key: const Key('privacy_continue_button'),
-                    onPressed: () {
-                      FlowHaptics.lightTap();
-                      Navigator.of(context).pop(true);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: FlowColors.accentCyan,
-                      foregroundColor: FlowColors.textInverse,
-                      elevation: 0,
-                      shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: Text(
-                      'Continue',
-                      style: FlowTypography.labelLarge(color: FlowColors.textInverse)
-                          .copyWith(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
+            const SizedBox(height: 12),
+            if (requireChoice)
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: FlowColors.textMutedOf(context),
+                        side: BorderSide(color: FlowColors.border(context)),
+                        shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: Text('Cancel', style: FlowTypography.labelLarge(color: FlowColors.textMutedOf(context))),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton(
+                      key: const Key('privacy_continue_button'),
+                      onPressed: () {
+                        FlowHaptics.lightTap();
+                        Navigator.of(context).pop(true);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: FlowColors.accentCyan,
+                        foregroundColor: FlowColors.textInverse,
+                        elevation: 0,
+                        shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: Text(
+                        'Continue',
+                        style: FlowTypography.labelLarge(color: FlowColors.textInverse).copyWith(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            else
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  key: const Key('privacy_done_button'),
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: textPrimary,
+                    side: BorderSide(color: FlowColors.border(context)),
+                    shape: const RoundedRectangleBorder(borderRadius: FlowRadii.buttonRadius),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: Text('Done', style: FlowTypography.labelLarge(color: textPrimary)),
+                ),
+              ),
           ],
         ),
       ),

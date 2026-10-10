@@ -1035,7 +1035,7 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
     if (_isLoading) {
       phase = 'thinking';
       noyaTitle = '$name is thinking...';
-      noyaMessage = 'Structuring tasks & finding where each fits';
+      noyaMessage = 'Turning your notes into a practical plan...';
       noyaState = NoyaState.thinking;
     } else if (_isSubmitting) {
       phase = 'saving';
@@ -1327,7 +1327,36 @@ class _BrainDumpSheetState extends State<_BrainDumpSheet> {
       children: [
         Expanded(
           child: message == null
-              ? const SizedBox.shrink()
+              ? Align(
+                  alignment: Alignment.centerLeft,
+                  child: Semantics(
+                    button: true,
+                    label: 'How your notes are used',
+                    child: InkWell(
+                      key: const Key('bmd_privacy_info_link'),
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () => showBuildMyDayPrivacyInfo(context),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.lock_outline_rounded, size: 13, color: FlowColors.textMutedOf(context)),
+                            const SizedBox(width: 5),
+                            Flexible(
+                              child: Text(
+                                'How your notes are used',
+                                overflow: TextOverflow.ellipsis,
+                                style: FlowTypography.bodySmall(color: FlowColors.accentCyan)
+                                    .copyWith(fontWeight: FontWeight.w600, decoration: TextDecoration.underline),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                )
               : Text(message, style: FlowTypography.bodySmall(color: FlowColors.warning)),
         ),
         const SizedBox(width: 12),

@@ -12,6 +12,7 @@ import '../theme/flow_radii.dart';
 import '../theme/flow_typography.dart';
 import 'onboarding_flow_screen.dart';
 import 'main_shell.dart';
+import 'legal/legal_constants.dart';
 import 'legal/privacy_policy_screen.dart';
 import 'legal/terms_of_service_screen.dart';
 import 'legal/refund_policy_screen.dart';
@@ -256,7 +257,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                 ),
                               ),
                               Text(
-                                ', and confirm I am 16+ years old.',
+                                ', and confirm I am $kMinimumAge or older.',
                                 style: FlowTypography.bodySmall(color: const Color(0xFF64748B)),
                               ),
                             ],
@@ -284,7 +285,7 @@ class _AuthScreenState extends State<AuthScreen> {
                               return;
                             }
                             if (!sheetIsLogin && !acceptedTermsAndAge) {
-                              setSheetState(() => errorMessage = 'Please agree to the Terms of Service & confirm age (16+) to proceed.');
+                              setSheetState(() => errorMessage = 'Please accept the Terms and Privacy Policy and confirm you are $kMinimumAge or older.');
                               return;
                             }
 

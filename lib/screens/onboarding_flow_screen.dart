@@ -15,6 +15,7 @@ import '../services/timezone_service.dart';
 import '../theme/flow_colors.dart';
 import '../theme/flow_haptics.dart';
 import '../theme/flow_typography.dart';
+import 'legal/privacy_policy_screen.dart';
 import 'main_shell.dart';
 
 /// Flowstate Adaptive Onboarding Flow
@@ -389,13 +390,14 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
 
   Widget _buildTopHeader() {
     final bool showBack = _currentPage > 0 && _currentPage <= _activeQuestions.length;
-    // Hide progress indicator on welcome and first 3 questions for survey-free feeling
-    final bool showProgress = _currentPage >= 4 && _currentPage <= _activeQuestions.length;
+    // A calm bar from the first question on: people answer faster when they can see the end.
+    final bool showProgress = _currentPage >= 1 && _currentPage <= _activeQuestions.length;
+    final int total = _activeQuestions.length;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: SizedBox(
-        height: 44,
+        height: 48,
         child: Row(
           children: [
             if (showBack)
@@ -403,39 +405,47 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
                 icon: const Icon(Icons.arrow_back_ios_new, size: 18, color: Color(0xFF334155)),
                 onPressed: _prevPage,
                 tooltip: 'Back',
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
               )
             else
-              const SizedBox(width: 40),
-
-            const Spacer(),
+              const SizedBox(width: 48),
 
             if (showProgress)
-              Stack(
-                alignment: Alignment.center,
-                children: [
-                  SizedBox(
-                    width: 34,
-                    height: 34,
-                    child: CircularProgressIndicator(
-                      value: (_currentPage - 1) / _activeQuestions.length,
-                      strokeWidth: 3.2,
-                      backgroundColor: const Color(0xFFE2E8F0),
-                      valueColor: const AlwaysStoppedAnimation<Color>(FlowColors.cyan),
+              Expanded(
+                child: Semantics(
+                  label: 'Question $_currentPage of $total',
+                  child: ExcludeSemantics(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: TweenAnimationBuilder<double>(
+                            tween: Tween<double>(end: _currentPage / total),
+                            duration: const Duration(milliseconds: 240),
+                            curve: Curves.easeOutCubic,
+                            builder: (context, value, _) => LinearProgressIndicator(
+                              value: value,
+                              minHeight: 5,
+                              backgroundColor: const Color(0xFFE2E8F0),
+                              valueColor: const AlwaysStoppedAnimation<Color>(FlowColors.cyan),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Question $_currentPage of $total',
+                          style: FlowTypography.labelSmall(color: const Color(0xFF64748B)),
+                        ),
+                      ],
                     ),
                   ),
-                  Text(
-                    '${_currentPage - 1}',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF0F172A),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              )
+            else
+              const Spacer(),
 
-            const Spacer(),
-            const SizedBox(width: 40),
+            const SizedBox(width: 48),
           ],
         ),
       ),
@@ -508,18 +518,61 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           Center(
             child: Text(
-              'Takes ~45 seconds · Private & stored locally',
-              style: FlowTypography.labelSmall(color: const Color(0xFF94A3B8)),
+              'Takes about a minute',
+              style: FlowTypography.labelMedium(color: const Color(0xFF64748B)),
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 6),
+          // Why we ask, said before the first question: the answers only tune the schedule.
+          Text(
+            'A few quick questions help Flowstate plan around your energy, sleep and focus habits. '
+            'Your answers are saved to your account and used only to personalize your plan.',
+            textAlign: TextAlign.center,
+            style: FlowTypography.bodySmall(color: const Color(0xFF64748B)).copyWith(height: 1.45),
+          ),
+          Center(
+            child: TextButton(
+              key: const Key('onboarding_privacy_link'),
+              onPressed: () {
+                FlowHaptics.lightTap();
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()));
+              },
+              style: TextButton.styleFrom(minimumSize: const Size(48, 48), foregroundColor: FlowColors.cyan),
+              child: Text(
+                'How your data is used',
+                style: FlowTypography.labelMedium(color: const Color(0xFF0E7490)).copyWith(
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.underline,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
         ],
       ),
     );
   }
+
+  // One line per question on why it is asked. Question ids and answers are unchanged.
+  static const Map<String, String> _whyWeAsk = {
+    'peak_window': 'Your sharpest hours get the work that needs the most focus.',
+    'wake_weekday': 'Sets when your planned day starts.',
+    'wake_weekend': 'Lets days off start at a realistic time.',
+    'schedule_shift_adaptation': 'Helps plan days that look different from usual.',
+    'sleep_time': 'Helps leave room to wind down in the evening.',
+    'sleep_inertia': 'Keeps demanding tasks out of your slow-start time. A rough guide, not a medical measure.',
+    'draining_work': 'So heavy work is spread out between lighter tasks. Choose any that apply, or none.',
+    'tired_reaction': 'Shapes how your day is paced when energy dips.',
+    'session_disruptor': 'Helps shape how your work blocks are set up.',
+    'focus_duration': 'Sets the default length of your work blocks.',
+    'primary_goal': 'Helps decide what Flowstate puts first.',
+    'energy_predictability': 'Decides how closely Flowstate follows your usual pattern.',
+    'unpredictable_cue': 'Kept on this device only. It is not sent to our servers.',
+    'schedule_disruptors': 'Kept on this device only. It is not sent to our servers.',
+  };
 
   // ---------------------------------------------------------------------------
   // Question Step Builder
@@ -545,7 +598,27 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
               style: FlowTypography.bodyMedium(color: const Color(0xFF64748B)),
             ),
           ],
-          const SizedBox(height: 28),
+          if (_whyWeAsk[question.id] != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(top: 2),
+                  child: Icon(Icons.info_outline_rounded, size: 14, color: Color(0xFF64748B)),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _whyWeAsk[question.id]!,
+                    key: Key('why_${question.id}'),
+                    style: FlowTypography.bodySmall(color: const Color(0xFF64748B)).copyWith(height: 1.4),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 24),
 
           Expanded(
             child: SingleChildScrollView(
@@ -637,7 +710,19 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
         for (final opt in question.options)
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
-            child: InkWell(
+            child: Semantics(
+              button: true,
+              selected: selected == opt.id,
+              inMutuallyExclusiveGroup: true,
+              label: opt.label,
+              excludeSemantics: true,
+              onTap: () {
+                FlowHaptics.selection();
+                setState(() {
+                  _answers[question.id] = opt.id;
+                });
+              },
+              child: InkWell(
               onTap: () {
                 FlowHaptics.selection();
                 setState(() {
@@ -646,6 +731,7 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
               },
               borderRadius: BorderRadius.circular(14),
               child: AnimatedContainer(
+                constraints: const BoxConstraints(minHeight: 52),
                 duration: const Duration(milliseconds: 180),
                 padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
                 decoration: BoxDecoration(
@@ -668,11 +754,15 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
                         ),
                       ),
                     ),
-                    if (selected == opt.id)
-                      const Icon(Icons.check, color: FlowColors.cyan, size: 18),
+                    Icon(
+                      selected == opt.id ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+                      color: selected == opt.id ? FlowColors.cyan : const Color(0xFF94A3B8),
+                      size: 20,
+                    ),
                   ],
                 ),
               ),
+            ),
             ),
           ),
       ],
@@ -688,7 +778,23 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
         for (final opt in question.options)
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
-            child: InkWell(
+            child: Semantics(
+              button: true,
+              checked: selected.contains(opt.id),
+              label: opt.label,
+              excludeSemantics: true,
+              onTap: () {
+                FlowHaptics.selection();
+                setState(() {
+                  if (selected.contains(opt.id)) {
+                    selected.remove(opt.id);
+                  } else {
+                    selected.add(opt.id);
+                  }
+                  _answers[question.id] = selected;
+                });
+              },
+              child: InkWell(
               onTap: () {
                 FlowHaptics.selection();
                 setState(() {
@@ -702,6 +808,7 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
               },
               borderRadius: BorderRadius.circular(14),
               child: AnimatedContainer(
+                constraints: const BoxConstraints(minHeight: 52),
                 duration: const Duration(milliseconds: 180),
                 padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
                 decoration: BoxDecoration(
@@ -732,6 +839,7 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
                   ],
                 ),
               ),
+            ),
             ),
           ),
       ],

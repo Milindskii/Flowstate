@@ -223,7 +223,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                           ),
                           const SizedBox(width: 6),
                           Text(
-                            'Private & Local',
+                            'Your data stays yours',
                             style: FlowTypography.labelSmall(
                               color: FlowColors.textMutedOf(context),
                             ),

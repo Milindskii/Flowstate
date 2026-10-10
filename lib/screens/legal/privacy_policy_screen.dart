@@ -1,209 +1,121 @@
 import 'package:flutter/material.dart';
-import '../../theme/flow_colors.dart';
-import '../../theme/flow_haptics.dart';
-import '../../theme/flow_radii.dart';
-import '../../theme/flow_spacing.dart';
-import '../../theme/flow_typography.dart';
+import 'legal_constants.dart';
+import 'legal_widgets.dart';
 
-/// Screen displaying the authoritative Data Practices, AI Disclosures & User Rights Policy.
+/// Privacy & Data Policy. Every category below was checked against the app and server code; anything that
+/// could not be confirmed is left out here and tracked as an open decision in docs/legal/open-decisions.md.
 class PrivacyPolicyScreen extends StatelessWidget {
   const PrivacyPolicyScreen({super.key});
 
+  static const List<LegalSection> sections = [
+    LegalSection('1. What we collect and why', [
+      LegalBlock.paragraph('Flowstate only handles the information below. Nothing else is collected.'),
+      LegalBlock.list([
+        'Account: your email address, and a display name if you set one. Needed to sign in and keep your plan across devices. Required. Sign-in is handled by Supabase.',
+        'Your agreement: that you accepted the Terms and Privacy Policy and confirmed you are $kMinimumAge or older, with the time you did so. Needed to open an account. Required.',
+        'Setup questions: your answers about when you feel most focused, wake-up times on weekdays and weekends, bedtime, how long you take to feel awake, which kinds of work drain you, what happens when you are tired, what disrupts you, how long you focus before a break, your main goal, how predictable your energy is, how your routine adapts on days with big schedule shifts (asked only when relevant), and your device time zone. Used to tune when tasks are scheduled. Part of setup. Two follow-up answers (what predicts a good day, what changes your schedule) stay on your device.',
+        'Tasks and schedule: task titles, categories, durations, deadlines, fixed times, priority, routines, and what you complete, skip, move or miss. Needed to plan and show your day, calendar and insights. Required to use the planner.',
+        'Optional reflections: focus, energy, difficulty and distraction ratings you give after a task. Used to improve your suggestions over time. Optional.',
+        'Progress and purchases: Flow Points, Shields, streak and Noya progress, and, if you subscribe or buy something, its status and the store order reference. We never see your card or payment details; the app store handles payment.',
+        'Settings: your accent colour and display preferences.',
+        'Privacy requests: if you send us one, your email address and message.',
+        'Technical data: request identifiers, error codes, timing, and rate-limit counters that help us keep the service secure and working.',
+      ]),
+      LegalBlock.paragraph(
+        'Flowstate does not collect your location, contacts, photos or health-sensor data. The app does not include advertising or '
+        'third-party analytics or crash-reporting tools. Reminders, if you turn them on, are created on your device.',
+      ),
+    ]),
+    LegalSection('2. Build My Day and AI processing', [
+      LegalBlock.paragraph(
+        'Build My Day turns your notes into a plan. Simple lists can be organized on your device. When your notes need more '
+        'interpretation, they are sent to Flowstate\'s servers and, from there, to an external AI service: Google\'s Gemini API.',
+      ),
+      LegalBlock.list([
+        'Sent: the text you typed, today\'s date and your time zone. Your email, name, password and sign-in token are not part of the request.',
+        'When you adjust today\'s plan by typing a message, your message and the titles, times and durations of today\'s open tasks are also sent, so the request makes sense.',
+        'Purpose: to extract structured tasks (titles, durations, deadlines, fixed times) for you to review. The AI does not build your schedule; Flowstate\'s own scheduling logic does, and nothing is added until you confirm.',
+        'Stored by us: the structured result of the request and a one-way fingerprint (hash) of it that prevents duplicate charges. We do not keep a copy of your raw text in a separate record.',
+        'Google processes the text under its own terms for the Gemini API, which also govern how long it keeps that text. Flowstate does not control Google\'s retention.',
+        'Your choice: you are shown a short notice before your first AI request and can cancel without anything being sent. You can always add tasks manually or use the basic planner instead.',
+      ]),
+      LegalBlock.paragraph('Please avoid typing sensitive information (such as health details or passwords) into your notes.'),
+    ]),
+    LegalSection('3. Who else handles your data', [
+      LegalBlock.list([
+        'Supabase: sign-in and account authentication, and the database that stores your Flowstate data.',
+        'Google (Gemini API): processes Build My Day text as described above.',
+        'Your app store: processes payments and subscriptions if you buy anything, and tells us whether a purchase is valid.',
+        'Our hosting provider: runs the Flowstate server that handles your requests.',
+      ]),
+      LegalBlock.paragraph('We do not sell your personal data and we do not share it for advertising.'),
+    ]),
+    LegalSection('4. Where data is kept', [
+      LegalBlock.paragraph(
+        'On your device: cached tasks, settings, setup progress and your sign-in session, so the app works smoothly. '
+        'Signing out or deleting your account clears this.',
+      ),
+      LegalBlock.paragraph(
+        'On our servers: the account, setup answers, tasks, history and progress described above, for as long as your account exists.',
+      ),
+    ]),
+    LegalSection('5. Keeping and deleting your data', [
+      LegalBlock.list([
+        'Deactivate: pauses your account and keeps your data so you can come back by signing in again.',
+        'Delete: in Profile > Legal & Privacy Hub, "Permanent Account & Data Deletion" permanently removes your account record and the data linked to it from Flowstate\'s database, including tasks, setup answers, history and progress. It cannot be undone.',
+        'What deletion does not yet cover: your sign-in record at Supabase is not removed by the in-app button, and a privacy request you submitted is kept without a link to your account. Email us and we will handle these manually.',
+        'We have not yet set fixed retention periods for server logs or backups.',
+        'Text already sent to Google is subject to Google\'s own retention, not ours.',
+      ]),
+    ]),
+    LegalSection('6. Your choices and rights', [
+      LegalBlock.list([
+        'See what we hold: Legal & Privacy Hub > "View My Stored Data".',
+        'Export: Legal & Privacy Hub > "Data Portability & Export" copies a JSON summary (account, preferences, tasks, progress) to your clipboard. It does not yet include all history. Email us for anything else.',
+        'Ask us to correct, delete or explain your data: use "Submit Grievance / Inquiry" in the Legal & Privacy Hub, or email us.',
+        'Depending on where you live, the law may give you additional rights. We will respond as the law requires.',
+      ]),
+    ]),
+    LegalSection('7. Security', [
+      LegalBlock.paragraph(
+        'You must be signed in to read or change your data, and each account can reach only its own records. '
+        'No system is perfectly secure, so please use a strong, unique password.',
+      ),
+    ]),
+    LegalSection('8. Age', [
+      LegalBlock.paragraph(
+        'Flowstate is for people who are $kMinimumAge or older. We do not knowingly create accounts for anyone younger. '
+        'If you think a younger person has an account, email us and we will review and remove it.',
+      ),
+    ]),
+    LegalSection('9. Changes to this policy', [
+      LegalBlock.paragraph(
+        'When this policy changes, we update the date at the top. For significant changes we may also show a notice in the app.',
+      ),
+    ]),
+    LegalSection('10. Contact', [
+      LegalBlock.paragraph(
+        'Milind Krishnan, independent developer, Chennai, Tamil Nadu, India (not an incorporated company).\n'
+        'Privacy questions and requests: $kLegalContactEmail\n'
+        'This policy describes current practice and has not been reviewed by a lawyer.',
+      ),
+    ]),
+  ];
+
   @override
   Widget build(BuildContext context) {
-    final textPrimary = FlowColors.textPrimaryOf(context);
-    final textSecondary = FlowColors.textSecondaryOf(context);
-    final cardBg = FlowColors.surface(context);
-    final borderColor = FlowColors.border(context);
-    final pageMargin = FlowSpacing.pageMargin(context);
-
-    return Scaffold(
-      backgroundColor: FlowColors.background(context),
-      appBar: AppBar(
-        title: Text(
-          'Privacy & Data Policy',
-          style: FlowTypography.titleMedium(color: textPrimary).copyWith(fontWeight: FontWeight.w700),
-        ),
-        backgroundColor: cardBg,
-        elevation: 0,
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back_rounded, color: textPrimary),
-          tooltip: 'Back',
-          onPressed: () {
-            FlowHaptics.lightTap();
-            Navigator.of(context).pop();
-          },
-        ),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1.0),
-          child: Container(color: borderColor, height: 1.0),
-        ),
+    return const LegalDocumentPage(
+      appBarTitle: 'Privacy & Data Policy',
+      headline: 'Your data, plainly explained',
+      updatedLabel: 'Last updated: $kLegalLastUpdated',
+      intro:
+          'Flowstate collects what it needs to plan your day. This page explains what that is, who handles it, and how you can control it.',
+      afterIntro: LegalSummaryNote(
+        text: 'In short: your account, setup answers and tasks are stored on Flowstate\'s servers. Build My Day text may also go to an '
+            'external AI service to be turned into tasks. We don\'t sell your data, and you can export or delete it from Settings.',
+        icon: Icons.lock_outline_rounded,
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: EdgeInsets.symmetric(horizontal: pageMargin, vertical: 20.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Notice Badge
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: FlowColors.accentCyan.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(FlowRadii.badge),
-                ),
-                child: Text(
-                  'Data Practices & User Rights Notice · Effective: September 2026',
-                  style: FlowTypography.labelSmall(color: FlowColors.accentCyan).copyWith(fontWeight: FontWeight.w600),
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              // Legal Review Disclaimer Callout
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: FlowColors.surface(context),
-                  borderRadius: FlowRadii.cardRadius,
-                  border: Border.all(color: borderColor),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Icon(Icons.info_outline_rounded, size: 18, color: FlowColors.accentCyan),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'This privacy policy outlines our data practices, third-party AI integrations, and user rights. Note: Formal legal review by qualified counsel in your jurisdiction is required before claiming official compliance with regional frameworks.',
-                        style: FlowTypography.bodySmall(color: textSecondary).copyWith(height: 1.4),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              Text(
-                'Your Data Belongs to You.',
-                style: FlowTypography.headlineMedium(color: textPrimary).copyWith(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'At Flowstate, privacy and data minimization are core design principles. We believe personal productivity data should be private, secure, and under your direct control.',
-                style: FlowTypography.bodyMedium(color: textSecondary),
-              ),
-              const SizedBox(height: 24),
-
-              _buildPolicySection(
-                context,
-                title: '1. What We Collect',
-                content:
-                    '• Account Credentials: Your email address and optional display name for authentication.\n'
-                    '• Rhythm & Scheduling Preferences: Self-reported sleep hours, wake times, and energy peak windows to generate local scheduling suggestions.\n'
-                    '• Tasks & Focus History: Task titles, categories, estimated durations, and completed focus session durations.\n'
-                    '• Subjective Reflections: Optional qualitative ratings (e.g. Focused, Steady, Distracted) self-reported after focus sessions to calibrate personal productivity recommendations.',
-              ),
-
-              _buildPolicySection(
-                context,
-                title: '2. Subjective Productivity Data vs. Clinical Health Data',
-                content:
-                    'Flowstate collects self-reported subjective indicators (such as focus reflection, perceived energy levels, and task difficulty) solely for personal task prioritization and companion progression.\n\n'
-                    '• Flowstate does NOT collect clinical or physiological biomarkers (e.g., heart rate, cortisol levels, EEG, or medical records).\n'
-                    '• Flowstate is NOT a medical device and does not provide clinical diagnosis, psychiatric advice, therapy, or treatment for medical conditions.',
-              ),
-
-              _buildPolicySection(
-                context,
-                title: '3. AI Task Parsing & Google Gemini Disclosures (Google Play 2026)',
-                content:
-                    'Flowstate includes an optional AI Task Planning ("Brain Dump") feature powered by Google Gemini:\n\n'
-                    '• What Data is Sent: When you submit notes through the Brain Dump input, the raw text of your task notes, along with your local timezone and current date, is transmitted securely to our FastAPI backend, which interfaces with Google Gemini (Google Generative Language API) solely for task understanding.\n'
-                    '• Context Minimization: We enforce strict context minimization. We NEVER send passwords, authentication tokens, payment details, or unrelated personal profile records to Gemini.\n'
-                    '• Purpose: Extracting structured task metadata (title, duration, priority, difficulty, deadline, and explicit fixed times) for your review and confirmation.\n'
-                    '• Deterministic Scheduling: Gemini does NOT generate your calendar or final schedule. The local Flowstate deterministic scheduling engine remains the sole authority for arranging your day.\n'
-                    '• Retention & Training: Task prompts sent via enterprise API are processed ephemerally and are not used to train Google public AI models.\n'
-                    '• User Control: AI planning is 100% optional. You can manually create, schedule, and categorize all tasks without ever invoking natural language or AI services.',
-              ),
-
-              _buildPolicySection(
-                context,
-                title: '4. Third-Party Services & Data Security',
-                content:
-                    'We do not bundle third-party advertising SDKs, cross-app tracking libraries, or data-broker frameworks (zero AdMob, zero Meta Audience Network, zero Adjust/AppsFlyer).\n\n'
-                    'HTTPS/TLS is required for production network traffic; exact TLS configuration depends on deployed hosting infrastructure and will be verified before production launch. Persistent database storage enforces isolated user partitions with strict user-level authorization.',
-              ),
-
-              _buildPolicySection(
-                context,
-                title: '5. Age Policy & Child Data Handling',
-                content:
-                    'Launch Policy (Founder Decision): Flowstate is configured exclusively for adult users (18 years of age and older) for its initial release as a risk-reduction product decision.\n\n'
-                    'Under the India Digital Personal Data Protection Act, 2023, an individual under 18 is classified as a child. Flowstate does not knowingly process personal data of individuals under 18 years of age during V1 launch. Support for younger users is deferred to future releases pending verifiable parental-consent architecture and legal review.\n\n'
-                    'If you believe a minor under 18 has registered an account, contact Milindkrishnan24@gmail.com for prompt verification and account erasure.',
-              ),
-
-              _buildPolicySection(
-                context,
-                title: '6. User Rights: Data Portability & Account Erasure',
-                content:
-                    'We provide functional tools supporting data access, portability, and erasure rights:\n\n'
-                    '• Data Portability & Access: You can download your complete personal data archive in structured JSON format anytime from Settings > Legal & Compliance Hub.\n'
-                    '• In-App Account Deletion: You can permanently erase your account, tasks, rhythm calibrations, and companion progression directly inside the app (Profile > Legal Hub > Permanent Account & Data Deletion).\n'
-                    '• External Web Deletion Route: In accordance with Google Play requirements, a dedicated web-based deletion request page will be hosted and linked prior to production store launch without requiring the mobile app.',
-              ),
-
-              _buildPolicySection(
-                context,
-                title: '7. Developer Identity & Grievance Contact',
-                content:
-                    'Developer: Milind Krishnan, Independent Developer\n'
-                    'Location: Chennai, Tamil Nadu, India\n'
-                    'Status: Solo / Independent Developer project (not an incorporated company or registered entity)\n'
-                    'Privacy, Support & Grievance Contact: Milindkrishnan24@gmail.com\n'
-                    'SDF Status: No current notification/designation as a Significant Data Fiduciary has been identified.',
-              ),
-
-              const SizedBox(height: 32),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPolicySection(
-    BuildContext context, {
-    required String title,
-    required String content,
-  }) {
-    final textPrimary = FlowColors.textPrimaryOf(context);
-    final textSecondary = FlowColors.textSecondaryOf(context);
-    final cardBg = FlowColors.surface(context);
-    final borderColor = FlowColors.border(context);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: cardBg,
-        borderRadius: FlowRadii.cardRadius,
-        border: Border.all(color: borderColor, width: 1.0),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: FlowTypography.titleSmall(color: textPrimary).copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            content,
-            style: FlowTypography.bodyMedium(color: textSecondary).copyWith(height: 1.5),
-          ),
-        ],
-      ),
+      sections: sections,
     );
   }
 }
