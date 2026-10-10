@@ -188,8 +188,10 @@ void main() {
       await tester.pumpWidget(app());
       await tester.pumpAndSettle();
       expect(find.textContaining('stored locally'), findsNothing);
-      expect(find.textContaining('personalize your plan'), findsOneWidget);
       await tester.tap(find.byKey(const Key('onboarding_privacy_link')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('personalize your plan'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('onboarding_privacy_policy_button')));
       await tester.pumpAndSettle();
       expect(find.byType(PrivacyPolicyScreen), findsOneWidget);
     });

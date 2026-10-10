@@ -445,7 +445,140 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
             else
               const Spacer(),
 
-            const SizedBox(width: 48),
+            if (_currentPage == 0)
+              IconButton(
+                key: const Key('onboarding_privacy_link'),
+                icon: const Icon(Icons.info_outline_rounded, size: 22, color: Color(0xFF64748B)),
+                tooltip: 'How your data is used',
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                onPressed: () => _showDataUsageSheet(context),
+              )
+            else
+              const SizedBox(width: 48),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showDataUsageSheet(BuildContext context) {
+    FlowHaptics.lightTap();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: FlowColors.surface(ctx),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          border: Border.all(color: FlowColors.border(ctx)),
+        ),
+        padding: EdgeInsets.only(
+          left: 24,
+          right: 24,
+          top: 16,
+          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: FlowColors.border(ctx),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: FlowColors.accentCyan.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.info_outline_rounded,
+                    color: FlowColors.accentCyan,
+                    size: 22,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Semantics(
+                    header: true,
+                    child: Text(
+                      'How your data is used',
+                      style: FlowTypography.titleMedium(color: FlowColors.textPrimaryOf(ctx)).copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'A few quick questions help Flowstate plan around your energy, sleep and focus habits. '
+              'Your answers are saved to your account and used only to personalize your plan.',
+              style: FlowTypography.bodyMedium(color: FlowColors.textSecondaryOf(ctx)).copyWith(height: 1.5),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: OutlinedButton.icon(
+                key: const Key('onboarding_privacy_policy_button'),
+                onPressed: () {
+                  FlowHaptics.lightTap();
+                  Navigator.of(ctx).pop();
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()),
+                  );
+                },
+                icon: const Icon(Icons.shield_outlined, size: 18, color: FlowColors.accentCyan),
+                label: Text(
+                  'View Privacy Policy',
+                  style: FlowTypography.labelLarge(color: FlowColors.accentCyan).copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: FlowColors.accentCyan.withValues(alpha: 0.3)),
+                  backgroundColor: FlowColors.accentCyan.withValues(alpha: 0.08),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton(
+                onPressed: () {
+                  FlowHaptics.lightTap();
+                  Navigator.of(ctx).pop();
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0F172A),
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                child: Text(
+                  'Got it',
+                  style: FlowTypography.labelLarge(color: Colors.white).copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -510,47 +643,24 @@ class _OnboardingFlowScreenState extends State<OnboardingFlowScreen> {
                     ),
                   ),
                   // Zero-opacity label ensuring test backwards compatibility with 'Build my first day'
-                  const Opacity(
-                    opacity: 0.0,
-                    child: Text('Build my first day', style: TextStyle(fontSize: 1)),
+                  const IgnorePointer(
+                    child: Opacity(
+                      opacity: 0.0,
+                      child: Text('Build my first day', style: TextStyle(fontSize: 1)),
+                    ),
                   ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           Center(
             child: Text(
               'Takes about a minute',
               style: FlowTypography.labelMedium(color: const Color(0xFF64748B)),
             ),
           ),
-          const SizedBox(height: 6),
-          // Why we ask, said before the first question: the answers only tune the schedule.
-          Text(
-            'A few quick questions help Flowstate plan around your energy, sleep and focus habits. '
-            'Your answers are saved to your account and used only to personalize your plan.',
-            textAlign: TextAlign.center,
-            style: FlowTypography.bodySmall(color: const Color(0xFF64748B)).copyWith(height: 1.45),
-          ),
-          Center(
-            child: TextButton(
-              key: const Key('onboarding_privacy_link'),
-              onPressed: () {
-                FlowHaptics.lightTap();
-                Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()));
-              },
-              style: TextButton.styleFrom(minimumSize: const Size(48, 48), foregroundColor: FlowColors.cyan),
-              child: Text(
-                'How your data is used',
-                style: FlowTypography.labelMedium(color: const Color(0xFF0E7490)).copyWith(
-                  fontWeight: FontWeight.w600,
-                  decoration: TextDecoration.underline,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
+          const Spacer(flex: 1),
         ],
       ),
     );
